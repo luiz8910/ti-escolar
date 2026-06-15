@@ -1,0 +1,56 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e2]
+  - main [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: 🎓
+        - generic [ref=e7]: TI-Escolar — Painel administrativo
+      - generic [ref=e8]:
+        - generic [ref=e9]: Admin Escola Demonstração Admin da escola
+        - link "Ver demo ↗" [ref=e10] [cursor=pointer]:
+          - /url: /
+        - button "Sair" [ref=e11] [cursor=pointer]
+    - generic [ref=e12]:
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - heading "Cota diária de mensagens (Meta)" [level=2] [ref=e24]
+          - generic [ref=e25]: 2026-06-15
+        - paragraph [ref=e28]: 9 enviados · limite 1000 · 991 restantes hoje
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - heading "Grupos" [level=2] [ref=e15]
+          - list [ref=e16]:
+            - listitem [ref=e29]:
+              - button "Pais do Fundamental I 2" [ref=e30] [cursor=pointer]:
+                - generic [ref=e31]: Pais do Fundamental I
+                - generic [ref=e32]: "2"
+            - listitem [ref=e37]:
+              - button "Turma 3º B 1" [ref=e56] [cursor=pointer]:
+                - generic [ref=e39]: Turma 3º B
+                - generic [ref=e40]: "1"
+            - listitem [ref=e33]:
+              - button "Turma 5º A 4" [ref=e34] [cursor=pointer]:
+                - generic [ref=e35]: Turma 5º A
+                - generic [ref=e36]: "4"
+          - generic [ref=e18]:
+            - textbox "Novo grupo…" [ref=e19]
+            - button "+ Criar" [ref=e20] [cursor=pointer]
+        - generic [ref=e21]:
+          - generic [ref=e41]:
+            - heading "Turma 3º B · 1 contato(s)" [level=2] [ref=e57]
+            - list [ref=e43]:
+              - listitem [ref=e58]:
+                - generic [ref=e59]: Fernanda Castro
+                - generic [ref=e60]: "+5511988887777"
+            - generic [ref=e45]:
+              - textbox "Nome do responsável" [ref=e46]
+              - textbox "+5511999990000" [ref=e47]
+              - button "+ Contato" [ref=e48] [cursor=pointer]
+          - generic [ref=e49]:
+            - heading "Enviar mensagem ao grupo" [level=2] [ref=e50]
+            - paragraph [ref=e51]: Usa o template aprovado e respeita a cota diária. Alcança apenas os 1 contato(s) de Turma 3º B.
+            - generic [ref=e52]:
+              - 'textbox "Título (ex.: Reunião de pais)" [ref=e53]'
+              - textbox "Mensagem aos responsáveis…" [ref=e54]
+              - button "Enviar para 1 contato(s)" [ref=e61] [cursor=pointer]
+            - generic [ref=e62]: ✓ Disparo concluído — 1 enviados. Restam 991 na cota de hoje.

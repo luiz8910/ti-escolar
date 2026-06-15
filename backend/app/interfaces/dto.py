@@ -1,0 +1,117 @@
+"""DTOs de entrada/saída da API (Pydantic)."""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class MensagemEntrada(BaseModel):
+    tenant_id: UUID
+    contato: str = Field(..., examples=["+5511999998888"])
+    texto: str
+
+
+class DocumentoSaida(BaseModel):
+    nome: str
+    categoria: str
+    url: str
+
+
+class MensagemSaida(BaseModel):
+    texto: str
+    fontes: list[str] = []
+    documentos: list[DocumentoSaida] = []
+
+
+class DestinatarioEntrada(BaseModel):
+    contato: str
+    parametros: list[str] = []
+
+
+class BroadcastEntrada(BaseModel):
+    tenant_id: UUID
+    template_id: UUID
+    titulo: str
+    destinatarios: list[DestinatarioEntrada]
+
+
+class BroadcastSaida(BaseModel):
+    broadcast_id: UUID
+    status: str
+    enviados: int
+    falhas: int
+    bloqueados_por_limite: int
+    restante_cota: int
+
+
+class QuotaSaida(BaseModel):
+    tenant_id: UUID
+    dia: str
+    limite_diario: int
+    enviados: int
+    restante: int
+
+
+# --------------------------------------------------------------------------- #
+# Administração e grupos
+# --------------------------------------------------------------------------- #
+class LoginEntrada(BaseModel):
+    email: str
+    senha: str
+
+
+class UsuarioSaida(BaseModel):
+    id: UUID
+    nome: str
+    email: str
+    papel: str
+    tenant_id: UUID | None = None
+
+
+class CriarUsuarioEntrada(BaseModel):
+    nome: str
+    email: str
+    senha: str
+    papel: str = Field(..., examples=["tenant_admin", "super_admin"])
+    tenant_id: UUID | None = None
+
+
+class GrupoEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str
+    descricao: str = ""
+
+
+class ContatoSaida(BaseModel):
+    id: UUID
+    nome: str
+    telefone: str
+
+
+class GrupoSaida(BaseModel):
+    id: UUID
+    nome: str
+    descricao: str
+    total_membros: int
+    membros: list[ContatoSaida] = []
+
+
+class ContatoEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str
+    telefone: str = Field(..., examples=["+5511999990000"])
+
+
+class EnvioGrupoEntrada(BaseModel):
+    tenant_id: UUID
+    template_id: UUID
+    titulo: str
+    mensagem: str
+
+
+class EnvioGrupoSaida(BaseModel):
+    grupo_id: UUID
+    total_contatos: int
+    broadcast: BroadcastSaida

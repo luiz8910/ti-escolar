@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: 🎓
+        - generic [ref=e6]:
+          - generic [ref=e7]: Escola Demonstração
+          - generic [ref=e8]: assistente virtual • online
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: Olá! 👋 Sou o assistente virtual da Escola Demonstração. Como posso ajudar?
+        - generic [ref=e13]: 21:04
+      - generic [ref=e14]:
+        - button "Qual o horário de funcionamento?" [ref=e15] [cursor=pointer]
+        - button "Como justifico uma falta?" [ref=e16] [cursor=pointer]
+        - button "Quero a segunda via do boletim" [ref=e17] [cursor=pointer]
+        - button "Quando é a reunião de pais?" [ref=e18] [cursor=pointer]
+      - generic [ref=e19]:
+        - textbox "Mensagem" [ref=e20]
+        - button "Enviar" [ref=e21] [cursor=pointer]: ➤
+  - alert [ref=e22]

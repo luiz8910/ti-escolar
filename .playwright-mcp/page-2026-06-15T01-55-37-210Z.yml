@@ -1,0 +1,38 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e2]
+  - main [ref=e82]:
+    - generic [ref=e83]:
+      - generic [ref=e84]:
+        - generic [ref=e85]: 🎓
+        - generic [ref=e86]: TI-Escolar — Painel administrativo
+      - generic [ref=e87]:
+        - generic [ref=e88]: Super Admin Super Admin
+        - link "Ver demo ↗" [ref=e89] [cursor=pointer]:
+          - /url: /
+        - button "Sair" [ref=e90] [cursor=pointer]
+    - generic [ref=e91]:
+      - generic [ref=e92]:
+        - generic [ref=e93]:
+          - heading "Cota diária de mensagens (Meta)" [level=2] [ref=e94]
+          - generic [ref=e95]: 2026-06-15
+        - paragraph [ref=e98]: 9 enviados · limite 1000 · 991 restantes hoje
+      - generic [ref=e99]:
+        - generic [ref=e100]:
+          - heading "Grupos" [level=2] [ref=e101]
+          - list [ref=e102]:
+            - listitem [ref=e103]:
+              - button "Pais do Fundamental I 2" [ref=e104] [cursor=pointer]:
+                - generic [ref=e105]: Pais do Fundamental I
+                - generic [ref=e106]: "2"
+            - listitem [ref=e107]:
+              - button "Turma 3º B 1" [ref=e108] [cursor=pointer]:
+                - generic [ref=e109]: Turma 3º B
+                - generic [ref=e110]: "1"
+            - listitem [ref=e111]:
+              - button "Turma 5º A 4" [ref=e112] [cursor=pointer]:
+                - generic [ref=e113]: Turma 5º A
+                - generic [ref=e114]: "4"
+          - generic [ref=e115]:
+            - textbox "Novo grupo…" [ref=e116]
+            - button "+ Criar" [ref=e117] [cursor=pointer]
+        - generic [ref=e118]: Selecione um grupo para gerenciar contatos e enviar mensagens.

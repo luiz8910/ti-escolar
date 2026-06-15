@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: 🎓
+        - heading "TI-Escolar — Admin" [level=1] [ref=e6]
+        - paragraph [ref=e7]: Painel administrativo
+      - generic [ref=e8]:
+        - generic [ref=e9]:
+          - generic [ref=e10]: E-mail
+          - textbox "admin@escola-demo.test" [ref=e11]
+        - generic [ref=e12]:
+          - generic [ref=e13]: Senha
+          - textbox "••••••••" [ref=e14]
+        - button "Entrar" [ref=e15] [cursor=pointer]
+      - generic [ref=e16]:
+        - paragraph [ref=e17]: "Credenciais de demonstração:"
+        - paragraph [ref=e18]: "Super admin: admin@tiescolar.test / troque-esta-senha"
+        - paragraph [ref=e19]: "Admin escola: admin@escola-demo.test / escola123"
+  - alert [ref=e20]

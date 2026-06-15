@@ -1,0 +1,39 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - link "Painel admin →" [ref=e3] [cursor=pointer]:
+      - /url: /admin
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: 🎓
+        - generic [ref=e7]:
+          - generic [ref=e8]: Escola Demonstração
+          - generic [ref=e9]: assistente virtual • online
+      - generic [ref=e10]:
+        - generic [ref=e12]:
+          - paragraph [ref=e13]: Olá! 👋 Sou o assistente virtual da Escola Demonstração. Como posso ajudar?
+          - generic [ref=e22]: 22:53
+        - generic [ref=e24]:
+          - paragraph [ref=e25]: Como faço para justificar a falta do meu filho?
+          - generic [ref=e26]: 22:53
+        - generic [ref=e28]:
+          - paragraph [ref=e29]: "Olá! Sobre a sua dúvida \"Como faço para justificar a falta do meu filho?\", segue a orientação da escola: Para justificar a falta do aluno, o responsável deve enviar atestado ou justificativa à secretaria em até 48 horas, presencialmente ou pelo e-mail secretaria@escola.test. Permaneço à disposição caso precise de algo mais."
+          - generic [ref=e30]: "Fontes: Como justificar faltas, Horário de funcionamento, Reunião de pais e mestres, Calendário de provas"
+          - generic [ref=e31]: 22:53
+        - generic [ref=e34]:
+          - paragraph [ref=e35]: Pode me enviar a declaração de matrícula?
+          - generic [ref=e36]: 22:53
+        - generic [ref=e38]:
+          - paragraph [ref=e39]: "Olá! Sobre a sua dúvida \"Pode me enviar a declaração de matrícula?\", segue a orientação da escola: A próxima reunião de pais e mestres será no dia 20 de junho, às 19h, no auditório. A presença dos responsáveis é muito importante. Permaneço à disposição caso precise de algo mais. Enviei os seguintes documentos: • Declaração de matrícula.pdf"
+          - link "📄 Declaração de matrícula.pdf" [ref=e41] [cursor=pointer]:
+            - /url: https://exemplo.test/docs/declaracao/+5511999990000.pdf
+          - generic [ref=e42]: "Fontes: Reunião de pais e mestres, Horário de funcionamento, Segunda via de boletim e declarações, Calendário de provas"
+          - generic [ref=e43]: 22:53
+      - generic [ref=e14]:
+        - button "Qual o horário de funcionamento?" [ref=e15] [cursor=pointer]
+        - button "Como justifico uma falta?" [ref=e16] [cursor=pointer]
+        - button "Quero a segunda via do boletim" [ref=e17] [cursor=pointer]
+        - button "Quando é a reunião de pais?" [ref=e18] [cursor=pointer]
+      - generic [ref=e19]:
+        - textbox "Mensagem" [active] [ref=e20]
+        - button "Enviar" [ref=e21] [cursor=pointer]: ➤
+  - alert [ref=e32]

@@ -1,0 +1,21 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e2]
+  - main [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: 🎓
+        - generic [ref=e7]: TI-Escolar — Painel administrativo
+      - generic [ref=e8]:
+        - generic [ref=e9]: Admin Escola Demonstração Admin da escola
+        - link "Ver demo ↗" [ref=e10] [cursor=pointer]:
+          - /url: /
+        - button "Sair" [ref=e11] [cursor=pointer]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - heading "Grupos" [level=2] [ref=e15]
+        - list [ref=e16]:
+          - listitem [ref=e17]: Nenhum grupo ainda.
+        - generic [ref=e18]:
+          - textbox "Novo grupo…" [ref=e19]
+          - button "+ Criar" [ref=e20] [cursor=pointer]
+      - generic [ref=e21]: Selecione um grupo para gerenciar contatos e enviar mensagens.

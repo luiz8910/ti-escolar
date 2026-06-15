@@ -1,0 +1,60 @@
+- generic [ref=e1]:
+  - alert [ref=e20]
+  - main [ref=e21]:
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - generic [ref=e24]: 🎓
+        - generic [ref=e25]: TI-Escolar — Painel administrativo
+      - generic [ref=e26]:
+        - generic [ref=e27]: Admin Escola Demonstração Admin da escola
+        - link "Ver demo ↗" [ref=e28] [cursor=pointer]:
+          - /url: /
+        - button "Sair" [ref=e29] [cursor=pointer]
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - heading "Cota diária de mensagens (Meta)" [level=2] [ref=e33]
+          - generic [ref=e34]: 2026-06-15
+        - paragraph [ref=e36]: 4 enviados · limite 1000 · 996 restantes hoje
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - heading "Grupos" [level=2] [ref=e39]
+          - list [ref=e40]:
+            - listitem [ref=e41]:
+              - button "Pais do Fundamental I 2" [ref=e42] [cursor=pointer]:
+                - generic [ref=e43]: Pais do Fundamental I
+                - generic [ref=e44]: "2"
+            - listitem [ref=e45]:
+              - button "Turma 5º A 4" [active] [ref=e46] [cursor=pointer]:
+                - generic [ref=e47]: Turma 5º A
+                - generic [ref=e48]: "4"
+          - generic [ref=e49]:
+            - textbox "Novo grupo…" [ref=e50]
+            - button "+ Criar" [ref=e51] [cursor=pointer]
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - heading "Turma 5º A · 4 contato(s)" [level=2] [ref=e54]
+            - list [ref=e55]:
+              - listitem [ref=e56]:
+                - generic [ref=e57]: Maria Souza
+                - generic [ref=e58]: "+5511999990001"
+              - listitem [ref=e59]:
+                - generic [ref=e60]: João Pereira
+                - generic [ref=e61]: "+5511999990002"
+              - listitem [ref=e62]:
+                - generic [ref=e63]: Ana Lima
+                - generic [ref=e64]: "+5511999990003"
+              - listitem [ref=e65]:
+                - generic [ref=e66]: Roberto Alves
+                - generic [ref=e67]: "+5511999990009"
+            - generic [ref=e68]:
+              - textbox "Nome do responsável" [ref=e69]
+              - textbox "+5511999990000" [ref=e70]
+              - button "+ Contato" [ref=e71] [cursor=pointer]
+          - generic [ref=e72]:
+            - heading "Enviar mensagem ao grupo" [level=2] [ref=e73]
+            - paragraph [ref=e74]: Usa o template aprovado e respeita a cota diária. Alcança apenas os 4 contato(s) de Turma 5º A.
+            - generic [ref=e75]:
+              - 'textbox "Título (ex.: Reunião de pais)" [ref=e76]'
+              - textbox "Mensagem aos responsáveis…" [ref=e77]
+              - button "Enviar para 4 contato(s)" [ref=e78] [cursor=pointer]
