@@ -273,6 +273,7 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - **Multi-tenant first:** toda persistência e consulta escopada por `tenant_id`.
 - **Testes:** pytest para domínio e casos de uso (com fakes/mocks das portas).
 - **Segredos:** chaves de LLM e da Meta via variáveis de ambiente; nunca no código/repos.
+<critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a main com origin remote e abrir uma nova branch a partir da main com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade)</critical>
 
 ---
 

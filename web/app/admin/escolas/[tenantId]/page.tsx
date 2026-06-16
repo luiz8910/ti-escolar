@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -17,6 +16,14 @@ import {
   Usuario,
 } from "@/lib/admin";
 
+import { AppShell } from "@/components/layout/AppShell";
+import { Card } from "@/components/ui/Card";
+import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { useToast } from "@/components/ui/Toast";
+import { cn } from "@/components/ui/cn";
+import { ChatBubbleIcon, BellIcon } from "@/components/ui/icons";
+
 type Aba = "conversas" | "broadcasts";
 
 function formatar(data: string | null): string {
@@ -32,6 +39,7 @@ function formatar(data: string | null): string {
 
 export default function EscolaDetalhePage() {
   const router = useRouter();
+  const toast = useToast();
   const params = useParams<{ tenantId: string }>();
   const tenantId = params.tenantId;
 
@@ -40,7 +48,6 @@ export default function EscolaDetalhePage() {
   const [aba, setAba] = useState<Aba>("conversas");
   const [conversas, setConversas] = useState<ConversaResumo[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastResumo[]>([]);
-  const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
 
   const recarregar = useCallback(async () => {
@@ -63,10 +70,13 @@ export default function EscolaDetalhePage() {
     setUsuario(s.usuario);
     recarregar()
       .catch((err) =>
-        setErro(err instanceof Error ? err.message : "Falha ao carregar a escola.")
+        toast({
+          tone: "danger",
+          title: err instanceof Error ? err.message : "Falha ao carregar a escola.",
+        })
       )
       .finally(() => setCarregando(false));
-  }, [router, recarregar]);
+  }, [router, recarregar, toast]);
 
   function sair() {
     logout();
@@ -76,181 +86,167 @@ export default function EscolaDetalhePage() {
   if (!usuario) return null;
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      <header className="flex items-center justify-between bg-wa-header px-6 py-3 text-white">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">🎓</span>
-          <span className="font-semibold">
-            {escola ? escola.nome : "Escola"} — visão da escola
-          </span>
-        </div>
-        <div className="flex items-center gap-4 text-sm">
-          <Link href="/admin/escolas" className="text-white/80 hover:text-white">
-            ← Escolas
-          </Link>
-          <button onClick={sair} className="rounded bg-white/15 px-3 py-1 hover:bg-white/25">
-            Sair
-          </button>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-5xl space-y-6 p-6">
-        {erro && (
-          <div className="rounded bg-red-100 px-4 py-2 text-sm text-red-700">{erro}</div>
-        )}
-
-        {/* Abas */}
-        <div className="flex gap-2">
-          <button
-            onClick={() => setAba("conversas")}
-            className={`rounded-lg px-4 py-2 text-sm font-medium ${
-              aba === "conversas"
-                ? "bg-wa-header text-white"
-                : "bg-white text-slate-600 shadow hover:bg-slate-50"
-            }`}
-          >
-            💬 Conversas ({conversas.length})
-          </button>
-          <button
-            onClick={() => setAba("broadcasts")}
-            className={`rounded-lg px-4 py-2 text-sm font-medium ${
-              aba === "broadcasts"
-                ? "bg-wa-header text-white"
-                : "bg-white text-slate-600 shadow hover:bg-slate-50"
-            }`}
-          >
-            📣 Mensagens em massa ({broadcasts.length})
-          </button>
+    <AppShell
+      title={escola ? escola.nome : "Escola"}
+      user={{ name: usuario.nome, role: "Super Admin" }}
+      tenantName="Plataforma"
+      isSuperAdmin
+      onLogout={sair}
+    >
+      <div className="flex flex-col gap-[18px]">
+        {/* Abas segmentadas */}
+        <div className="inline-flex w-fit gap-1 rounded-lg border border-n-200 bg-white p-1 shadow-sm">
+          <Segment active={aba === "conversas"} onClick={() => setAba("conversas")}>
+            <ChatBubbleIcon size={16} /> Conversas
+            <span className="ml-1 text-n-400">{conversas.length}</span>
+          </Segment>
+          <Segment active={aba === "broadcasts"} onClick={() => setAba("broadcasts")}>
+            <BellIcon size={16} /> Mensagens em massa
+            <span className="ml-1 text-n-400">{broadcasts.length}</span>
+          </Segment>
         </div>
 
         {carregando ? (
-          <p className="text-sm text-slate-400">Carregando…</p>
+          <p className="text-sm text-n-400">Carregando…</p>
         ) : aba === "conversas" ? (
-          <ConversasAba tenantId={tenantId} conversas={conversas} onErro={setErro} />
+          <ConversasAba tenantId={tenantId} conversas={conversas} />
         ) : (
           <BroadcastsAba broadcasts={broadcasts} />
         )}
       </div>
-    </main>
+    </AppShell>
+  );
+}
+
+function Segment({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md px-3.5 py-2 text-[13px] font-semibold transition-colors",
+        active ? "bg-brand-600 text-white" : "text-n-600 hover:bg-n-50"
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
 function ConversasAba({
   tenantId,
   conversas,
-  onErro,
 }: {
   tenantId: string;
   conversas: ConversaResumo[];
-  onErro: (e: string) => void;
 }) {
+  const toast = useToast();
   const [aberta, setAberta] = useState<ConversaDetalhe | null>(null);
   const [carregandoId, setCarregandoId] = useState<string | null>(null);
 
   async function abrir(id: string) {
     setCarregandoId(id);
-    onErro("");
     try {
       setAberta(await obterConversa(tenantId, id));
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao abrir conversa.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao abrir conversa." });
     } finally {
       setCarregandoId(null);
     }
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-[320px_1fr]">
-      <section className="rounded-xl bg-white p-3 shadow">
+    <div className="grid grid-cols-1 gap-[18px] lg:grid-cols-[300px_1fr]">
+      <Card className="p-3">
         {conversas.length === 0 ? (
-          <p className="p-3 text-sm text-slate-400">
-            Nenhuma conversa iniciada pelos pais ainda.
-          </p>
+          <p className="p-3 text-sm text-n-400">Nenhuma conversa iniciada pelos pais ainda.</p>
         ) : (
-          <ul className="space-y-1">
-            {conversas.map((c) => (
-              <li key={c.id}>
+          <div className="flex flex-col gap-1">
+            {conversas.map((c) => {
+              const active = aberta?.id === c.id;
+              return (
                 <button
+                  key={c.id}
                   onClick={() => abrir(c.id)}
-                  className={`w-full rounded-lg px-3 py-2 text-left ${
-                    aberta?.id === c.id ? "bg-wa-header text-white" : "hover:bg-slate-100"
-                  }`}
+                  className={cn(
+                    "w-full rounded-[10px] px-3 py-2.5 text-left",
+                    active ? "bg-brand-600 text-white" : "hover:bg-n-50"
+                  )}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-sm">{c.contato}</span>
+                    <span className="font-mono text-[13px] font-semibold">{c.contato}</span>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        aberta?.id === c.id ? "bg-white/20" : "bg-slate-200 text-slate-600"
-                      }`}
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                        active ? "bg-white/20" : "bg-n-100 text-n-500"
+                      )}
                     >
                       {c.total_mensagens}
                     </span>
                   </div>
-                  <p
-                    className={`truncate text-xs ${
-                      aberta?.id === c.id ? "text-white/80" : "text-slate-500"
-                    }`}
-                  >
+                  <p className={cn("mt-0.5 truncate text-xs", active ? "text-white/80" : "text-n-500")}>
                     {c.ultima_mensagem || "sem mensagens"}
                   </p>
-                  <p
-                    className={`text-[10px] ${
-                      aberta?.id === c.id ? "text-white/60" : "text-slate-400"
-                    }`}
-                  >
+                  <p className={cn("text-[10px]", active ? "text-white/60" : "text-n-400")}>
                     {formatar(c.ultima_em ?? c.criado_em)}
                   </p>
                 </button>
-              </li>
-            ))}
-          </ul>
+              );
+            })}
+          </div>
         )}
-      </section>
+      </Card>
 
-      <section className="rounded-xl bg-white p-5 shadow">
+      <Card>
         {carregandoId ? (
-          <p className="text-sm text-slate-400">Carregando conversa…</p>
+          <p className="text-sm text-n-400">Carregando conversa…</p>
         ) : !aberta ? (
-          <p className="flex h-full items-center justify-center text-sm text-slate-400">
-            Selecione uma conversa para ver as mensagens trocadas com a IA.
-          </p>
+          <div className="flex h-full items-center justify-center">
+            <EmptyState
+              icon={<ChatBubbleIcon size={24} />}
+              title="Selecione uma conversa"
+              description="Escolha uma conversa à esquerda para ver as mensagens trocadas com a IA."
+            />
+          </div>
         ) : (
           <div>
-            <div className="mb-4 border-b pb-2">
-              <h2 className="font-semibold text-slate-800">{aberta.contato}</h2>
-              <p className="text-xs text-slate-400">
+            <div className="mb-4 border-b border-n-100 pb-3">
+              <h2 className="text-sm font-bold text-n-900">{aberta.contato}</h2>
+              <p className="text-xs text-n-400">
                 Iniciada em {formatar(aberta.criado_em)} · {aberta.mensagens.length} mensagens
               </p>
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               {aberta.mensagens.map((m) => (
                 <div
                   key={m.id}
-                  className={`flex ${m.autor === "usuario" ? "justify-end" : "justify-start"}`}
+                  className={cn("flex", m.autor === "usuario" ? "justify-end" : "justify-start")}
                 >
                   <div
-                    className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
-                      m.autor === "usuario"
-                        ? "bg-wa-out text-slate-800"
-                        : "bg-slate-100 text-slate-800"
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{m.texto}</p>
-                    {m.fontes.length > 0 && (
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        Fontes: {m.fontes.join(", ")}
-                      </p>
+                    className={cn(
+                      "max-w-[80%] rounded-2xl px-3.5 py-2.5 text-[13px]",
+                      m.autor === "usuario" ? "bg-brand-50 text-n-900" : "bg-n-100 text-n-900"
                     )}
-                    <p className="mt-1 text-right text-[10px] text-slate-400">
-                      {formatar(m.criado_em)}
-                    </p>
+                  >
+                    <p className="whitespace-pre-wrap leading-relaxed">{m.texto}</p>
+                    {m.fontes.length > 0 && (
+                      <p className="mt-1 text-[10px] text-n-500">Fontes: {m.fontes.join(", ")}</p>
+                    )}
+                    <p className="mt-1 text-right text-[10px] text-n-400">{formatar(m.criado_em)}</p>
                   </div>
                 </div>
               ))}
             </div>
           </div>
         )}
-      </section>
+      </Card>
     </div>
   );
 }
@@ -263,42 +259,54 @@ const ROTULO_STATUS: Record<string, string> = {
   parcial_limite: "Parcial (cota)",
 };
 
+const TONE_STATUS: Record<string, "neutral" | "brand" | "success" | "warning"> = {
+  rascunho: "neutral",
+  agendado: "brand",
+  em_envio: "brand",
+  concluido: "success",
+  parcial_limite: "warning",
+};
+
 function BroadcastsAba({ broadcasts }: { broadcasts: BroadcastResumo[] }) {
   if (broadcasts.length === 0) {
     return (
-      <section className="rounded-xl bg-white p-10 text-center text-sm text-slate-400 shadow">
-        Nenhuma mensagem em massa enviada por esta escola ainda.
-      </section>
+      <Card className="flex items-center justify-center py-10">
+        <EmptyState
+          icon={<BellIcon size={24} />}
+          title="Nenhuma mensagem em massa"
+          description="Esta escola ainda não enviou nenhum disparo para os responsáveis."
+        />
+      </Card>
     );
   }
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow">
-      <ul className="divide-y">
+    <Card>
+      <div className="flex flex-col">
         {broadcasts.map((b) => (
-          <li key={b.id} className="py-4">
+          <div key={b.id} className="border-t border-n-100 py-4 first:border-t-0 first:pt-0">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="font-medium text-slate-800">{b.titulo}</h3>
-                <p className="text-xs text-slate-400">{formatar(b.criado_em)}</p>
+                <h3 className="text-sm font-bold text-n-900">{b.titulo}</h3>
+                <p className="text-xs text-n-400">{formatar(b.criado_em)}</p>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+              <Badge tone={TONE_STATUS[b.status] ?? "neutral"}>
                 {ROTULO_STATUS[b.status] ?? b.status}
-              </span>
+              </Badge>
             </div>
-            <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-              <span className="font-medium text-slate-700">
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-n-500">
+              <span className="font-semibold text-n-700">
                 {b.total_destinatarios} destinatário(s)
               </span>
               {Object.entries(b.por_status).map(([st, n]) => (
-                <span key={st} className="rounded bg-slate-50 px-2 py-0.5">
+                <span key={st} className="rounded bg-n-50 px-2 py-0.5">
                   {st}: {n}
                 </span>
               ))}
             </div>
-          </li>
+          </div>
         ))}
-      </ul>
-    </section>
+      </div>
+    </Card>
   );
 }

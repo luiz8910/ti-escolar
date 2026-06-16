@@ -14,16 +14,38 @@ import {
   Usuario,
 } from "@/lib/admin";
 
+import { AppShell } from "@/components/layout/AppShell";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Input, Field } from "@/components/ui/form";
+import { Modal, ConfirmDialog } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/Toast";
+import {
+  PlusIcon,
+  ExternalIcon,
+  ChatBubbleIcon,
+  UsersIcon,
+  BellIcon,
+} from "@/components/ui/icons";
+
+function sigla(nome: string) {
+  return nome
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join("");
+}
+
 export default function EscolasPage() {
   const router = useRouter();
+  const toast = useToast();
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [escolas, setEscolas] = useState<Escola[]>([]);
-  const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
 
   const recarregar = useCallback(async () => {
-    const es = await listarEscolas();
-    setEscolas(es);
+    setEscolas(await listarEscolas());
   }, []);
 
   useEffect(() => {
@@ -38,9 +60,9 @@ export default function EscolasPage() {
     }
     setUsuario(s.usuario);
     recarregar()
-      .catch(() => setErro("Falha ao carregar escolas."))
+      .catch(() => toast({ tone: "danger", title: "Falha ao carregar escolas." }))
       .finally(() => setCarregando(false));
-  }, [router, recarregar]);
+  }, [router, recarregar, toast]);
 
   function sair() {
     logout();
@@ -50,66 +72,37 @@ export default function EscolasPage() {
   if (!usuario) return null;
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      <header className="flex items-center justify-between bg-wa-header px-6 py-3 text-white">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">🎓</span>
-          <span className="font-semibold">TI-Escolar — Escolas (Super Admin)</span>
-        </div>
-        <div className="flex items-center gap-4 text-sm">
-          <Link href="/admin" className="text-white/80 hover:text-white">
-            Grupos &amp; disparos
-          </Link>
-          <span>
-            {usuario.nome}{" "}
-            <span className="rounded bg-white/20 px-2 py-0.5 text-xs">Super Admin</span>
-          </span>
-          <button onClick={sair} className="rounded bg-white/15 px-3 py-1 hover:bg-white/25">
-            Sair
-          </button>
-        </div>
-      </header>
+    <AppShell
+      title="Escolas"
+      user={{ name: usuario.nome, role: "Super Admin" }}
+      tenantName="Plataforma"
+      isSuperAdmin
+      onLogout={sair}
+    >
+      <div className="flex flex-col gap-[18px]">
+        <NovaEscola onCriada={recarregar} />
 
-      <div className="mx-auto max-w-5xl space-y-6 p-6">
-        {erro && (
-          <div className="rounded bg-red-100 px-4 py-2 text-sm text-red-700">{erro}</div>
-        )}
-
-        <NovaEscola onCriada={recarregar} onErro={setErro} />
-
-        <section className="rounded-xl bg-white p-5 shadow">
-          <h2 className="mb-4 font-semibold text-slate-800">
-            Escolas cadastradas ({escolas.length})
-          </h2>
+        <Card>
+          <CardHeader title="Escolas cadastradas" count={escolas.length} />
           {carregando ? (
-            <p className="text-sm text-slate-400">Carregando…</p>
+            <p className="text-sm text-n-400">Carregando…</p>
           ) : escolas.length === 0 ? (
-            <p className="text-sm text-slate-400">Nenhuma escola cadastrada ainda.</p>
+            <p className="text-sm text-n-400">Nenhuma escola cadastrada ainda.</p>
           ) : (
-            <ul className="divide-y">
+            <div className="flex flex-col">
               {escolas.map((e) => (
-                <EscolaLinha
-                  key={e.id}
-                  escola={e}
-                  onMudou={recarregar}
-                  onErro={setErro}
-                />
+                <EscolaLinha key={e.id} escola={e} onMudou={recarregar} />
               ))}
-            </ul>
+            </div>
           )}
-        </section>
+        </Card>
       </div>
-    </main>
+    </AppShell>
   );
 }
 
-function NovaEscola({
-  onCriada,
-  onErro,
-}: {
-  onCriada: () => Promise<void>;
-  onErro: (e: string) => void;
-}) {
+function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
+  const toast = useToast();
   const [nome, setNome] = useState("");
   const [slug, setSlug] = useState("");
   const [salvando, setSalvando] = useState(false);
@@ -118,164 +111,167 @@ function NovaEscola({
     e.preventDefault();
     if (!nome.trim()) return;
     setSalvando(true);
-    onErro("");
     try {
       await criarEscola(nome.trim(), slug.trim());
       setNome("");
       setSlug("");
       await onCriada();
+      toast({ tone: "success", title: "Escola cadastrada." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao criar escola.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao criar escola." });
     } finally {
       setSalvando(false);
     }
   }
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow">
-      <h2 className="mb-3 font-semibold text-slate-800">Cadastrar escola</h2>
+    <Card>
+      <CardHeader title="Cadastrar escola" />
       <form onSubmit={criar} className="flex flex-wrap items-end gap-3">
-        <div className="flex-1 min-w-[200px]">
-          <label className="mb-1 block text-xs font-medium text-slate-600">Nome</label>
-          <input
-            value={nome}
-            onChange={(e) => setNome(e.target.value)}
-            placeholder="Ex.: Colégio São José"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
-          />
+        <div className="min-w-[200px] flex-1">
+          <Field label="Nome" htmlFor="esc-nome">
+            <Input
+              id="esc-nome"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Ex.: Colégio São José"
+            />
+          </Field>
         </div>
         <div className="min-w-[180px]">
-          <label className="mb-1 block text-xs font-medium text-slate-600">
-            Slug (opcional)
-          </label>
-          <input
-            value={slug}
-            onChange={(e) => setSlug(e.target.value)}
-            placeholder="derivado do nome"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
-          />
+          <Field label="Slug (opcional)" htmlFor="esc-slug">
+            <Input
+              id="esc-slug"
+              mono
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+              placeholder="derivado do nome"
+            />
+          </Field>
         </div>
-        <button
-          disabled={salvando}
-          className="rounded-lg bg-wa-header px-5 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {salvando ? "Salvando…" : "+ Cadastrar"}
-        </button>
+        <Button type="submit" loading={salvando} leftIcon={<PlusIcon size={15} />}>
+          {salvando ? "Salvando…" : "Cadastrar"}
+        </Button>
       </form>
-    </section>
+    </Card>
   );
 }
 
-function EscolaLinha({
-  escola,
-  onMudou,
-  onErro,
-}: {
-  escola: Escola;
-  onMudou: () => Promise<void>;
-  onErro: (e: string) => void;
-}) {
+function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promise<void> }) {
+  const router = useRouter();
+  const toast = useToast();
   const [editando, setEditando] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
   const [nome, setNome] = useState(escola.nome);
   const [slug, setSlug] = useState(escola.slug);
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
-    onErro("");
     try {
       await atualizarEscola(escola.id, nome.trim(), slug.trim());
       setEditando(false);
       await onMudou();
+      toast({ tone: "success", title: "Escola atualizada." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao salvar.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao salvar." });
     }
   }
 
-  async function excluir() {
-    if (
-      !window.confirm(
-        `Excluir "${escola.nome}" e TODOS os seus dados (conversas, contatos, mensagens)? Esta ação é irreversível.`
-      )
-    )
-      return;
-    onErro("");
+  async function confirmarExclusao() {
     try {
       await removerEscola(escola.id);
+      setExcluindo(false);
       await onMudou();
+      toast({ tone: "success", title: "Escola excluída." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao excluir.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
     }
-  }
-
-  if (editando) {
-    return (
-      <li className="py-3">
-        <form onSubmit={salvar} className="flex flex-wrap items-center gap-2">
-          <input
-            value={nome}
-            onChange={(e) => setNome(e.target.value)}
-            className="flex-1 min-w-[180px] rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
-          />
-          <input
-            value={slug}
-            onChange={(e) => setSlug(e.target.value)}
-            className="w-44 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
-          />
-          <button className="rounded-lg bg-wa-header px-4 py-2 text-sm text-white hover:opacity-90">
-            Salvar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setEditando(false);
-              setNome(escola.nome);
-              setSlug(escola.slug);
-            }}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            Cancelar
-          </button>
-        </form>
-      </li>
-    );
   }
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 py-3">
-      <div>
+    <div className="flex flex-wrap items-center gap-3 border-t border-n-100 py-3.5 first:border-t-0">
+      <div className="flex h-10 w-10 flex-none items-center justify-center rounded-[11px] bg-gradient-to-br from-brand-500 to-brand-700 text-[13px] font-bold text-white">
+        {sigla(escola.nome)}
+      </div>
+      <div className="min-w-0 flex-1">
         <Link
           href={`/admin/escolas/${escola.id}`}
-          className="font-medium text-slate-800 hover:text-wa-header hover:underline"
+          className="text-sm font-bold text-n-900 hover:text-brand-700 hover:underline"
         >
           {escola.nome}
         </Link>
-        <p className="font-mono text-xs text-slate-400">{escola.slug}</p>
+        <p className="font-mono text-[11.5px] text-n-400">{escola.slug}</p>
       </div>
-      <div className="flex items-center gap-4 text-xs text-slate-500">
-        <span title="Conversas">💬 {escola.total_conversas}</span>
-        <span title="Contatos">👪 {escola.total_contatos}</span>
-        <span title="Mensagens em massa">📣 {escola.total_broadcasts}</span>
+
+      <div className="flex items-center gap-4 text-[11.5px] font-semibold text-n-500">
+        <span className="flex items-center gap-1" title="Conversas">
+          <ChatBubbleIcon size={15} /> {escola.total_conversas}
+        </span>
+        <span className="flex items-center gap-1" title="Contatos">
+          <UsersIcon size={15} /> {escola.total_contatos}
+        </span>
+        <span className="flex items-center gap-1" title="Mensagens em massa">
+          <BellIcon size={15} /> {escola.total_broadcasts}
+        </span>
       </div>
+
       <div className="flex items-center gap-2">
-        <Link
-          href={`/admin/escolas/${escola.id}`}
-          className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-200"
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={<ExternalIcon size={14} />}
+          onClick={() => router.push(`/admin/escolas/${escola.id}`)}
         >
           Abrir
-        </Link>
-        <button
-          onClick={() => setEditando(true)}
-          className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-200"
-        >
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => setEditando(true)}>
           Editar
-        </button>
-        <button
-          onClick={excluir}
-          className="rounded-lg bg-red-50 px-3 py-1.5 text-sm text-red-600 hover:bg-red-100"
-        >
+        </Button>
+        <Button variant="danger" size="sm" onClick={() => setExcluindo(true)}>
           Excluir
-        </button>
+        </Button>
       </div>
-    </li>
+
+      <Modal
+        open={editando}
+        onClose={() => setEditando(false)}
+        title="Editar escola"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setEditando(false);
+                setNome(escola.nome);
+                setSlug(escola.slug);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={salvar}>
+              Salvar
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={salvar} className="flex flex-col gap-3">
+          <Field label="Nome">
+            <Input autoFocus value={nome} onChange={(e) => setNome(e.target.value)} />
+          </Field>
+          <Field label="Slug">
+            <Input mono value={slug} onChange={(e) => setSlug(e.target.value)} />
+          </Field>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={excluindo}
+        onClose={() => setExcluindo(false)}
+        onConfirm={confirmarExclusao}
+        title="Excluir escola"
+        message={`Excluir "${escola.nome}" e TODOS os seus dados (conversas, contatos, mensagens)? Esta ação é irreversível.`}
+      />
+    </div>
   );
 }
