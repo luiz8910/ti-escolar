@@ -119,7 +119,6 @@ class EnvioGrupoSaida(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-<<<<<<< HEAD
 # Escolas (tenants) — CRUD do super admin
 # --------------------------------------------------------------------------- #
 class EscolaEntrada(BaseModel):
@@ -180,7 +179,9 @@ class BroadcastResumoSaida(BaseModel):
     agendado_para: datetime | None = None
     total_destinatarios: int
     por_status: dict[str, int] = {}
-=======
+
+
+# --------------------------------------------------------------------------- #
 # Pais/responsáveis (CRUD) e salas/turmas
 # --------------------------------------------------------------------------- #
 class PaiEntrada(BaseModel):
@@ -262,4 +263,3 @@ class PromptTenantSaida(BaseModel):
     tenant_id: UUID
     conteudo: str
     atualizado_em: datetime | None = None
->>>>>>> origin/main

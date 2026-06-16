@@ -26,11 +26,8 @@ from app.application.conhecimento_use_cases import IngerirDocumento
 from app.infrastructure.db.repositories_admin import (
     SqlContatoRepository,
     SqlGrupoRepository,
-<<<<<<< HEAD
-    SqlTenantRepository,
-=======
     SqlSalaRepository,
->>>>>>> origin/main
+    SqlTenantRepository,
     SqlUsuarioRepository,
 )
 from app.infrastructure.db.repositories_conhecimento import (
@@ -130,7 +127,6 @@ def get_grupo_repo(session: AsyncSession = Depends(get_session)) -> SqlGrupoRepo
     return SqlGrupoRepository(session)
 
 
-<<<<<<< HEAD
 def get_tenant_repo(session: AsyncSession = Depends(get_session)) -> SqlTenantRepository:
     return SqlTenantRepository(session)
 
@@ -141,14 +137,14 @@ def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConver
 
 def get_broadcast_repo(session: AsyncSession = Depends(get_session)) -> SqlBroadcastRepository:
     return SqlBroadcastRepository(session)
-=======
+
+
 def get_contato_repo(session: AsyncSession = Depends(get_session)) -> SqlContatoRepository:
     return SqlContatoRepository(session)
 
 
 def get_sala_repo(session: AsyncSession = Depends(get_session)) -> SqlSalaRepository:
     return SqlSalaRepository(session)
->>>>>>> origin/main
 
 
 def get_enviar_para_grupo(

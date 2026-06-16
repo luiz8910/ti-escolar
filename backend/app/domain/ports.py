@@ -23,13 +23,10 @@ from app.domain.entities import (
     PromptTenant,
     RespostaLLM,
     ResultadoBusca,
-<<<<<<< HEAD
     ResumoConversa,
     ResumoEscola,
-    Tenant,
-=======
     Sala,
->>>>>>> origin/main
+    Tenant,
     TrechoConhecimento,
     TurnoConversa,
     Usuario,

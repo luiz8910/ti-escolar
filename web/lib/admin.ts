@@ -212,7 +212,6 @@ export async function consultarQuotaDe(tenantId: string): Promise<Quota> {
   return resp.json();
 }
 
-<<<<<<< HEAD
 // --------------------------- escolas (super admin) ------------------------- //
 async function erroDe(resp: Response, padrao: string): Promise<Error> {
   const corpo = await resp.json().catch(() => ({}));
@@ -292,7 +291,8 @@ export async function listarBroadcasts(tenantId: string): Promise<BroadcastResum
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar mensagens em massa`);
   return resp.json();
-=======
+}
+
 // --------------------------- pais e salas --------------------------------- //
 export interface Pai {
   id: string;
@@ -495,5 +495,4 @@ export async function salvarPrompt(conteudo: string): Promise<PromptTenant> {
     body: JSON.stringify({ tenant_id: tenantEmFoco(), conteudo }),
   });
   return jsonOuErro(resp, "salvar instruções da escola");
->>>>>>> origin/main
 }

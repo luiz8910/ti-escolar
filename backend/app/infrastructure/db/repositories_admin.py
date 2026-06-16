@@ -5,13 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-<<<<<<< HEAD
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities import Contato, Grupo, Papel, ResumoEscola, Tenant, Usuario
+from app.domain.entities import Contato, Grupo, Papel, ResumoEscola, Sala, Tenant, Usuario
 from app.infrastructure.db.models import (
     BroadcastORM,
     ConhecimentoORM,
@@ -22,23 +21,12 @@ from app.infrastructure.db.models import (
     GrupoORM,
     MensagemORM,
     QuotaORM,
+    SalaORM,
     TemplateORM,
     TenantORM,
     UsuarioORM,
     grupo_contatos,
-=======
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
-from app.domain.entities import Contato, Grupo, Papel, Sala, Usuario
-from app.infrastructure.db.models import (
-    ContatoORM,
-    GrupoORM,
-    SalaORM,
-    UsuarioORM,
     sala_contatos,
->>>>>>> origin/main
 )
 
 
