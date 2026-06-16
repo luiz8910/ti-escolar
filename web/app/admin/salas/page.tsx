@@ -21,13 +21,23 @@ import {
   vincularPaiASala,
 } from "@/lib/admin";
 
+import { AppShell } from "@/components/layout/AppShell";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Input, Select, Field } from "@/components/ui/form";
+import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Modal, ConfirmDialog } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/Toast";
+import { UsersIcon, PlusIcon, PrintIcon } from "@/components/ui/icons";
+
 export default function SalasEPais() {
   const router = useRouter();
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
   const [pais, setPais] = useState<Pai[]>([]);
   const [selecionada, setSelecionada] = useState<Sala | null>(null);
-  const [erro, setErro] = useState("");
+  const toast = useToast();
 
   const recarregar = useCallback(async () => {
     const [ss, ps] = await Promise.all([listarSalas(), listarPais()]);
@@ -43,8 +53,8 @@ export default function SalasEPais() {
       return;
     }
     setUsuario(s.usuario);
-    recarregar().catch(() => setErro("Falha ao carregar dados."));
-  }, [router, recarregar]);
+    recarregar().catch(() => toast({ tone: "danger", title: "Falha ao carregar dados." }));
+  }, [router, recarregar, toast]);
 
   function sair() {
     logout();
@@ -54,61 +64,30 @@ export default function SalasEPais() {
   if (!usuario) return null;
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      <header className="flex items-center justify-between bg-wa-header px-6 py-3 text-white">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">🎓</span>
-          <span className="font-semibold">TI-Escolar — Salas e pais</span>
-        </div>
-        <div className="flex items-center gap-4 text-sm">
-          <a href="/admin" className="text-white/80 hover:text-white">
-            ← Painel
-          </a>
-          <span>
-            {usuario.nome}{" "}
-            <span className="rounded bg-white/20 px-2 py-0.5 text-xs">
-              {usuario.papel === "super_admin" ? "Super Admin" : "Admin da escola"}
-            </span>
-          </span>
-          <button onClick={sair} className="rounded bg-white/15 px-3 py-1 hover:bg-white/25">
-            Sair
-          </button>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-6xl space-y-6 p-6">
-        {erro && (
-          <div className="flex items-center justify-between rounded bg-red-100 px-4 py-2 text-sm text-red-700">
-            <span>{erro}</span>
-            <button onClick={() => setErro("")} className="text-red-500 hover:text-red-700">
-              ✕
-            </button>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[340px_1fr]">
-          {/* Salas */}
+    <AppShell
+      title="Salas e pais"
+      user={{
+        name: usuario.nome,
+        role: usuario.papel === "super_admin" ? "Super Admin" : "Admin da escola",
+      }}
+      tenantName="Escola Demonstração"
+      isSuperAdmin={usuario.papel === "super_admin"}
+      onLogout={sair}
+    >
+      <div className="flex flex-col gap-[18px]">
+        <div className="grid grid-cols-1 gap-[18px] lg:grid-cols-[320px_1fr]">
           <SalasPanel
             salas={salas}
             selecionada={selecionada}
             onSelecionar={setSelecionada}
             onMudou={recarregar}
-            onErro={setErro}
           />
-
-          {/* Detalhe da sala selecionada (relatório de pais) */}
-          <SalaDetalhe
-            sala={selecionada}
-            pais={pais}
-            onMudou={recarregar}
-            onErro={setErro}
-          />
+          <SalaDetalhe sala={selecionada} pais={pais} onMudou={recarregar} />
         </div>
 
-        {/* Cadastro de pais (CRUD) */}
-        <PaisPanel pais={pais} onMudou={recarregar} onErro={setErro} />
+        <PaisPanel pais={pais} onMudou={recarregar} />
       </div>
-    </main>
+    </AppShell>
   );
 }
 
@@ -118,15 +97,17 @@ function SalasPanel({
   selecionada,
   onSelecionar,
   onMudou,
-  onErro,
 }: {
   salas: Sala[];
   selecionada: Sala | null;
   onSelecionar: (s: Sala) => void;
   onMudou: () => Promise<void>;
-  onErro: (e: string) => void;
 }) {
+  const toast = useToast();
   const [nova, setNova] = useState("");
+  const [editando, setEditando] = useState<Sala | null>(null);
+  const [nomeEdicao, setNomeEdicao] = useState("");
+  const [excluindo, setExcluindo] = useState<Sala | null>(null);
 
   async function criar(e: React.FormEvent) {
     e.preventDefault();
@@ -135,80 +116,140 @@ function SalasPanel({
       await criarSala(nova.trim());
       setNova("");
       await onMudou();
+      toast({ tone: "success", title: "Sala criada." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Não foi possível criar a sala.");
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Não foi possível criar a sala.",
+      });
     }
   }
 
-  async function renomear(sala: Sala) {
-    const nome = window.prompt("Novo nome da sala:", sala.nome);
-    if (!nome || nome.trim() === sala.nome) return;
+  function abrirEdicao(sala: Sala) {
+    setEditando(sala);
+    setNomeEdicao(sala.nome);
+  }
+
+  async function salvarEdicao(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editando || !nomeEdicao.trim() || nomeEdicao.trim() === editando.nome) {
+      setEditando(null);
+      return;
+    }
     try {
-      await atualizarSala(sala.id, nome.trim(), sala.descricao);
+      await atualizarSala(editando.id, nomeEdicao.trim(), editando.descricao);
+      setEditando(null);
       await onMudou();
+      toast({ tone: "success", title: "Sala renomeada." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao renomear.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao renomear." });
     }
   }
 
-  async function excluir(sala: Sala) {
-    if (!window.confirm(`Excluir a sala "${sala.nome}"? Os pais continuam cadastrados.`)) return;
+  async function confirmarExclusao() {
+    if (!excluindo) return;
     try {
-      await removerSala(sala.id);
+      await removerSala(excluindo.id);
+      setExcluindo(null);
       await onMudou();
+      toast({ tone: "success", title: "Sala excluída." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao excluir.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
     }
   }
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow">
-      <h2 className="mb-3 font-semibold text-slate-800">Salas (turmas)</h2>
-      <ul className="space-y-1">
-        {salas.map((s) => (
-          <li
-            key={s.id}
-            className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
-              selecionada?.id === s.id ? "bg-wa-header text-white" : "text-slate-700 hover:bg-slate-100"
-            }`}
-          >
-            <button onClick={() => onSelecionar(s)} className="flex-1 text-left">
-              {s.nome}{" "}
-              <span
-                className={`ml-1 rounded-full px-2 py-0.5 text-xs ${
-                  selecionada?.id === s.id ? "bg-white/20" : "bg-slate-200 text-slate-600"
-                }`}
+    <Card className="flex flex-col">
+      <CardHeader title="Salas (turmas)" count={salas.length} />
+      <div className="flex flex-col gap-1">
+        {salas.map((s) => {
+          const active = selecionada?.id === s.id;
+          return (
+            <div
+              key={s.id}
+              className={
+                "group flex items-center gap-2 rounded-[10px] px-3 py-2.5 text-[13px] font-semibold " +
+                (active ? "bg-brand-600 text-white" : "text-n-700 hover:bg-n-50")
+              }
+            >
+              <button onClick={() => onSelecionar(s)} className="flex flex-1 items-center gap-2 text-left">
+                <span>{s.nome}</span>
+                <span
+                  className={
+                    "rounded-full px-2 py-0.5 text-[11px] font-bold " +
+                    (active ? "bg-white/20" : "bg-n-100 text-n-500")
+                  }
+                >
+                  {s.total_pais}
+                </span>
+              </button>
+              <button
+                onClick={() => abrirEdicao(s)}
+                title="Renomear"
+                className={active ? "text-white/80 hover:text-white" : "text-n-400 hover:text-n-700"}
               >
-                {s.total_pais}
-              </span>
-            </button>
-            <span className="ml-2 flex gap-2 text-xs">
-              <button onClick={() => renomear(s)} title="Renomear" className="opacity-70 hover:opacity-100">
                 ✏️
               </button>
-              <button onClick={() => excluir(s)} title="Excluir" className="opacity-70 hover:opacity-100">
+              <button
+                onClick={() => setExcluindo(s)}
+                title="Excluir"
+                className={active ? "text-white/80 hover:text-white" : "text-n-400 hover:text-danger"}
+              >
                 🗑️
               </button>
-            </span>
-          </li>
-        ))}
+            </div>
+          );
+        })}
         {salas.length === 0 && (
-          <li className="px-3 py-2 text-sm text-slate-400">Nenhuma sala cadastrada.</li>
+          <p className="px-3 py-2 text-sm text-n-400">Nenhuma sala cadastrada.</p>
         )}
-      </ul>
+      </div>
 
-      <form onSubmit={criar} className="mt-4 flex gap-2 border-t pt-4">
-        <input
+      <form onSubmit={criar} className="mt-auto flex gap-2 border-t border-n-100 pt-3.5">
+        <Input
           value={nova}
           onChange={(e) => setNova(e.target.value)}
           placeholder="Nova sala (ex.: 4ª série B)"
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
         />
-        <button className="rounded-lg bg-wa-header px-3 text-sm text-white hover:opacity-90">
-          + Criar
-        </button>
+        <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+          Criar
+        </Button>
       </form>
-    </section>
+
+      <Modal
+        open={!!editando}
+        onClose={() => setEditando(null)}
+        title="Renomear sala"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setEditando(null)}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={salvarEdicao}>
+              Salvar
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={salvarEdicao}>
+          <Field label="Nome da sala">
+            <Input
+              autoFocus
+              value={nomeEdicao}
+              onChange={(e) => setNomeEdicao(e.target.value)}
+            />
+          </Field>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!excluindo}
+        onClose={() => setExcluindo(null)}
+        onConfirm={confirmarExclusao}
+        title="Excluir sala"
+        message={`Excluir a sala "${excluindo?.nome}"? Os pais continuam cadastrados.`}
+      />
+    </Card>
   );
 }
 
@@ -217,13 +258,12 @@ function SalaDetalhe({
   sala,
   pais,
   onMudou,
-  onErro,
 }: {
   sala: Sala | null;
   pais: Pai[];
   onMudou: () => Promise<void>;
-  onErro: (e: string) => void;
 }) {
+  const toast = useToast();
   const [relatorio, setRelatorio] = useState<Pai[]>([]);
   const [paiId, setPaiId] = useState("");
 
@@ -235,9 +275,12 @@ function SalaDetalhe({
     try {
       setRelatorio(await relatorioPaisDaSala(sala.id));
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao carregar relatório.");
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao carregar relatório.",
+      });
     }
-  }, [sala, onErro]);
+  }, [sala, toast]);
 
   useEffect(() => {
     carregarRelatorio();
@@ -245,13 +288,17 @@ function SalaDetalhe({
 
   if (!sala) {
     return (
-      <section className="flex items-center justify-center rounded-xl bg-white p-10 text-sm text-slate-400 shadow">
-        Selecione uma sala para ver o relatório de pais e gerenciar vínculos.
-      </section>
+      <Card className="flex items-center justify-center">
+        <EmptyState
+          icon={<UsersIcon size={24} />}
+          title="Selecione uma sala"
+          description="Escolha uma sala para ver o relatório de pais e gerenciar vínculos."
+        />
+      </Card>
     );
   }
 
-  const naVinculados = pais.filter((p) => !relatorio.some((r) => r.id === p.id));
+  const naoVinculados = pais.filter((p) => !relatorio.some((r) => r.id === p.id));
 
   async function vincular(e: React.FormEvent) {
     e.preventDefault();
@@ -260,8 +307,9 @@ function SalaDetalhe({
       await vincularPaiASala(sala!.id, paiId);
       setPaiId("");
       await Promise.all([carregarRelatorio(), onMudou()]);
+      toast({ tone: "success", title: "Responsável vinculado." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao vincular.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao vincular." });
     }
   }
 
@@ -269,83 +317,82 @@ function SalaDetalhe({
     try {
       await desvincularPaiDaSala(sala!.id, p.id);
       await Promise.all([carregarRelatorio(), onMudou()]);
+      toast({ tone: "success", title: "Responsável removido da sala." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao desvincular.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao desvincular." });
     }
   }
 
-  function imprimir() {
-    window.print();
-  }
-
   return (
-    <section className="space-y-4 rounded-xl bg-white p-5 shadow">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-slate-800">
-          Relatório — {sala.nome} · {relatorio.length} responsável(is)
-        </h2>
-        <button
-          onClick={imprimir}
-          className="rounded-lg border border-slate-300 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
-        >
-          🖨️ Imprimir / PDF
-        </button>
-      </div>
+    <Card>
+      <CardHeader
+        title={
+          <>
+            Relatório — {sala.nome}{" "}
+            <span className="font-semibold text-n-400">· {relatorio.length} responsável(is)</span>
+          </>
+        }
+        action={
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<PrintIcon size={15} />}
+            onClick={() => window.print()}
+          >
+            Imprimir / PDF
+          </Button>
+        }
+      />
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-slate-500">
-            <th className="py-2">Responsável</th>
-            <th className="py-2">WhatsApp</th>
-            <th className="py-2 text-right">Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {relatorio.map((p) => (
-            <tr key={p.id} className="border-b last:border-0">
-              <td className="py-2 text-slate-700">{p.nome}</td>
-              <td className="py-2 font-mono text-slate-500">{p.telefone}</td>
-              <td className="py-2 text-right">
-                <button
-                  onClick={() => desvincular(p)}
-                  className="text-xs text-red-500 hover:text-red-700 print:hidden"
-                >
-                  Remover da sala
-                </button>
-              </td>
-            </tr>
-          ))}
-          {relatorio.length === 0 && (
+      <TableWrap>
+        <Table>
+          <thead>
             <tr>
-              <td colSpan={3} className="py-3 text-slate-400">
-                Nenhum responsável vinculado a esta sala.
-              </td>
+              <Th>Responsável</Th>
+              <Th>WhatsApp</Th>
+              <Th className="text-right">Ações</Th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {relatorio.map((p) => (
+              <Tr key={p.id}>
+                <Td className="font-medium">{p.nome}</Td>
+                <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
+                <Td className="text-right">
+                  <button
+                    onClick={() => desvincular(p)}
+                    className="text-xs font-semibold text-danger hover:underline print:hidden"
+                  >
+                    Remover da sala
+                  </button>
+                </Td>
+              </Tr>
+            ))}
+            {relatorio.length === 0 && (
+              <Tr>
+                <Td colSpan={3} className="text-n-400">
+                  Nenhum responsável vinculado a esta sala.
+                </Td>
+              </Tr>
+            )}
+          </tbody>
+        </Table>
+      </TableWrap>
 
-      <form onSubmit={vincular} className="flex gap-2 border-t pt-4 print:hidden">
-        <select
-          value={paiId}
-          onChange={(e) => setPaiId(e.target.value)}
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
-        >
+      <form onSubmit={vincular} className="mt-3.5 flex gap-2 print:hidden">
+        <Select className="flex-1" value={paiId} onChange={(e) => setPaiId(e.target.value)}>
           <option value="">Vincular responsável já cadastrado…</option>
-          {naVinculados.map((p) => (
+          {naoVinculados.map((p) => (
             <option key={p.id} value={p.id}>
               {p.nome} — {p.telefone}
             </option>
           ))}
-        </select>
-        <button
-          disabled={!paiId}
-          className="rounded-lg bg-slate-700 px-4 text-sm text-white hover:opacity-90 disabled:opacity-50"
-        >
-          + Vincular
-        </button>
+        </Select>
+        <Button variant="secondary" size="sm" type="submit" disabled={!paiId} leftIcon={<PlusIcon size={14} />}>
+          Vincular
+        </Button>
       </form>
-    </section>
+    </Card>
   );
 }
 
@@ -353,15 +400,15 @@ function SalaDetalhe({
 function PaisPanel({
   pais,
   onMudou,
-  onErro,
 }: {
   pais: Pai[];
   onMudou: () => Promise<void>;
-  onErro: (e: string) => void;
 }) {
+  const toast = useToast();
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
   const [editando, setEditando] = useState<string | null>(null);
+  const [excluindo, setExcluindo] = useState<Pai | null>(null);
 
   async function adicionar(e: React.FormEvent) {
     e.preventDefault();
@@ -376,8 +423,12 @@ function PaisPanel({
       setTelefone("");
       setEditando(null);
       await onMudou();
+      toast({ tone: "success", title: editando ? "Responsável atualizado." : "Responsável cadastrado." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao salvar responsável.");
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao salvar responsável.",
+      });
     }
   }
 
@@ -393,68 +444,96 @@ function PaisPanel({
     setTelefone("");
   }
 
-  async function excluir(p: Pai) {
-    if (!window.confirm(`Excluir o responsável "${p.nome}"?`)) return;
+  async function confirmarExclusao() {
+    if (!excluindo) return;
     try {
-      await removerPai(p.id);
+      await removerPai(excluindo.id);
+      setExcluindo(null);
       await onMudou();
+      toast({ tone: "success", title: "Responsável excluído." });
     } catch (err) {
-      onErro(err instanceof Error ? err.message : "Falha ao excluir.");
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
     }
   }
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow">
-      <h2 className="mb-3 font-semibold text-slate-800">
-        Pais / responsáveis cadastrados · {pais.length}
-      </h2>
+    <Card>
+      <CardHeader title="Pais / responsáveis cadastrados" count={pais.length} />
 
       <form onSubmit={adicionar} className="mb-4 flex flex-wrap gap-2">
-        <input
+        <Input
+          className="flex-1"
           value={nome}
           onChange={(e) => setNome(e.target.value)}
           placeholder="Nome do responsável"
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
         />
-        <input
+        <Input
+          className="w-44"
+          mono
           value={telefone}
           onChange={(e) => setTelefone(e.target.value)}
           placeholder="+5511999990000"
-          className="w-44 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-wa-header"
         />
-        <button className="rounded-lg bg-wa-header px-4 text-sm text-white hover:opacity-90">
-          {editando ? "Salvar" : "+ Cadastrar"}
-        </button>
+        <Button size="sm" type="submit">
+          {editando ? "Salvar" : "Cadastrar"}
+        </Button>
         {editando && (
-          <button
-            type="button"
-            onClick={cancelar}
-            className="rounded-lg border border-slate-300 px-3 text-sm text-slate-600 hover:bg-slate-50"
-          >
+          <Button variant="secondary" size="sm" type="button" onClick={cancelar}>
             Cancelar
-          </button>
+          </Button>
         )}
       </form>
 
-      <ul className="divide-y">
-        {pais.map((p) => (
-          <li key={p.id} className="flex items-center justify-between py-2 text-sm">
-            <span className="text-slate-700">{p.nome}</span>
-            <span className="flex items-center gap-3">
-              <span className="font-mono text-slate-500">{p.telefone}</span>
-              <button onClick={() => editar(p)} className="text-xs text-slate-500 hover:text-slate-700">
-                Editar
-              </button>
-              <button onClick={() => excluir(p)} className="text-xs text-red-500 hover:text-red-700">
-                Excluir
-              </button>
-            </span>
-          </li>
-        ))}
-        {pais.length === 0 && (
-          <li className="py-2 text-sm text-slate-400">Nenhum responsável cadastrado ainda.</li>
-        )}
-      </ul>
-    </section>
+      <TableWrap>
+        <Table>
+          <thead>
+            <tr>
+              <Th>Responsável</Th>
+              <Th>WhatsApp</Th>
+              <Th className="text-right">Ações</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {pais.map((p) => (
+              <Tr key={p.id}>
+                <Td className="font-medium">{p.nome}</Td>
+                <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
+                <Td className="text-right">
+                  <span className="flex items-center justify-end gap-3">
+                    <button
+                      onClick={() => editar(p)}
+                      className="text-xs font-semibold text-n-500 hover:text-n-800"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => setExcluindo(p)}
+                      className="text-xs font-semibold text-danger hover:underline"
+                    >
+                      Excluir
+                    </button>
+                  </span>
+                </Td>
+              </Tr>
+            ))}
+            {pais.length === 0 && (
+              <Tr>
+                <Td colSpan={3} className="text-n-400">
+                  Nenhum responsável cadastrado ainda.
+                </Td>
+              </Tr>
+            )}
+          </tbody>
+        </Table>
+      </TableWrap>
+
+      <ConfirmDialog
+        open={!!excluindo}
+        onClose={() => setExcluindo(null)}
+        onConfirm={confirmarExclusao}
+        title="Excluir responsável"
+        message={`Excluir o responsável "${excluindo?.nome}"?`}
+      />
+    </Card>
   );
 }
