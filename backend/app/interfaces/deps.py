@@ -22,10 +22,20 @@ from app.infrastructure.db.repositories import (
     SqlConversaRepository,
     SqlTemplateRepository,
 )
+from app.application.conhecimento_use_cases import IngerirDocumento
 from app.infrastructure.db.repositories_admin import (
+    SqlContatoRepository,
     SqlGrupoRepository,
+<<<<<<< HEAD
     SqlTenantRepository,
+=======
+    SqlSalaRepository,
+>>>>>>> origin/main
     SqlUsuarioRepository,
+)
+from app.infrastructure.db.repositories_conhecimento import (
+    SqlFonteConhecimentoRepository,
+    SqlPromptTenantRepository,
 )
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
@@ -58,7 +68,8 @@ def get_receber_mensagem(
     canal = criar_canal(settings)
     store = PgVectorStore(session)
 
-    responder = ResponderDuvida(embedder=embedder, store=store, llm=llm)
+    prompts = SqlPromptTenantRepository(session)
+    responder = ResponderDuvida(embedder=embedder, store=store, llm=llm, prompts=prompts)
     documentos = RecuperarEEnviarDocumento(source=MockDocumentSource(), canal=canal)
     conversas = SqlConversaRepository(session)
     return ReceberMensagemRecebida(
@@ -82,6 +93,7 @@ def get_atender_conversa(
         store=store,
         llm=llm,
         documentos=documentos,
+        prompts=SqlPromptTenantRepository(session),
     )
 
 
@@ -118,6 +130,7 @@ def get_grupo_repo(session: AsyncSession = Depends(get_session)) -> SqlGrupoRepo
     return SqlGrupoRepository(session)
 
 
+<<<<<<< HEAD
 def get_tenant_repo(session: AsyncSession = Depends(get_session)) -> SqlTenantRepository:
     return SqlTenantRepository(session)
 
@@ -128,6 +141,14 @@ def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConver
 
 def get_broadcast_repo(session: AsyncSession = Depends(get_session)) -> SqlBroadcastRepository:
     return SqlBroadcastRepository(session)
+=======
+def get_contato_repo(session: AsyncSession = Depends(get_session)) -> SqlContatoRepository:
+    return SqlContatoRepository(session)
+
+
+def get_sala_repo(session: AsyncSession = Depends(get_session)) -> SqlSalaRepository:
+    return SqlSalaRepository(session)
+>>>>>>> origin/main
 
 
 def get_enviar_para_grupo(
@@ -142,3 +163,29 @@ def get_enviar_para_grupo(
         rate_limiter=_rate_limiter,
     )
     return EnviarBroadcastParaGrupo(grupos=SqlGrupoRepository(session), enviar=enviar)
+
+
+# --------------------------------------------------------------------------- #
+# Base de conhecimento (RAG por tenant) e system prompt por tenant
+# --------------------------------------------------------------------------- #
+def get_fonte_conhecimento_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlFonteConhecimentoRepository:
+    return SqlFonteConhecimentoRepository(session)
+
+
+def get_prompt_tenant_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlPromptTenantRepository:
+    return SqlPromptTenantRepository(session)
+
+
+def get_ingerir_documento(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> IngerirDocumento:
+    return IngerirDocumento(
+        embedder=criar_embedder(settings),
+        store=PgVectorStore(session),
+        fontes=SqlFonteConhecimentoRepository(session),
+    )

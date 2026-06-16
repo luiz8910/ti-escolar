@@ -73,6 +73,15 @@ export default function AdminDashboard() {
               {usuario.papel === "super_admin" ? "Super Admin" : "Admin da escola"}
             </span>
           </span>
+          <a href="/admin/salas" className="text-white/80 hover:text-white">
+            Salas e pais
+          </a>
+          <a href="/admin/conhecimento" className="text-white/80 hover:text-white">
+            Base de conhecimento
+          </a>
+          <a href="/admin/prompt" className="text-white/80 hover:text-white">
+            Instruções da escola
+          </a>
           <a href="/" className="text-white/80 hover:text-white">
             Ver demo ↗
           </a>

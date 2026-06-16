@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.application.prompts import SISTEMA_AGENTE, montar_sistema
+from app.application.prompts import montar_sistema, montar_sistema_agente
 from app.domain.entities import (
     Broadcast,
     Documento,
@@ -30,6 +30,7 @@ from app.domain.ports import (
     Embedder,
     LLMProvider,
     MessageChannel,
+    PromptTenantRepository,
     QuotaPolicy,
     RateLimiter,
     TemplateRepository,
@@ -70,8 +71,22 @@ class RespostaDuvida:
     fontes: list[str]
 
 
+async def _instrucoes_do_tenant(
+    prompts: PromptTenantRepository | None, tenant_id: UUID
+) -> str:
+    """Carrega o system prompt personalizado da escola, se houver (ou string vazia)."""
+    if prompts is None:
+        return ""
+    prompt = await prompts.obter(tenant_id=tenant_id)
+    return prompt.conteudo if prompt else ""
+
+
 class ResponderDuvida:
-    """Recupera trechos relevantes, monta contexto e chama o LLM para raciocinar."""
+    """Recupera trechos relevantes, monta contexto e chama o LLM para raciocinar.
+
+    Quando há um ``PromptTenantRepository``, as instruções personalizadas da escola são
+    anexadas ao prompt de sistema (o "CLAUDE.md" daquele tenant).
+    """
 
     def __init__(
         self,
@@ -79,11 +94,13 @@ class ResponderDuvida:
         embedder: Embedder,
         store: VectorStore,
         llm: LLMProvider,
+        prompts: PromptTenantRepository | None = None,
         k: int = 4,
     ) -> None:
         self._embedder = embedder
         self._store = store
         self._llm = llm
+        self._prompts = prompts
         self._k = k
 
     async def executar(
@@ -104,7 +121,10 @@ class ResponderDuvida:
         mensagens = list(historico or [])
         mensagens.append({"role": "user", "content": pergunta})
 
-        texto = await self._llm.gerar(sistema=montar_sistema(contexto), mensagens=mensagens)
+        instrucoes = await _instrucoes_do_tenant(self._prompts, tenant_id)
+        texto = await self._llm.gerar(
+            sistema=montar_sistema(contexto, instrucoes), mensagens=mensagens
+        )
         return RespostaDuvida(texto=texto, fontes=fontes)
 
 
@@ -245,6 +265,7 @@ class AtenderConversa:
         store: VectorStore,
         llm: LLMProvider,
         documentos: RecuperarEEnviarDocumento,
+        prompts: PromptTenantRepository | None = None,
         k: int = 4,
         max_iteracoes: int = 4,
     ) -> None:
@@ -253,6 +274,7 @@ class AtenderConversa:
         self._store = store
         self._llm = llm
         self._documentos = documentos
+        self._prompts = prompts
         self._k = k
         self._max_iteracoes = max_iteracoes
 
@@ -270,10 +292,13 @@ class AtenderConversa:
         fontes: list[str] = []
         docs: list[Documento] = []
 
+        instrucoes = await _instrucoes_do_tenant(self._prompts, tenant_id)
+        sistema = montar_sistema_agente(instrucoes)
+
         texto_final = ""
         for _ in range(self._max_iteracoes):
             resposta = await self._llm.gerar_com_ferramentas(
-                sistema=SISTEMA_AGENTE, turnos=turnos, ferramentas=ferramentas
+                sistema=sistema, turnos=turnos, ferramentas=ferramentas
             )
             if not resposta.quer_ferramenta:
                 texto_final = resposta.texto

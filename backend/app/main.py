@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.interfaces.api import admin, broadcast, chat, webhook
+from app.interfaces.api import admin, broadcast, cadastro, chat, conhecimento, webhook
 
 settings = get_settings()
 
@@ -27,6 +27,8 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(broadcast.router)
 app.include_router(admin.router)
+app.include_router(cadastro.router)
+app.include_router(conhecimento.router)
 app.include_router(webhook.router)
 
 

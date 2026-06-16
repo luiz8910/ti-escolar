@@ -13,12 +13,19 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.application.admin_use_cases import CriarGrupo
+from app.application.cadastro_use_cases import CadastrarPai, CriarSala
 from app.application.use_cases import IndexarConhecimento
 from app.config import get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
 from app.infrastructure.db.models import TemplateORM, TenantORM, UsuarioORM
 from app.infrastructure.db.pgvector_store import PgVectorStore
-from app.infrastructure.db.repositories_admin import SqlGrupoRepository, SqlUsuarioRepository
+from app.infrastructure.db.repositories_admin import (
+    SqlContatoRepository,
+    SqlGrupoRepository,
+    SqlSalaRepository,
+    SqlUsuarioRepository,
+)
+from app.infrastructure.db.repositories_conhecimento import SqlPromptTenantRepository
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import criar_embedder
 from app.infrastructure.security import hash_senha
@@ -39,6 +46,27 @@ _GRUPOS_DEMO = {
         ("Patrícia Rocha", "+5511999990005"),
     ],
 }
+
+# Salas (turmas) de demonstração e seus pais/responsáveis (nome, telefone E.164).
+_SALAS_DEMO = {
+    "4ª série B": [
+        ("Beatriz Almeida", "+5511988880001"),
+        ("Rafael Nogueira", "+5511988880002"),
+    ],
+    "5ª série A": [
+        ("Cláudia Fonseca", "+5511988880003"),
+        ("Eduardo Tavares", "+5511988880004"),
+    ],
+}
+
+# System prompt personalizado do tenant demo (o "CLAUDE.md" da escola).
+_PROMPT_DEMO = (
+    "Esta é a Escola Demonstração. Trate os responsáveis pelo primeiro nome quando souber. "
+    "Reforce sempre o uso obrigatório do uniforme e o e-mail da secretaria "
+    "(secretaria@escola.test) para assuntos formais. Em caso de emergência, oriente a ligar "
+    "para a portaria. Nunca compartilhe notas ou dados de um aluno com quem não seja o "
+    "responsável cadastrado."
+)
 
 _CONHECIMENTO = [
     (
@@ -163,6 +191,37 @@ async def _seed() -> None:
                         nome=nome,
                         telefone=telefone,
                     )
+
+        # Salas (turmas) com pais/responsáveis vinculados — só cria se ainda não houver
+        salas_repo = SqlSalaRepository(session)
+        contatos_repo = SqlContatoRepository(session)
+        if not await salas_repo.listar(tenant_id=DEMO_TENANT_ID):
+            criar_sala = CriarSala(salas=salas_repo)
+            cadastrar_pai = CadastrarPai(contatos=contatos_repo, salas=salas_repo)
+            for nome_sala, responsaveis in _SALAS_DEMO.items():
+                sala = await criar_sala.executar(tenant_id=DEMO_TENANT_ID, nome=nome_sala)
+                for nome, telefone in responsaveis:
+                    existente = await contatos_repo.por_telefone(
+                        tenant_id=DEMO_TENANT_ID, telefone=telefone
+                    )
+                    if existente is None:
+                        await cadastrar_pai.executar(
+                            tenant_id=DEMO_TENANT_ID,
+                            nome=nome,
+                            telefone=telefone,
+                            sala_ids=[sala.id],
+                        )
+                    else:
+                        await salas_repo.vincular_pai(
+                            tenant_id=DEMO_TENANT_ID,
+                            sala_id=sala.id,
+                            contato_id=existente.id,
+                        )
+
+        # System prompt do tenant demo — só define se ainda não houver um
+        prompts_repo = SqlPromptTenantRepository(session)
+        if await prompts_repo.obter(tenant_id=DEMO_TENANT_ID) is None:
+            await prompts_repo.salvar(tenant_id=DEMO_TENANT_ID, conteudo=_PROMPT_DEMO)
 
         await session.commit()
     print("Seed concluído (tenant demo:", DEMO_TENANT_ID, ")")

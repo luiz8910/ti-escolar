@@ -119,6 +119,7 @@ class EnvioGrupoSaida(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+<<<<<<< HEAD
 # Escolas (tenants) — CRUD do super admin
 # --------------------------------------------------------------------------- #
 class EscolaEntrada(BaseModel):
@@ -179,3 +180,86 @@ class BroadcastResumoSaida(BaseModel):
     agendado_para: datetime | None = None
     total_destinatarios: int
     por_status: dict[str, int] = {}
+=======
+# Pais/responsáveis (CRUD) e salas/turmas
+# --------------------------------------------------------------------------- #
+class PaiEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str
+    telefone: str = Field(..., examples=["+5511999990000"])
+    # Salas às quais já vincular o responsável no cadastro (opcional).
+    sala_ids: list[UUID] = []
+
+
+class PaiAtualizar(BaseModel):
+    tenant_id: UUID
+    nome: str
+    telefone: str = Field(..., examples=["+5511999990000"])
+
+
+class PaiSaida(BaseModel):
+    id: UUID
+    nome: str
+    telefone: str
+
+
+class SalaEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str = Field(..., examples=["4ª série B"])
+    descricao: str = ""
+
+
+class SalaAtualizar(BaseModel):
+    tenant_id: UUID
+    nome: str = Field(..., examples=["4ª série B"])
+    descricao: str = ""
+
+
+class SalaSaida(BaseModel):
+    id: UUID
+    nome: str
+    descricao: str
+    total_pais: int
+    pais: list[PaiSaida] = []
+
+
+class TenantRef(BaseModel):
+    """Corpo mínimo para operações que só precisam confirmar o tenant."""
+
+    tenant_id: UUID
+
+
+class VinculoPaiEntrada(BaseModel):
+    tenant_id: UUID
+    contato_id: UUID
+
+
+# --------------------------------------------------------------------------- #
+# Base de conhecimento (RAG) e system prompt por tenant
+# --------------------------------------------------------------------------- #
+class DocumentoConhecimentoEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str = Field(..., examples=["Manual de procedimentos 2026"])
+    conteudo: str
+    # "procedimento" | "aviso" | "faq"
+    tipo: str = "procedimento"
+
+
+class FonteConhecimentoSaida(BaseModel):
+    id: UUID
+    nome: str
+    tipo: str
+    total_trechos: int
+    criado_em: datetime
+
+
+class PromptTenantEntrada(BaseModel):
+    tenant_id: UUID
+    conteudo: str = ""
+
+
+class PromptTenantSaida(BaseModel):
+    tenant_id: UUID
+    conteudo: str
+    atualizado_em: datetime | None = None
+>>>>>>> origin/main
