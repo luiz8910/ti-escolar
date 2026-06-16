@@ -43,9 +43,13 @@ documentos, usuários, templates e cota de mensagens.
    **templates** e **controle de limites diários por tier**.
 4. **Grupos de distribuição** — contatos (números de WhatsApp dos pais) organizados em **grupos**
    por escola; mensagens podem ser dirigidas **apenas aos membros de um grupo** (ex.: "Turma 5º A").
-5. **Administração** — **super admin** da plataforma (cross-tenant) e **admin por tenant** (escola),
-   com autenticação e regras de permissão.
-6. **Multi-tenant** — isolamento por escola em todas as funcionalidades.
+5. **Administração** — **super admin** da plataforma (cross-tenant), que faz **CRUD de escolas
+   (tenants)** e acompanha **conversas e broadcasts** de cada escola; e **admin por tenant**
+   (escola), com autenticação e regras de permissão.
+6. **Cadastro escolar (pais e salas)** — o admin da escola cadastra **pais/responsáveis** (CRUD) e
+   **salas/turmas** (ex.: "4ª série B"), vincula pais a salas (N:N) e extrai o **relatório de pais
+   por sala**.
+7. **Multi-tenant** — isolamento por escola em todas as funcionalidades.
 
 ---
 
@@ -126,8 +130,12 @@ ti-escolar/
 - **Isolamento por `tenant_id`** (escola) em todas as tabelas relevantes.
 - Entidades principais: `Tenant` (escola), `Usuario` (admin), `Conversa`, `Mensagem`,
   `Documento`, `Conhecimento` (FAQ/aviso/procedimento), `MessageTemplate`, `Broadcast`/Campanha,
-  `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`.
-- **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG.
+  `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`,
+  `Sala` (turma) + associação `sala_contatos`, `FonteConhecimento` (documento da escola),
+  `PromptTenant` (system prompt da escola) e `ResumoEscola` (visão agregada do super admin).
+- **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
+  `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
+- **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` → `0004_conhecimento_prompt`.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -165,6 +173,36 @@ ti-escolar/
 - **Painel:** páginas `web/app/admin/conhecimento/` (upload/lista) e `web/app/admin/prompt/`
   (editor das instruções). O upload lê o arquivo no navegador e envia o texto via JSON
   (sem multipart no servidor).
+
+### 6c. Salas (turmas), pais/responsáveis e relatório
+
+- **`Sala`** (turma, ex.: "4ª série B") por tenant, única por `(tenant_id, nome)`. Agrega
+  **`Contato`s** (pais/responsáveis) em **N:N** via `sala_contatos` — um responsável pode estar em
+  mais de uma sala. Casos de uso em `app/application/cadastro_use_cases.py`.
+- **CRUD completo** de pais e de salas, vínculo/desvínculo pai↔sala e **relatório de pais por
+  sala** (`RelatorioPaisDaSala`). `Contato` continua único por `(tenant_id, telefone)`.
+- **Rotas** em `app/interfaces/api/cadastro.py` (prefixo `/api/admin`, reaproveitando
+  `usuario_autenticado` e `_exige_acesso_tenant`): `pais` (POST/GET/PUT/DELETE),
+  `salas` (POST/GET/PUT/DELETE), `salas/{id}/pais` (GET relatório · POST vincular) e
+  `salas/{id}/pais/{contato_id}` (DELETE desvincular).
+- **Painel:** `web/app/admin/salas/` — CRUD de salas e pais, vínculo e **relatório imprimível**
+  (PDF). O seed cria salas demo ("4ª série B", "5ª série A") com responsáveis vinculados.
+
+### 6d. Gestão de escolas (super admin)
+
+- **CRUD de escolas (`Tenant`):** apenas o **super admin** cria/edita/remove escolas
+  (`app/application/tenant_use_cases.py`: `CriarEscola`, `ListarEscolas`, `ObterEscola`,
+  `AtualizarEscola`, `RemoverEscola`). `Tenant` é único por `slug`. A **remoção é em cascata
+  explícita** (`SqlTenantRepository.remover` apaga, na mesma transação, mensagens → conversas →
+  conhecimento → broadcasts → grupos/contatos → usuários → tenant, pois as FKs não têm
+  `ON DELETE CASCADE`).
+- **Visão cross-tenant:** `ListarEscolas` devolve `ResumoEscola` (totais de conversas, contatos e
+  broadcasts por escola); o super admin também inspeciona **conversas + mensagens**
+  (`ObterConversaDaEscola`) e **broadcasts** de cada escola.
+- **Rotas** em `app/interfaces/api/admin.py` (guard `_exige_super_admin`): `/api/admin/escolas`
+  (POST/GET), `/escolas/{tenant_id}` (GET/PUT/DELETE), `/escolas/{tenant_id}/conversas`,
+  `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`.
+- **Painel:** `web/app/admin/escolas/` (lista + detalhe por `[tenantId]`).
 
 ## 7. Camada de LLM
 
@@ -248,6 +286,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] Integrações reais de `DocumentSource` (substituir mocks).
 - [x] **Base de conhecimento por tenant** (upload de documentos → RAG) e **system prompt
   personalizado por escola** (um "CLAUDE.md" do tenant), com painel em `web/app/admin/`.
+- [x] **Cadastro escolar:** CRUD de **pais/responsáveis** e **salas (turmas)**, vínculo N:N e
+  **relatório de pais por sala** (`app/interfaces/api/cadastro.py`, `web/app/admin/salas/`).
+- [x] **Gestão de escolas pelo super admin:** CRUD de tenants + visão de **conversas e broadcasts**
+  por escola (`app/application/tenant_use_cases.py`, `web/app/admin/escolas/`).
 - [x] Modelo de **administração** (super admin / admin de tenant) + **grupos de contatos**.
 - [x] **Painel administrativo** (UI Next.js): login, gestão de grupos/contatos, barra de cota e
   disparo direcionado a grupo (`web/app/admin/`).
