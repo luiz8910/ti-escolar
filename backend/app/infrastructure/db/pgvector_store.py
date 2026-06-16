@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import ResultadoBusca, TipoConhecimento, TrechoConhecimento
@@ -21,6 +21,7 @@ class PgVectorStore:
             ConhecimentoORM(
                 id=trecho.id,
                 tenant_id=trecho.tenant_id,
+                fonte_id=trecho.fonte_id,
                 tipo=trecho.tipo.value,
                 titulo=trecho.titulo,
                 conteudo=trecho.conteudo,
@@ -29,6 +30,15 @@ class PgVectorStore:
             )
         )
         await self._s.flush()
+
+    async def remover_por_fonte(self, *, tenant_id: uuid.UUID, fonte_id: uuid.UUID) -> int:
+        stmt = delete(ConhecimentoORM).where(
+            ConhecimentoORM.tenant_id == tenant_id,
+            ConhecimentoORM.fonte_id == fonte_id,
+        )
+        resultado = await self._s.execute(stmt)
+        await self._s.flush()
+        return int(resultado.rowcount or 0)
 
     async def buscar(
         self, *, tenant_id: uuid.UUID, embedding: list[float], k: int = 4

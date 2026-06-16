@@ -91,6 +91,23 @@ class Grupo:
     membros: list[Contato] = field(default_factory=list)
 
 
+@dataclass
+class Sala:
+    """Sala/turma da escola (ex.: "4ª série B"), dentro de um tenant.
+
+    Agrega os ``Contato``s (pais/responsáveis) vinculados àquela turma (N:N — um
+    responsável pode ter filhos em salas diferentes). É a base do relatório de pais
+    por sala.
+    """
+
+    tenant_id: UUID
+    nome: str  # ex.: "4ª série B"
+    descricao: str = ""
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    pais: list[Contato] = field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- #
 # Conversa / mensagens (inbound)
 # --------------------------------------------------------------------------- #
@@ -130,7 +147,11 @@ class TipoConhecimento(str, enum.Enum):
 
 @dataclass
 class TrechoConhecimento:
-    """Unidade indexável no vector store (com seu embedding calculado fora)."""
+    """Unidade indexável no vector store (com seu embedding calculado fora).
+
+    Quando proveniente de um documento enviado pela escola, ``fonte_id`` aponta para
+    a ``FonteConhecimento`` que o originou (vários trechos por documento).
+    """
 
     tenant_id: UUID
     tipo: TipoConhecimento
@@ -138,6 +159,38 @@ class TrechoConhecimento:
     conteudo: str
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+    fonte_id: UUID | None = None
+
+
+@dataclass
+class FonteConhecimento:
+    """Documento enviado pela escola para enriquecer a base de RAG do tenant.
+
+    A escola sobe um texto/arquivo de procedimentos; ele é fragmentado em vários
+    ``TrechoConhecimento`` indexados no vector store. Esta entidade guarda os
+    metadados do documento original para gestão (listar/remover) no painel admin.
+    """
+
+    tenant_id: UUID
+    nome: str  # ex.: "Manual de procedimentos 2026"
+    tipo: TipoConhecimento = TipoConhecimento.PROCEDIMENTO
+    total_trechos: int = 0
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class PromptTenant:
+    """Instruções de sistema personalizadas por escola — um "CLAUDE.md" do tenant.
+
+    Texto livre acrescentado às diretrizes institucionais do assistente, ajustando
+    tom, regras e contexto específicos daquela escola. É escopado por ``tenant_id``.
+    """
+
+    tenant_id: UUID
+    conteudo: str = ""
+    id: UUID = field(default_factory=_new_id)
+    atualizado_em: datetime = field(default_factory=_now)
 
 
 @dataclass

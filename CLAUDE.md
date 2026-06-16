@@ -149,6 +149,23 @@ ti-escolar/
 
 ---
 
+### 6b. Base de conhecimento por tenant e system prompt da escola
+
+- **Documentos da escola (RAG):** o admin sobe textos/arquivos de procedimentos
+  (`FonteConhecimento`); o caso de uso `IngerirDocumento` fragmenta o conteúdo
+  (`fragmentar`), gera embeddings e indexa cada trecho no `VectorStore` com `fonte_id`
+  apontando para a fonte. Isso enriquece o contexto da LLM **apenas daquele tenant**.
+  Gestão (listar/remover) via `app/interfaces/api/conhecimento.py`
+  (`/api/admin/conhecimento`); remover uma fonte apaga seus trechos indexados.
+- **System prompt do tenant (`PromptTenant`):** um "CLAUDE.md" por escola, editável no
+  painel (`/api/admin/prompt`). É anexado às diretrizes-base do assistente
+  (`montar_sistema` / `montar_sistema_agente`) e tem **prioridade institucional**.
+  `ResponderDuvida` e `AtenderConversa` recebem um `PromptTenantRepository` opcional e
+  injetam o texto da escola no prompt de sistema.
+- **Painel:** páginas `web/app/admin/conhecimento/` (upload/lista) e `web/app/admin/prompt/`
+  (editor das instruções). O upload lê o arquivo no navegador e envia o texto via JSON
+  (sem multipart no servidor).
+
 ## 7. Camada de LLM
 
 - Contrato único: porta **`LLMProvider`** no domínio (ex.: `gerar(prompt/messages, opções) -> resposta`).
@@ -229,6 +246,8 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e fila.
 - [ ] Inbound real do WhatsApp (webhook da Meta).
 - [ ] Integrações reais de `DocumentSource` (substituir mocks).
+- [x] **Base de conhecimento por tenant** (upload de documentos → RAG) e **system prompt
+  personalizado por escola** (um "CLAUDE.md" do tenant), com painel em `web/app/admin/`.
 - [x] Modelo de **administração** (super admin / admin de tenant) + **grupos de contatos**.
 - [x] **Painel administrativo** (UI Next.js): login, gestão de grupos/contatos, barra de cota e
   disparo direcionado a grupo (`web/app/admin/`).

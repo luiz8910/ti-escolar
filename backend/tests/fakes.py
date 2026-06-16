@@ -36,6 +36,53 @@ class FakeVectorStore:
         candidatos.sort(key=lambda x: x[1], reverse=True)
         return [ResultadoBusca(trecho=t, score=s) for t, s in candidatos[:k]]
 
+    async def remover_por_fonte(self, *, tenant_id, fonte_id) -> int:
+        antes = len(self._itens)
+        self._itens = [
+            (t, e)
+            for t, e in self._itens
+            if not (t.tenant_id == tenant_id and t.fonte_id == fonte_id)
+        ]
+        return antes - len(self._itens)
+
+
+class FakeFonteConhecimentoRepo:
+    def __init__(self) -> None:
+        self.fontes: dict[uuid.UUID, "FonteConhecimento"] = {}
+
+    async def criar(self, fonte):
+        self.fontes[fonte.id] = fonte
+        return fonte
+
+    async def obter(self, *, tenant_id, fonte_id):
+        f = self.fontes.get(fonte_id)
+        return f if f and f.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id):
+        return [f for f in self.fontes.values() if f.tenant_id == tenant_id]
+
+    async def remover(self, *, tenant_id, fonte_id):
+        f = self.fontes.get(fonte_id)
+        if f is None or f.tenant_id != tenant_id:
+            return False
+        del self.fontes[fonte_id]
+        return True
+
+
+class FakePromptTenantRepo:
+    def __init__(self) -> None:
+        self.prompts: dict[uuid.UUID, "PromptTenant"] = {}
+
+    async def obter(self, *, tenant_id):
+        return self.prompts.get(tenant_id)
+
+    async def salvar(self, *, tenant_id, conteudo):
+        from app.domain.entities import PromptTenant
+
+        prompt = PromptTenant(tenant_id=tenant_id, conteudo=conteudo)
+        self.prompts[tenant_id] = prompt
+        return prompt
+
 
 class FakeLLM:
     def __init__(self, respostas: list[RespostaLLM] | None = None) -> None:
@@ -198,3 +245,95 @@ class FakeGrupoRepo:
     async def membros(self, *, tenant_id, grupo_id):
         g = await self.obter(tenant_id=tenant_id, grupo_id=grupo_id)
         return list(g.membros) if g else []
+
+
+class FakeContatoRepo:
+    def __init__(self) -> None:
+        self.contatos: dict[uuid.UUID, "Contato"] = {}
+
+    async def criar(self, contato):
+        self.contatos[contato.id] = contato
+        return contato
+
+    async def obter(self, *, tenant_id, contato_id):
+        c = self.contatos.get(contato_id)
+        return c if c and c.tenant_id == tenant_id else None
+
+    async def por_telefone(self, *, tenant_id, telefone):
+        return next(
+            (
+                c
+                for c in self.contatos.values()
+                if c.tenant_id == tenant_id and c.telefone == telefone
+            ),
+            None,
+        )
+
+    async def listar(self, *, tenant_id):
+        return [c for c in self.contatos.values() if c.tenant_id == tenant_id]
+
+    async def atualizar(self, contato):
+        self.contatos[contato.id] = contato
+        return contato
+
+    async def remover(self, *, tenant_id, contato_id):
+        c = self.contatos.get(contato_id)
+        if c is None or c.tenant_id != tenant_id:
+            return False
+        del self.contatos[contato_id]
+        return True
+
+
+class FakeSalaRepo:
+    def __init__(self) -> None:
+        self.salas: dict[uuid.UUID, "Sala"] = {}
+        # Resolve pais pelo id para o vínculo (compartilhado com o FakeContatoRepo nos testes).
+        self.contatos: FakeContatoRepo | None = None
+
+    async def criar(self, sala):
+        self.salas[sala.id] = sala
+        return sala
+
+    async def obter(self, *, tenant_id, sala_id):
+        s = self.salas.get(sala_id)
+        return s if s and s.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id):
+        return [s for s in self.salas.values() if s.tenant_id == tenant_id]
+
+    async def atualizar(self, *, tenant_id, sala_id, nome, descricao):
+        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if s is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        s.nome = nome
+        s.descricao = descricao
+        return s
+
+    async def remover(self, *, tenant_id, sala_id):
+        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if s is None:
+            return False
+        del self.salas[sala_id]
+        return True
+
+    async def vincular_pai(self, *, tenant_id, sala_id, contato_id):
+        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if s is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        contato = self.contatos.contatos.get(contato_id) if self.contatos else None
+        if contato is None or contato.tenant_id != tenant_id:
+            raise ValueError("Pai/responsável não encontrado para o tenant.")
+        if all(c.id != contato_id for c in s.pais):
+            s.pais.append(contato)
+
+    async def desvincular_pai(self, *, tenant_id, sala_id, contato_id):
+        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if s is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        s.pais = [c for c in s.pais if c.id != contato_id]
+
+    async def pais(self, *, tenant_id, sala_id):
+        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if s is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        return list(s.pais)
