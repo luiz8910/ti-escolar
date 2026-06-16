@@ -16,10 +16,14 @@ from app.domain.entities import (
     Documento,
     FerramentaSpec,
     Grupo,
+    Mensagem,
     MessageQuota,
     MessageTemplate,
     RespostaLLM,
     ResultadoBusca,
+    ResumoConversa,
+    ResumoEscola,
+    Tenant,
     TrechoConhecimento,
     TurnoConversa,
     Usuario,
@@ -127,6 +131,25 @@ class RateLimiter(Protocol):
 # Repositórios de persistência
 # --------------------------------------------------------------------------- #
 @runtime_checkable
+class TenantRepository(Protocol):
+    """CRUD de escolas (tenants). Operado apenas pelo super admin."""
+
+    async def criar(self, tenant: Tenant) -> Tenant: ...
+
+    async def obter(self, tenant_id: UUID) -> Tenant | None: ...
+
+    async def por_slug(self, slug: str) -> Tenant | None: ...
+
+    async def listar(self) -> list[Tenant]: ...
+
+    async def listar_resumos(self) -> list[ResumoEscola]: ...
+
+    async def atualizar(self, tenant: Tenant) -> Tenant: ...
+
+    async def remover(self, tenant_id: UUID) -> bool: ...
+
+
+@runtime_checkable
 class ConversaRepository(Protocol):
     async def obter_ou_criar(self, *, tenant_id: UUID, contato: str) -> Conversa: ...
 
@@ -135,6 +158,14 @@ class ConversaRepository(Protocol):
     ) -> None: ...
 
     async def historico(self, *, conversa_id: UUID, limite: int = 20) -> list[dict[str, str]]: ...
+
+    async def listar_resumos(self, *, tenant_id: UUID) -> list[ResumoConversa]:
+        """Conversas do tenant com metadados (total, última mensagem)."""
+        ...
+
+    async def obter_conversa(self, *, tenant_id: UUID, conversa_id: UUID) -> Conversa | None: ...
+
+    async def mensagens(self, *, conversa_id: UUID) -> list[Mensagem]: ...
 
 
 @runtime_checkable
@@ -147,6 +178,10 @@ class BroadcastRepository(Protocol):
     async def salvar(self, broadcast: Broadcast) -> None: ...
 
     async def obter(self, broadcast_id: UUID) -> Broadcast | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[Broadcast]:
+        """Broadcasts (mensagens em massa) do tenant, mais recentes primeiro."""
+        ...
 
 
 @runtime_checkable

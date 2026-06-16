@@ -62,6 +62,11 @@ export default function AdminDashboard() {
           <span className="font-semibold">TI-Escolar — Painel administrativo</span>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          {usuario.papel === "super_admin" && (
+            <a href="/admin/escolas" className="text-white/80 hover:text-white">
+              Escolas
+            </a>
+          )}
           <span>
             {usuario.nome}{" "}
             <span className="rounded bg-white/20 px-2 py-0.5 text-xs">

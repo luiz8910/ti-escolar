@@ -5,16 +5,35 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities import Contato, Grupo, Papel, Usuario
-from app.infrastructure.db.models import ContatoORM, GrupoORM, UsuarioORM
+from app.domain.entities import Contato, Grupo, Papel, ResumoEscola, Tenant, Usuario
+from app.infrastructure.db.models import (
+    BroadcastORM,
+    ConhecimentoORM,
+    ContatoORM,
+    ConversaORM,
+    DestinatarioORM,
+    DocumentoORM,
+    GrupoORM,
+    MensagemORM,
+    QuotaORM,
+    TemplateORM,
+    TenantORM,
+    UsuarioORM,
+    grupo_contatos,
+)
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _to_tenant(row: TenantORM) -> Tenant:
+    return Tenant(id=row.id, nome=row.nome, slug=row.slug, criado_em=row.criado_em)
 
 
 def _to_usuario(row: UsuarioORM) -> Usuario:
@@ -38,6 +57,116 @@ def _to_contato(row: ContatoORM) -> Contato:
         telefone=row.telefone,
         criado_em=row.criado_em,
     )
+
+
+class SqlTenantRepository:
+    """Persistência das escolas (tenants), com remoção em cascata explícita.
+
+    O esquema usa FKs sem ``ON DELETE CASCADE``, então a remoção apaga os dados
+    dependentes em ordem (mensagens → conversas → ... → tenant) na mesma transação.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def criar(self, tenant: Tenant) -> Tenant:
+        self._s.add(
+            TenantORM(
+                id=tenant.id,
+                nome=tenant.nome,
+                slug=tenant.slug,
+                criado_em=tenant.criado_em,
+            )
+        )
+        try:
+            await self._s.flush()
+        except IntegrityError as e:
+            await self._s.rollback()
+            raise ValueError("Já existe uma escola com este slug.") from e
+        return tenant
+
+    async def obter(self, tenant_id: uuid.UUID) -> Tenant | None:
+        row = await self._s.get(TenantORM, tenant_id)
+        return _to_tenant(row) if row else None
+
+    async def por_slug(self, slug: str) -> Tenant | None:
+        stmt = select(TenantORM).where(TenantORM.slug == slug)
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        return _to_tenant(row) if row else None
+
+    async def listar(self) -> list[Tenant]:
+        stmt = select(TenantORM).order_by(TenantORM.nome)
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_tenant(r) for r in rows]
+
+    async def listar_resumos(self) -> list[ResumoEscola]:
+        tenants = await self.listar()
+
+        async def _contagem(coluna) -> dict[uuid.UUID, int]:
+            stmt = select(coluna, func.count()).group_by(coluna)
+            return {tid: n for tid, n in (await self._s.execute(stmt)).all()}
+
+        conversas = await _contagem(ConversaORM.tenant_id)
+        contatos = await _contagem(ContatoORM.tenant_id)
+        broadcasts = await _contagem(BroadcastORM.tenant_id)
+        return [
+            ResumoEscola(
+                tenant=t,
+                total_conversas=conversas.get(t.id, 0),
+                total_contatos=contatos.get(t.id, 0),
+                total_broadcasts=broadcasts.get(t.id, 0),
+            )
+            for t in tenants
+        ]
+
+    async def atualizar(self, tenant: Tenant) -> Tenant:
+        row = await self._s.get(TenantORM, tenant.id)
+        if row is None:
+            raise ValueError("Escola não encontrada.")
+        row.nome = tenant.nome
+        row.slug = tenant.slug
+        try:
+            await self._s.flush()
+        except IntegrityError as e:
+            await self._s.rollback()
+            raise ValueError("Já existe uma escola com este slug.") from e
+        return _to_tenant(row)
+
+    async def remover(self, tenant_id: uuid.UUID) -> bool:
+        row = await self._s.get(TenantORM, tenant_id)
+        if row is None:
+            return False
+
+        conversas_do_tenant = select(ConversaORM.id).where(ConversaORM.tenant_id == tenant_id)
+        broadcasts_do_tenant = select(BroadcastORM.id).where(BroadcastORM.tenant_id == tenant_id)
+        grupos_do_tenant = select(GrupoORM.id).where(GrupoORM.tenant_id == tenant_id)
+        contatos_do_tenant = select(ContatoORM.id).where(ContatoORM.tenant_id == tenant_id)
+
+        # Filhos primeiro, respeitando as FKs.
+        await self._s.execute(
+            delete(MensagemORM).where(MensagemORM.conversa_id.in_(conversas_do_tenant))
+        )
+        await self._s.execute(delete(ConversaORM).where(ConversaORM.tenant_id == tenant_id))
+        await self._s.execute(delete(ConhecimentoORM).where(ConhecimentoORM.tenant_id == tenant_id))
+        await self._s.execute(delete(DocumentoORM).where(DocumentoORM.tenant_id == tenant_id))
+        await self._s.execute(
+            delete(DestinatarioORM).where(DestinatarioORM.broadcast_id.in_(broadcasts_do_tenant))
+        )
+        await self._s.execute(delete(BroadcastORM).where(BroadcastORM.tenant_id == tenant_id))
+        await self._s.execute(delete(TemplateORM).where(TemplateORM.tenant_id == tenant_id))
+        await self._s.execute(delete(QuotaORM).where(QuotaORM.tenant_id == tenant_id))
+        await self._s.execute(
+            delete(grupo_contatos).where(
+                grupo_contatos.c.grupo_id.in_(grupos_do_tenant)
+                | grupo_contatos.c.contato_id.in_(contatos_do_tenant)
+            )
+        )
+        await self._s.execute(delete(GrupoORM).where(GrupoORM.tenant_id == tenant_id))
+        await self._s.execute(delete(ContatoORM).where(ContatoORM.tenant_id == tenant_id))
+        await self._s.execute(delete(UsuarioORM).where(UsuarioORM.tenant_id == tenant_id))
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
 
 
 class SqlUsuarioRepository:
