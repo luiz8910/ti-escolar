@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     demo_admin_email: str = "admin@escola-demo.test"
     demo_admin_senha: str = "escola123"
 
+    # Autenticação (JWT) — segredo de assinatura HS256 e validade do token (minutos).
+    # Em produção, defina JWT_SECRET com um valor forte e secreto.
+    jwt_secret: str = "troque-este-segredo-jwt"
+    jwt_expira_minutos: int = 480  # 8 horas
+
     # Meta WhatsApp Cloud API
     meta_phone_number_id: str | None = None
     meta_waba_id: str | None = None

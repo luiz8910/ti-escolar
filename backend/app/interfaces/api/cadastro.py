@@ -1,8 +1,8 @@
 """Rotas de cadastro escolar: CRUD de pais/responsáveis e de salas (turmas),
 vínculo pai↔sala e relatório de pais por sala.
 
-Reaproveita a autenticação e o controle de tenant do módulo ``admin`` (cabeçalhos
-``X-User-Email`` / ``X-User-Senha``; JWT/sessão segue no roadmap).
+Reaproveita a autenticação por JWT (``Authorization: Bearer``) e o controle de tenant
+do módulo ``admin``.
 """
 
 from __future__ import annotations

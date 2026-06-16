@@ -71,6 +71,13 @@ class UsuarioSaida(BaseModel):
     tenant_id: UUID | None = None
 
 
+class TokenSaida(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expira_em: int  # validade do token em segundos
+    usuario: UsuarioSaida
+
+
 class CriarUsuarioEntrada(BaseModel):
     nome: str
     email: str
