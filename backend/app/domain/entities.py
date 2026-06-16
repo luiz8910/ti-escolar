@@ -33,6 +33,16 @@ class Tenant:
     criado_em: datetime = field(default_factory=_now)
 
 
+@dataclass
+class ResumoEscola:
+    """Escola acompanhada de contadores, para a listagem do super admin."""
+
+    tenant: Tenant
+    total_conversas: int = 0
+    total_contatos: int = 0
+    total_broadcasts: int = 0
+
+
 # --------------------------------------------------------------------------- #
 # Administração: usuários (super admin e admin de tenant)
 # --------------------------------------------------------------------------- #
@@ -134,6 +144,16 @@ class Conversa:
     contato: str
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class ResumoConversa:
+    """Conversa com metadados para a listagem (sem carregar todas as mensagens)."""
+
+    conversa: Conversa
+    total_mensagens: int = 0
+    ultima_mensagem: str = ""
+    ultima_em: datetime | None = None
 
 
 # --------------------------------------------------------------------------- #

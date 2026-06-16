@@ -119,6 +119,69 @@ class EnvioGrupoSaida(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Escolas (tenants) — CRUD do super admin
+# --------------------------------------------------------------------------- #
+class EscolaEntrada(BaseModel):
+    nome: str
+    # Opcional: se vazio, é derivado do nome.
+    slug: str = ""
+
+
+class EscolaSaida(BaseModel):
+    id: UUID
+    nome: str
+    slug: str
+    criado_em: datetime
+
+
+class EscolaResumoSaida(BaseModel):
+    id: UUID
+    nome: str
+    slug: str
+    criado_em: datetime
+    total_conversas: int
+    total_contatos: int
+    total_broadcasts: int
+
+
+# --------------------------------------------------------------------------- #
+# Visualização de conversas (inbound) e broadcasts (outbound) da escola
+# --------------------------------------------------------------------------- #
+class ConversaResumoSaida(BaseModel):
+    id: UUID
+    contato: str
+    criado_em: datetime
+    total_mensagens: int
+    ultima_mensagem: str
+    ultima_em: datetime | None = None
+
+
+class MensagemConversaSaida(BaseModel):
+    id: UUID
+    autor: str  # "usuario" | "bot"
+    texto: str
+    fontes: list[str] = []
+    criado_em: datetime
+
+
+class ConversaDetalheSaida(BaseModel):
+    id: UUID
+    contato: str
+    criado_em: datetime
+    mensagens: list[MensagemConversaSaida] = []
+
+
+class BroadcastResumoSaida(BaseModel):
+    id: UUID
+    titulo: str
+    status: str
+    criado_em: datetime
+    agendado_para: datetime | None = None
+    total_destinatarios: int
+    por_status: dict[str, int] = {}
+
+
+# --------------------------------------------------------------------------- #
 # Pais/responsáveis (CRUD) e salas/turmas
 # --------------------------------------------------------------------------- #
 class PaiEntrada(BaseModel):

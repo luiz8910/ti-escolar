@@ -46,6 +46,50 @@ export interface Quota {
   restante: number;
 }
 
+export interface Escola {
+  id: string;
+  nome: string;
+  slug: string;
+  criado_em: string;
+  total_conversas: number;
+  total_contatos: number;
+  total_broadcasts: number;
+}
+
+export interface ConversaResumo {
+  id: string;
+  contato: string;
+  criado_em: string;
+  total_mensagens: number;
+  ultima_mensagem: string;
+  ultima_em: string | null;
+}
+
+export interface MensagemConversa {
+  id: string;
+  autor: "usuario" | "bot";
+  texto: string;
+  fontes: string[];
+  criado_em: string;
+}
+
+export interface ConversaDetalhe {
+  id: string;
+  contato: string;
+  criado_em: string;
+  mensagens: MensagemConversa[];
+}
+
+export interface BroadcastResumo {
+  id: string;
+  titulo: string;
+  status: string;
+  criado_em: string;
+  agendado_para: string | null;
+  total_destinatarios: number;
+  por_status: Record<string, number>;
+}
+
 export interface ResultadoEnvioGrupo {
   grupo_id: string;
   total_contatos: number;
@@ -157,10 +201,95 @@ export async function enviarParaGrupo(
 }
 
 export async function consultarQuota(): Promise<Quota> {
-  const resp = await fetch(`${API_URL}/api/broadcasts/quota/${tenantEmFoco()}`, {
+  return consultarQuotaDe(tenantEmFoco());
+}
+
+export async function consultarQuotaDe(tenantId: string): Promise<Quota> {
+  const resp = await fetch(`${API_URL}/api/broadcasts/quota/${tenantId}`, {
     headers: authHeaders(),
   });
   if (!resp.ok) throw new Error(`Erro ${resp.status} ao consultar cota`);
+  return resp.json();
+}
+
+// --------------------------- escolas (super admin) ------------------------- //
+async function erroDe(resp: Response, padrao: string): Promise<Error> {
+  const corpo = await resp.json().catch(() => ({}));
+  return new Error(corpo.detail ?? padrao);
+}
+
+export async function listarEscolas(): Promise<Escola[]> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas`, { headers: authHeaders() });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar escolas`);
+  return resp.json();
+}
+
+export async function obterEscola(id: string): Promise<Escola> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas/${id}`, { headers: authHeaders() });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar escola`);
+  return resp.json();
+}
+
+export async function criarEscola(nome: string, slug: string): Promise<Escola> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ nome, slug }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar escola`);
+  return resp.json();
+}
+
+export async function atualizarEscola(
+  id: string,
+  nome: string,
+  slug: string
+): Promise<Escola> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ nome, slug }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao atualizar escola`);
+  return resp.json();
+}
+
+export async function removerEscola(id: string): Promise<void> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!resp.ok && resp.status !== 204) {
+    throw await erroDe(resp, `Erro ${resp.status} ao remover escola`);
+  }
+}
+
+// --------------------------- conversas e broadcasts ------------------------ //
+export async function listarConversas(tenantId: string): Promise<ConversaResumo[]> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas/${tenantId}/conversas`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar conversas`);
+  return resp.json();
+}
+
+export async function obterConversa(
+  tenantId: string,
+  conversaId: string
+): Promise<ConversaDetalhe> {
+  const resp = await fetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/conversas/${conversaId}`,
+    { headers: authHeaders() }
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao abrir conversa`);
+  return resp.json();
+}
+
+export async function listarBroadcasts(tenantId: string): Promise<BroadcastResumo[]> {
+  const resp = await fetch(`${API_URL}/api/admin/escolas/${tenantId}/broadcasts`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar mensagens em massa`);
   return resp.json();
 }
 

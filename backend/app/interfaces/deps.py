@@ -27,6 +27,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlContatoRepository,
     SqlGrupoRepository,
     SqlSalaRepository,
+    SqlTenantRepository,
     SqlUsuarioRepository,
 )
 from app.infrastructure.db.repositories_conhecimento import (
@@ -124,6 +125,18 @@ def get_usuario_repo(
 
 def get_grupo_repo(session: AsyncSession = Depends(get_session)) -> SqlGrupoRepository:
     return SqlGrupoRepository(session)
+
+
+def get_tenant_repo(session: AsyncSession = Depends(get_session)) -> SqlTenantRepository:
+    return SqlTenantRepository(session)
+
+
+def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConversaRepository:
+    return SqlConversaRepository(session)
+
+
+def get_broadcast_repo(session: AsyncSession = Depends(get_session)) -> SqlBroadcastRepository:
+    return SqlBroadcastRepository(session)
 
 
 def get_contato_repo(session: AsyncSession = Depends(get_session)) -> SqlContatoRepository:
