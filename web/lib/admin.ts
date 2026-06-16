@@ -163,3 +163,207 @@ export async function consultarQuota(): Promise<Quota> {
   if (!resp.ok) throw new Error(`Erro ${resp.status} ao consultar cota`);
   return resp.json();
 }
+
+// --------------------------- pais e salas --------------------------------- //
+export interface Pai {
+  id: string;
+  nome: string;
+  telefone: string;
+}
+
+export interface Sala {
+  id: string;
+  nome: string;
+  descricao: string;
+  total_pais: number;
+  pais: Pai[];
+}
+
+async function jsonOuErro<T>(resp: Response, contexto: string): Promise<T> {
+  if (!resp.ok) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao ${contexto}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
+// ----- pais (CRUD) ----- //
+export async function listarPais(): Promise<Pai[]> {
+  const resp = await fetch(`${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "listar pais");
+}
+
+export async function cadastrarPai(
+  nome: string,
+  telefone: string,
+  salaIds: string[] = []
+): Promise<Pai> {
+  const resp = await fetch(`${API_URL}/api/admin/pais`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, sala_ids: salaIds }),
+  });
+  return jsonOuErro(resp, "cadastrar responsável");
+}
+
+export async function atualizarPai(
+  contatoId: string,
+  nome: string,
+  telefone: string
+): Promise<Pai> {
+  const resp = await fetch(`${API_URL}/api/admin/pais/${contatoId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
+  });
+  return jsonOuErro(resp, "atualizar responsável");
+}
+
+export async function removerPai(contatoId: string): Promise<void> {
+  const resp = await fetch(
+    `${API_URL}/api/admin/pais/${contatoId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover responsável`);
+  }
+}
+
+// ----- salas (CRUD) ----- //
+export async function listarSalas(): Promise<Sala[]> {
+  const resp = await fetch(`${API_URL}/api/admin/salas/tenant/${tenantEmFoco()}`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "listar salas");
+}
+
+export async function criarSala(nome: string, descricao = ""): Promise<Sala> {
+  const resp = await fetch(`${API_URL}/api/admin/salas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
+  });
+  return jsonOuErro(resp, "criar sala");
+}
+
+export async function atualizarSala(
+  salaId: string,
+  nome: string,
+  descricao: string
+): Promise<Sala> {
+  const resp = await fetch(`${API_URL}/api/admin/salas/${salaId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
+  });
+  return jsonOuErro(resp, "atualizar sala");
+}
+
+export async function removerSala(salaId: string): Promise<void> {
+  const resp = await fetch(
+    `${API_URL}/api/admin/salas/${salaId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover sala`);
+  }
+}
+
+// ----- vínculo e relatório ----- //
+export async function vincularPaiASala(salaId: string, contatoId: string): Promise<void> {
+  const resp = await fetch(`${API_URL}/api/admin/salas/${salaId}/pais`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), contato_id: contatoId }),
+  });
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao vincular responsável`);
+  }
+}
+
+export async function desvincularPaiDaSala(salaId: string, contatoId: string): Promise<void> {
+  const resp = await fetch(
+    `${API_URL}/api/admin/salas/${salaId}/pais/${contatoId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao desvincular responsável`);
+  }
+}
+
+export async function relatorioPaisDaSala(salaId: string): Promise<Pai[]> {
+  const resp = await fetch(
+    `${API_URL}/api/admin/salas/${salaId}/pais?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "obter relatório de pais da sala");
+}
+
+// --------------------- base de conhecimento (RAG) ------------------------- //
+export interface FonteConhecimento {
+  id: string;
+  nome: string;
+  tipo: string;
+  total_trechos: number;
+  criado_em: string;
+}
+
+export async function listarConhecimento(): Promise<FonteConhecimento[]> {
+  const resp = await fetch(`${API_URL}/api/admin/conhecimento/tenant/${tenantEmFoco()}`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "listar documentos");
+}
+
+export async function adicionarConhecimento(
+  nome: string,
+  conteudo: string,
+  tipo: string
+): Promise<FonteConhecimento> {
+  const resp = await fetch(`${API_URL}/api/admin/conhecimento`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, conteudo, tipo }),
+  });
+  return jsonOuErro(resp, "enviar documento");
+}
+
+export async function removerConhecimento(fonteId: string): Promise<void> {
+  const resp = await fetch(
+    `${API_URL}/api/admin/conhecimento/${fonteId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover documento`);
+  }
+}
+
+// --------------------- system prompt do tenant ---------------------------- //
+export interface PromptTenant {
+  tenant_id: string;
+  conteudo: string;
+  atualizado_em: string | null;
+}
+
+export async function obterPrompt(): Promise<PromptTenant> {
+  const resp = await fetch(`${API_URL}/api/admin/prompt/tenant/${tenantEmFoco()}`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "obter instruções da escola");
+}
+
+export async function salvarPrompt(conteudo: string): Promise<PromptTenant> {
+  const resp = await fetch(`${API_URL}/api/admin/prompt`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), conteudo }),
+  });
+  return jsonOuErro(resp, "salvar instruções da escola");
+}

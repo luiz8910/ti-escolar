@@ -15,11 +15,14 @@ from app.domain.entities import (
     Conversa,
     Documento,
     FerramentaSpec,
+    FonteConhecimento,
     Grupo,
     MessageQuota,
     MessageTemplate,
+    PromptTenant,
     RespostaLLM,
     ResultadoBusca,
+    Sala,
     TrechoConhecimento,
     TurnoConversa,
     Usuario,
@@ -72,6 +75,10 @@ class VectorStore(Protocol):
     async def buscar(
         self, *, tenant_id: UUID, embedding: list[float], k: int = 4
     ) -> list[ResultadoBusca]: ...
+
+    async def remover_por_fonte(self, *, tenant_id: UUID, fonte_id: UUID) -> int:
+        """Remove todos os trechos de uma fonte (documento). Retorna a quantidade removida."""
+        ...
 
 
 # --------------------------------------------------------------------------- #
@@ -171,3 +178,63 @@ class GrupoRepository(Protocol):
     ) -> Contato: ...
 
     async def membros(self, *, tenant_id: UUID, grupo_id: UUID) -> list[Contato]: ...
+
+
+@runtime_checkable
+class ContatoRepository(Protocol):
+    """CRUD de pais/responsáveis (``Contato``), escopado por tenant."""
+
+    async def criar(self, contato: Contato) -> Contato: ...
+
+    async def obter(self, *, tenant_id: UUID, contato_id: UUID) -> Contato | None: ...
+
+    async def por_telefone(self, *, tenant_id: UUID, telefone: str) -> Contato | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[Contato]: ...
+
+    async def atualizar(self, contato: Contato) -> Contato: ...
+
+    async def remover(self, *, tenant_id: UUID, contato_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class FonteConhecimentoRepository(Protocol):
+    """Metadados dos documentos enviados pela escola para a base de RAG (por tenant)."""
+
+    async def criar(self, fonte: FonteConhecimento) -> FonteConhecimento: ...
+
+    async def obter(self, *, tenant_id: UUID, fonte_id: UUID) -> FonteConhecimento | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[FonteConhecimento]: ...
+
+    async def remover(self, *, tenant_id: UUID, fonte_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class PromptTenantRepository(Protocol):
+    """System prompt personalizado por tenant (o "CLAUDE.md" da escola)."""
+
+    async def obter(self, *, tenant_id: UUID) -> PromptTenant | None: ...
+
+    async def salvar(self, *, tenant_id: UUID, conteudo: str) -> PromptTenant: ...
+
+
+@runtime_checkable
+class SalaRepository(Protocol):
+    """CRUD de salas/turmas e vínculo N:N com pais, escopado por tenant."""
+
+    async def criar(self, sala: Sala) -> Sala: ...
+
+    async def obter(self, *, tenant_id: UUID, sala_id: UUID) -> Sala | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[Sala]: ...
+
+    async def atualizar(self, *, tenant_id: UUID, sala_id: UUID, nome: str, descricao: str) -> Sala: ...
+
+    async def remover(self, *, tenant_id: UUID, sala_id: UUID) -> bool: ...
+
+    async def vincular_pai(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None: ...
+
+    async def desvincular_pai(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None: ...
+
+    async def pais(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]: ...

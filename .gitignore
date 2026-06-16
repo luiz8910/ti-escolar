@@ -17,6 +17,10 @@ node_modules/
 web/.next/
 web/out/
 npm-debug.log*
+*.tsbuildinfo
+
+# Claude Code (sessão/memória local)
+.claude/
 
 # OS / editor
 .DS_Store

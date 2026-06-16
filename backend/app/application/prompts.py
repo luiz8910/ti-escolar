@@ -16,8 +16,25 @@ CONTEXTO:
 """
 
 
-def montar_sistema(contexto: str) -> str:
-    return SISTEMA_ATENDIMENTO.format(contexto=contexto or "(sem informações disponíveis)")
+def _com_instrucoes_tenant(base: str, instrucoes_tenant: str = "") -> str:
+    """Acrescenta as instruções personalizadas da escola (o "CLAUDE.md" do tenant).
+
+    O texto definido pela escola no painel admin tem prioridade institucional e é
+    anexado às diretrizes-base do assistente.
+    """
+    instrucoes_tenant = (instrucoes_tenant or "").strip()
+    if not instrucoes_tenant:
+        return base
+    return f"{base}\n\nINSTRUÇÕES ESPECÍFICAS DESTA ESCOLA (têm prioridade):\n{instrucoes_tenant}"
+
+
+def montar_sistema(contexto: str, instrucoes_tenant: str = "") -> str:
+    base = SISTEMA_ATENDIMENTO.format(contexto=contexto or "(sem informações disponíveis)")
+    return _com_instrucoes_tenant(base, instrucoes_tenant)
+
+
+def montar_sistema_agente(instrucoes_tenant: str = "") -> str:
+    return _com_instrucoes_tenant(SISTEMA_AGENTE, instrucoes_tenant)
 
 
 # Prompt do agente com ferramentas (orquestração inbound via tool use). Diferente do

@@ -69,12 +69,34 @@ class MensagemORM(Base):
     conversa: Mapped[ConversaORM] = relationship(back_populates="mensagens")
 
 
+class FonteConhecimentoORM(Base):
+    """Documento enviado pela escola, fragmentado em trechos de ``conhecimento``."""
+
+    __tablename__ = "fontes_conhecimento"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    nome: Mapped[str] = mapped_column(String(300))
+    tipo: Mapped[str] = mapped_column(String(30))
+    total_trechos: Mapped[int] = mapped_column(Integer, default=0)
+    criado_em: Mapped[datetime] = mapped_column()
+
+
 class ConhecimentoORM(Base):
     __tablename__ = "conhecimento"
 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    # Documento de origem (quando o trecho veio de um upload da escola).
+    fonte_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("fontes_conhecimento.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     tipo: Mapped[str] = mapped_column(String(30))
     titulo: Mapped[str] = mapped_column(String(300))
@@ -183,6 +205,25 @@ grupo_contatos = Table(
 )
 
 
+# Associação N:N entre salas (turmas) e contatos (pais/responsáveis).
+sala_contatos = Table(
+    "sala_contatos",
+    Base.metadata,
+    Column(
+        "sala_id",
+        PGUUID(as_uuid=True),
+        ForeignKey("salas.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "contato_id",
+        PGUUID(as_uuid=True),
+        ForeignKey("contatos.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
 class ContatoORM(Base):
     __tablename__ = "contatos"
 
@@ -196,6 +237,9 @@ class ContatoORM(Base):
 
     grupos: Mapped[list["GrupoORM"]] = relationship(
         secondary=grupo_contatos, back_populates="membros"
+    )
+    salas: Mapped[list["SalaORM"]] = relationship(
+        secondary=sala_contatos, back_populates="pais"
     )
 
     __table_args__ = (
@@ -219,3 +263,35 @@ class GrupoORM(Base):
     )
 
     __table_args__ = (UniqueConstraint("tenant_id", "nome", name="uq_grupo_tenant_nome"),)
+
+
+class SalaORM(Base):
+    __tablename__ = "salas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    nome: Mapped[str] = mapped_column(String(200))
+    descricao: Mapped[str] = mapped_column(Text, default="")
+    criado_em: Mapped[datetime] = mapped_column()
+
+    pais: Mapped[list[ContatoORM]] = relationship(
+        secondary=sala_contatos, back_populates="salas"
+    )
+
+    __table_args__ = (UniqueConstraint("tenant_id", "nome", name="uq_sala_tenant_nome"),)
+
+
+# --------------------------------------------------------------------------- #
+# System prompt personalizado por tenant (o "CLAUDE.md" da escola)
+# --------------------------------------------------------------------------- #
+class PromptTenantORM(Base):
+    __tablename__ = "prompts_tenant"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), unique=True, index=True
+    )
+    conteudo: Mapped[str] = mapped_column(Text, default="")
+    atualizado_em: Mapped[datetime] = mapped_column()
