@@ -125,10 +125,45 @@ export function logout() {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
+// Erro lançado quando a sessão não vale mais (token expirado no cliente ou
+// rejeitado pelo back-end com 401): a UI deve voltar ao login.
+export class SessaoExpiradaError extends Error {
+  constructor() {
+    super("Sessão expirada");
+    this.name = "SessaoExpiradaError";
+  }
+}
+
+// Redireciona para o login e descarta a sessão atual. Usado tanto no 401 do
+// back-end quanto quando o token já expirou do lado do cliente.
+function redirecionarParaLogin() {
+  logout();
+  if (typeof window !== "undefined") {
+    window.location.replace("/admin/login");
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const s = getSessao();
-  if (!s) throw new Error("Sessão expirada");
+  if (!s) {
+    // getSessao já removeu o token expirado; força o retorno ao login.
+    redirecionarParaLogin();
+    throw new SessaoExpiradaError();
+  }
   return { Authorization: `Bearer ${s.token}` };
+}
+
+// Wrapper de fetch para as chamadas autenticadas. Se o token for recusado pelo
+// back-end (401) — por expiração, troca do JWT_SECRET, usuário desativado, etc. —
+// limpa a sessão e redireciona para o login, em vez de deixar o painel "logado"
+// porém quebrado exibindo apenas toasts de erro.
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const resp = await fetch(input, init);
+  if (resp.status === 401) {
+    redirecionarParaLogin();
+    throw new SessaoExpiradaError();
+  }
+  return resp;
 }
 
 // O tenant em foco: super admin opera sobre o tenant demo; admin usa o seu.
@@ -162,7 +197,7 @@ export async function login(email: string, senha: string): Promise<Usuario> {
 }
 
 export async function listarGrupos(): Promise<Grupo[]> {
-  const resp = await fetch(`${API_URL}/api/admin/grupos/${tenantEmFoco()}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/grupos/${tenantEmFoco()}`, {
     headers: authHeaders(),
   });
   if (!resp.ok) throw new Error(`Erro ${resp.status} ao listar grupos`);
@@ -170,7 +205,7 @@ export async function listarGrupos(): Promise<Grupo[]> {
 }
 
 export async function criarGrupo(nome: string, descricao: string): Promise<Grupo> {
-  const resp = await fetch(`${API_URL}/api/admin/grupos`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/grupos`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
@@ -184,7 +219,7 @@ export async function adicionarContato(
   nome: string,
   telefone: string
 ): Promise<Contato> {
-  const resp = await fetch(`${API_URL}/api/admin/grupos/${grupoId}/contatos`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/grupos/${grupoId}/contatos`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
@@ -201,7 +236,7 @@ export async function enviarParaGrupo(
   titulo: string,
   mensagem: string
 ): Promise<ResultadoEnvioGrupo> {
-  const resp = await fetch(`${API_URL}/api/admin/grupos/${grupoId}/enviar`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/grupos/${grupoId}/enviar`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
@@ -223,7 +258,7 @@ export async function consultarQuota(): Promise<Quota> {
 }
 
 export async function consultarQuotaDe(tenantId: string): Promise<Quota> {
-  const resp = await fetch(`${API_URL}/api/broadcasts/quota/${tenantId}`, {
+  const resp = await apiFetch(`${API_URL}/api/broadcasts/quota/${tenantId}`, {
     headers: authHeaders(),
   });
   if (!resp.ok) throw new Error(`Erro ${resp.status} ao consultar cota`);
@@ -237,19 +272,19 @@ async function erroDe(resp: Response, padrao: string): Promise<Error> {
 }
 
 export async function listarEscolas(): Promise<Escola[]> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas`, { headers: authHeaders() });
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas`, { headers: authHeaders() });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar escolas`);
   return resp.json();
 }
 
 export async function obterEscola(id: string): Promise<Escola> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas/${id}`, { headers: authHeaders() });
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, { headers: authHeaders() });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar escola`);
   return resp.json();
 }
 
 export async function criarEscola(nome: string, slug: string): Promise<Escola> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ nome, slug }),
@@ -263,7 +298,7 @@ export async function atualizarEscola(
   nome: string,
   slug: string
 ): Promise<Escola> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas/${id}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ nome, slug }),
@@ -273,7 +308,7 @@ export async function atualizarEscola(
 }
 
 export async function removerEscola(id: string): Promise<void> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas/${id}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -284,7 +319,7 @@ export async function removerEscola(id: string): Promise<void> {
 
 // --------------------------- conversas e broadcasts ------------------------ //
 export async function listarConversas(tenantId: string): Promise<ConversaResumo[]> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas/${tenantId}/conversas`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/conversas`, {
     headers: authHeaders(),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar conversas`);
@@ -295,7 +330,7 @@ export async function obterConversa(
   tenantId: string,
   conversaId: string
 ): Promise<ConversaDetalhe> {
-  const resp = await fetch(
+  const resp = await apiFetch(
     `${API_URL}/api/admin/escolas/${tenantId}/conversas/${conversaId}`,
     { headers: authHeaders() }
   );
@@ -304,7 +339,7 @@ export async function obterConversa(
 }
 
 export async function listarBroadcasts(tenantId: string): Promise<BroadcastResumo[]> {
-  const resp = await fetch(`${API_URL}/api/admin/escolas/${tenantId}/broadcasts`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/broadcasts`, {
     headers: authHeaders(),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar mensagens em massa`);
@@ -336,7 +371,7 @@ async function jsonOuErro<T>(resp: Response, contexto: string): Promise<T> {
 
 // ----- pais (CRUD) ----- //
 export async function listarPais(): Promise<Pai[]> {
-  const resp = await fetch(`${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}`, {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "listar pais");
@@ -347,7 +382,7 @@ export async function cadastrarPai(
   telefone: string,
   salaIds: string[] = []
 ): Promise<Pai> {
-  const resp = await fetch(`${API_URL}/api/admin/pais`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/pais`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, sala_ids: salaIds }),
@@ -360,7 +395,7 @@ export async function atualizarPai(
   nome: string,
   telefone: string
 ): Promise<Pai> {
-  const resp = await fetch(`${API_URL}/api/admin/pais/${contatoId}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/pais/${contatoId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
@@ -369,7 +404,7 @@ export async function atualizarPai(
 }
 
 export async function removerPai(contatoId: string): Promise<void> {
-  const resp = await fetch(
+  const resp = await apiFetch(
     `${API_URL}/api/admin/pais/${contatoId}?tenant_id=${tenantEmFoco()}`,
     { method: "DELETE", headers: authHeaders() }
   );
@@ -381,14 +416,14 @@ export async function removerPai(contatoId: string): Promise<void> {
 
 // ----- salas (CRUD) ----- //
 export async function listarSalas(): Promise<Sala[]> {
-  const resp = await fetch(`${API_URL}/api/admin/salas/tenant/${tenantEmFoco()}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/tenant/${tenantEmFoco()}`, {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "listar salas");
 }
 
 export async function criarSala(nome: string, descricao = ""): Promise<Sala> {
-  const resp = await fetch(`${API_URL}/api/admin/salas`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
@@ -401,7 +436,7 @@ export async function atualizarSala(
   nome: string,
   descricao: string
 ): Promise<Sala> {
-  const resp = await fetch(`${API_URL}/api/admin/salas/${salaId}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
@@ -410,7 +445,7 @@ export async function atualizarSala(
 }
 
 export async function removerSala(salaId: string): Promise<void> {
-  const resp = await fetch(
+  const resp = await apiFetch(
     `${API_URL}/api/admin/salas/${salaId}?tenant_id=${tenantEmFoco()}`,
     { method: "DELETE", headers: authHeaders() }
   );
@@ -422,7 +457,7 @@ export async function removerSala(salaId: string): Promise<void> {
 
 // ----- vínculo e relatório ----- //
 export async function vincularPaiASala(salaId: string, contatoId: string): Promise<void> {
-  const resp = await fetch(`${API_URL}/api/admin/salas/${salaId}/pais`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}/pais`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), contato_id: contatoId }),
@@ -434,7 +469,7 @@ export async function vincularPaiASala(salaId: string, contatoId: string): Promi
 }
 
 export async function desvincularPaiDaSala(salaId: string, contatoId: string): Promise<void> {
-  const resp = await fetch(
+  const resp = await apiFetch(
     `${API_URL}/api/admin/salas/${salaId}/pais/${contatoId}?tenant_id=${tenantEmFoco()}`,
     { method: "DELETE", headers: authHeaders() }
   );
@@ -445,7 +480,7 @@ export async function desvincularPaiDaSala(salaId: string, contatoId: string): P
 }
 
 export async function relatorioPaisDaSala(salaId: string): Promise<Pai[]> {
-  const resp = await fetch(
+  const resp = await apiFetch(
     `${API_URL}/api/admin/salas/${salaId}/pais?tenant_id=${tenantEmFoco()}`,
     { headers: authHeaders() }
   );
@@ -462,7 +497,7 @@ export interface FonteConhecimento {
 }
 
 export async function listarConhecimento(): Promise<FonteConhecimento[]> {
-  const resp = await fetch(`${API_URL}/api/admin/conhecimento/tenant/${tenantEmFoco()}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/conhecimento/tenant/${tenantEmFoco()}`, {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "listar documentos");
@@ -473,7 +508,7 @@ export async function adicionarConhecimento(
   conteudo: string,
   tipo: string
 ): Promise<FonteConhecimento> {
-  const resp = await fetch(`${API_URL}/api/admin/conhecimento`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/conhecimento`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, conteudo, tipo }),
@@ -482,7 +517,7 @@ export async function adicionarConhecimento(
 }
 
 export async function removerConhecimento(fonteId: string): Promise<void> {
-  const resp = await fetch(
+  const resp = await apiFetch(
     `${API_URL}/api/admin/conhecimento/${fonteId}?tenant_id=${tenantEmFoco()}`,
     { method: "DELETE", headers: authHeaders() }
   );
@@ -500,14 +535,14 @@ export interface PromptTenant {
 }
 
 export async function obterPrompt(): Promise<PromptTenant> {
-  const resp = await fetch(`${API_URL}/api/admin/prompt/tenant/${tenantEmFoco()}`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/prompt/tenant/${tenantEmFoco()}`, {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "obter instruções da escola");
 }
 
 export async function salvarPrompt(conteudo: string): Promise<PromptTenant> {
-  const resp = await fetch(`${API_URL}/api/admin/prompt`, {
+  const resp = await apiFetch(`${API_URL}/api/admin/prompt`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), conteudo }),
