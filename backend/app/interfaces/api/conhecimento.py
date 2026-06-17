@@ -1,7 +1,7 @@
 """Rotas da base de conhecimento por tenant.
 
-Dois recursos, ambos escopados por tenant e reaproveitando a autenticação do módulo
-``admin`` (cabeçalhos ``X-User-Email`` / ``X-User-Senha``):
+Dois recursos, ambos escopados por tenant e reaproveitando a autenticação por JWT
+(``Authorization: Bearer``) do módulo ``admin``:
 
 1. **Documentos (RAG):** a escola sobe textos/arquivos de procedimentos que são
    fragmentados e indexados no vector store, enriquecendo o contexto da LLM.

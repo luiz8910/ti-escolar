@@ -152,8 +152,13 @@ ti-escolar/
   "Pais do Fundamental I") com contatos. Credenciais default em `.env.example`
   (`SUPER_ADMIN_*`, `DEMO_ADMIN_*`) — **trocar em produção**.
 - **Rotas** em `app/interfaces/api/admin.py`: `/api/admin/login`, `/usuarios`, `/grupos`,
-  `/grupos/{id}/contatos`, `/grupos/{id}/enviar`. Autenticação atual via cabeçalhos
-  `X-User-Email`/`X-User-Senha` (**JWT/sessão = [Roadmap]**).
+  `/grupos/{id}/contatos`, `/grupos/{id}/enviar`. **Autenticação por JWT (HS256):** o
+  `POST /api/admin/login` devolve `{ access_token, expira_em, usuario }`; as demais rotas
+  exigem `Authorization: Bearer <token>`. O token é assinado com `JWT_SECRET` e expira
+  conforme `JWT_EXPIRA_MINUTOS` (default 480 min). A dependência `usuario_autenticado`
+  decodifica o token (`app/infrastructure/security.py`, só stdlib) e **revalida o usuário
+  no banco** (existência + `ativo`) a cada requisição. O painel guarda o token no
+  `localStorage` (`web/lib/admin.ts`) e o reenvia no cabeçalho `Authorization`.
 
 ---
 
@@ -294,5 +299,9 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] Modelo de **administração** (super admin / admin de tenant) + **grupos de contatos**.
 - [x] **Painel administrativo** (UI Next.js): login, gestão de grupos/contatos, barra de cota e
   disparo direcionado a grupo (`web/app/admin/`).
-- [ ] **Autenticação JWT/sessão** (hoje credenciais ficam no `localStorage` via cabeçalhos) e
-  endpoint para listar/gerenciar **templates** (o painel usa o template do seed).
+- [x] **Autenticação JWT/sessão:** `POST /api/admin/login` emite um JWT (HS256, stdlib) e as
+  rotas admin exigem `Authorization: Bearer`; o painel guarda o token (não a senha) no
+  `localStorage`. Ver §6a.
+- [ ] Endpoint para listar/gerenciar **templates** (o painel ainda usa o template do seed).
+- [ ] **Transferência de responsáveis** Ser possível que os pais de alunos sejam transferidos para a série seguinte ou fiquem inativos caso estejam na última série disponível. Apenas tornar responsáveis inativos se todos os alunos deste responsável já são ex-alunos.
+- [ ] **CRUD de Alunos** Fazer um CRUD de alunos relacionando responsáveis 1 -> N (1 para N) e série 1 -> 1 (1 para 1)

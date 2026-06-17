@@ -1,7 +1,8 @@
 """Rotas de administração: autenticação, usuários, grupos e disparo a grupos.
 
-Autenticação (scaffold): credenciais nos cabeçalhos ``X-User-Email`` / ``X-User-Senha``.
-JWT/sessão fica no roadmap — aqui o foco é o modelo (super admin, admin de tenant e grupos).
+Autenticação por **JWT (HS256)**: o ``POST /login`` devolve um token; as demais rotas
+exigem ``Authorization: Bearer <token>``. O token carrega o id do usuário e expira
+conforme ``JWT_EXPIRA_MINUTOS``.
 """
 
 from __future__ import annotations
@@ -9,7 +10,8 @@ from __future__ import annotations
 from collections import Counter
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application.admin_use_cases import (
     AdicionarContatoAoGrupo,
@@ -28,8 +30,10 @@ from app.application.tenant_use_cases import (
     ObterEscola,
     RemoverEscola,
 )
+from app.config import Settings
 from app.domain.entities import Papel, Usuario
 from app.infrastructure.db.repositories import SqlBroadcastRepository, SqlConversaRepository
+from app.infrastructure.security import criar_token, decodificar_token
 from app.infrastructure.db.repositories_admin import (
     SqlGrupoRepository,
     SqlTenantRepository,
@@ -40,6 +44,7 @@ from app.interfaces.deps import (
     get_conversa_repo,
     get_enviar_para_grupo,
     get_grupo_repo,
+    get_settings_dep,
     get_tenant_repo,
     get_usuario_repo,
 )
@@ -59,10 +64,14 @@ from app.interfaces.dto import (
     GrupoSaida,
     LoginEntrada,
     MensagemConversaSaida,
+    TokenSaida,
     UsuarioSaida,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+# auto_error=False: deixamos a checagem para ``usuario_autenticado`` devolver 401 limpo.
+_bearer = HTTPBearer(auto_error=False)
 
 
 def _usuario_saida(u: Usuario) -> UsuarioSaida:
@@ -71,16 +80,33 @@ def _usuario_saida(u: Usuario) -> UsuarioSaida:
     )
 
 
+_NAO_AUTENTICADO = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Não autenticado",
+    headers={"WWW-Authenticate": "Bearer"},
+)
+
+
 async def usuario_autenticado(
-    x_user_email: str = Header(..., alias="X-User-Email"),
-    x_user_senha: str = Header(..., alias="X-User-Senha"),
+    credenciais: HTTPAuthorizationCredentials | None = Depends(_bearer),
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
+    settings: Settings = Depends(get_settings_dep),
 ) -> Usuario:
-    usuario = await AutenticarUsuario(usuarios=usuarios).executar(
-        email=x_user_email, senha=x_user_senha
-    )
-    if usuario is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
+    """Resolve o usuário a partir do JWT em ``Authorization: Bearer <token>``.
+
+    Revalida o usuário no banco (existência e ``ativo``) a cada requisição, de modo que
+    desativar um usuário invalida a sessão mesmo com o token ainda no prazo.
+    """
+    if credenciais is None or not credenciais.credentials:
+        raise _NAO_AUTENTICADO
+
+    payload = decodificar_token(credenciais.credentials, segredo=settings.jwt_secret)
+    if payload is None or "email" not in payload:
+        raise _NAO_AUTENTICADO
+
+    usuario = await usuarios.por_email(payload["email"])
+    if usuario is None or not usuario.ativo:
+        raise _NAO_AUTENTICADO
     return usuario
 
 
@@ -100,17 +126,30 @@ def _exige_super_admin(usuario: Usuario) -> None:
 # --------------------------------------------------------------------------- #
 # Autenticação e usuários
 # --------------------------------------------------------------------------- #
-@router.post("/login", response_model=UsuarioSaida)
+@router.post("/login", response_model=TokenSaida)
 async def login(
     payload: LoginEntrada,
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
-) -> UsuarioSaida:
+    settings: Settings = Depends(get_settings_dep),
+) -> TokenSaida:
     usuario = await AutenticarUsuario(usuarios=usuarios).executar(
         email=payload.email, senha=payload.senha
     )
     if usuario is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
-    return _usuario_saida(usuario)
+
+    expira_em = settings.jwt_expira_minutos * 60
+    token = criar_token(
+        {
+            "sub": str(usuario.id),
+            "email": usuario.email,
+            "papel": usuario.papel.value,
+            "tenant_id": str(usuario.tenant_id) if usuario.tenant_id else None,
+        },
+        segredo=settings.jwt_secret,
+        expira_em_segundos=expira_em,
+    )
+    return TokenSaida(access_token=token, expira_em=expira_em, usuario=_usuario_saida(usuario))
 
 
 @router.post("/usuarios", response_model=UsuarioSaida, status_code=status.HTTP_201_CREATED)

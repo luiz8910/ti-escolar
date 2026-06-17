@@ -21,7 +21,12 @@ from app.domain.entities import (
     StatusTemplate,
     Usuario,
 )
-from app.infrastructure.security import hash_senha, verificar_senha
+from app.infrastructure.security import (
+    criar_token,
+    decodificar_token,
+    hash_senha,
+    verificar_senha,
+)
 from tests.fakes import (
     FakeBroadcastRepo,
     FakeChannel,
@@ -51,6 +56,32 @@ def test_hash_de_senha_verifica_corretamente():
     assert h != "escola123"  # não armazena em texto puro
     assert verificar_senha("escola123", h)
     assert not verificar_senha("errada", h)
+
+
+# --------------------------- token JWT ------------------------------------- #
+def test_token_jwt_roundtrip():
+    token = criar_token(
+        {"sub": "u1", "email": "a@t.test"}, segredo="segredo", expira_em_segundos=60
+    )
+    payload = decodificar_token(token, segredo="segredo")
+    assert payload is not None
+    assert payload["sub"] == "u1"
+    assert payload["email"] == "a@t.test"
+    assert payload["exp"] > payload["iat"]
+
+
+def test_token_jwt_rejeita_assinatura_invalida():
+    token = criar_token({"email": "a@t.test"}, segredo="segredo", expira_em_segundos=60)
+    # Segredo diferente → assinatura não confere.
+    assert decodificar_token(token, segredo="outro") is None
+    # Token adulterado também é rejeitado.
+    assert decodificar_token(token + "x", segredo="segredo") is None
+    assert decodificar_token("nao-e-um-jwt", segredo="segredo") is None
+
+
+def test_token_jwt_rejeita_expirado():
+    token = criar_token({"email": "a@t.test"}, segredo="segredo", expira_em_segundos=-1)
+    assert decodificar_token(token, segredo="segredo") is None
 
 
 # --------------------------- grupo -> broadcast ---------------------------- #

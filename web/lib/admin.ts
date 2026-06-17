@@ -1,7 +1,7 @@
-// Cliente da API administrativa + sessão simples (credenciais em localStorage).
+// Cliente da API administrativa + sessão baseada em token JWT (em localStorage).
 //
-// A autenticação do back-end (scaffold) é por cabeçalhos X-User-Email / X-User-Senha.
-// Guardamos essas credenciais após o login e as reenviamos em cada chamada admin.
+// A autenticação do back-end é por JWT: o POST /login devolve um token; guardamos o
+// token (não a senha) e o reenviamos em cada chamada via Authorization: Bearer.
 
 import { API_URL, DEMO_TENANT_ID } from "./api";
 
@@ -20,8 +20,8 @@ export interface Usuario {
 
 interface Sessao {
   usuario: Usuario;
-  email: string;
-  senha: string;
+  token: string;
+  expiraEm: number; // epoch (ms) em que o token deixa de valer
 }
 
 export interface Contato {
@@ -107,7 +107,14 @@ export interface ResultadoEnvioGrupo {
 export function getSessao(): Sessao | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  return raw ? (JSON.parse(raw) as Sessao) : null;
+  if (!raw) return null;
+  const s = JSON.parse(raw) as Sessao;
+  // Token expirado: limpa a sessão para forçar novo login.
+  if (s.expiraEm && Date.now() >= s.expiraEm) {
+    window.localStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
+  return s;
 }
 
 function setSessao(s: Sessao) {
@@ -121,7 +128,7 @@ export function logout() {
 function authHeaders(): Record<string, string> {
   const s = getSessao();
   if (!s) throw new Error("Sessão expirada");
-  return { "X-User-Email": s.email, "X-User-Senha": s.senha };
+  return { Authorization: `Bearer ${s.token}` };
 }
 
 // O tenant em foco: super admin opera sobre o tenant demo; admin usa o seu.
@@ -131,6 +138,13 @@ export function tenantEmFoco(): string {
 }
 
 // --------------------------- chamadas ------------------------------------- //
+interface RespostaLogin {
+  access_token: string;
+  token_type: string;
+  expira_em: number; // segundos
+  usuario: Usuario;
+}
+
 export async function login(email: string, senha: string): Promise<Usuario> {
   const resp = await fetch(`${API_URL}/api/admin/login`, {
     method: "POST",
@@ -138,9 +152,13 @@ export async function login(email: string, senha: string): Promise<Usuario> {
     body: JSON.stringify({ email, senha }),
   });
   if (!resp.ok) throw new Error("Credenciais inválidas");
-  const usuario = (await resp.json()) as Usuario;
-  setSessao({ usuario, email, senha });
-  return usuario;
+  const dados = (await resp.json()) as RespostaLogin;
+  setSessao({
+    usuario: dados.usuario,
+    token: dados.access_token,
+    expiraEm: Date.now() + dados.expira_em * 1000,
+  });
+  return dados.usuario;
 }
 
 export async function listarGrupos(): Promise<Grupo[]> {
