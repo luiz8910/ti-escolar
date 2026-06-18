@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { cn } from "../ui/cn";
 import {
   GridIcon,
@@ -12,6 +12,7 @@ import {
   BuildingIcon,
   ChatBubbleIcon,
   ExternalIcon,
+  CloseIcon,
 } from "../ui/icons";
 
 interface NavItem {
@@ -29,7 +30,7 @@ const PRINCIPAL: NavItem[] = [
 ];
 
 /** Marca TI-Escolar. */
-function Brand({ subtitle }: { subtitle: string }) {
+function Brand({ subtitle, onClose }: { subtitle: string; onClose?: () => void }) {
   return (
     <div className="flex items-center gap-3 border-b border-n-100 px-4 py-[17px]">
       <div className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] bg-brand-600 text-white">
@@ -41,15 +42,32 @@ function Brand({ subtitle }: { subtitle: string }) {
         </div>
         <div className="mt-[3px] text-[10.5px] font-medium text-n-400">{subtitle}</div>
       </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Fechar menu"
+        className="ml-auto flex h-9 w-9 items-center justify-center rounded-[10px] text-n-500 hover:bg-n-50 lg:hidden"
+      >
+        <CloseIcon size={20} />
+      </button>
     </div>
   );
 }
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({
+  item,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  active: boolean;
+  onNavigate?: () => void;
+}) {
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
+      onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={cn(
         "relative flex items-center gap-3 rounded-[10px] px-[11px] py-2.5 text-[13px] no-underline transition-colors",
@@ -75,49 +93,85 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
 export function Sidebar({
   subtitle = "Escola Demonstração",
   isSuperAdmin = false,
+  open = false,
+  onClose,
 }: {
   subtitle?: string;
   isSuperAdmin?: boolean;
+  /** Drawer aberto no mobile (sem efeito a partir de `lg`). */
+  open?: boolean;
+  onClose?: () => void;
 }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
 
+  // Fecha o drawer com Esc e trava o scroll do body enquanto aberto (só mobile).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose?.();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [open, onClose]);
+
   return (
-    <aside className="flex w-[236px] flex-none flex-col border-r border-n-100 bg-white">
-      <Brand subtitle={isSuperAdmin ? "Plataforma · Super Admin" : subtitle} />
+    <>
+      {/* Backdrop — apenas no mobile com o drawer aberto */}
+      {open && (
+        <div
+          className="fixed inset-0 z-30 bg-n-900/40 lg:hidden"
+          aria-hidden="true"
+          onClick={onClose}
+        />
+      )}
 
-      <nav className="flex flex-1 flex-col gap-[3px] p-3">
-        <div className="px-2.5 pb-2 pt-1.5 text-[10px] font-bold tracking-[0.12em] text-n-400">
-          PRINCIPAL
-        </div>
-        {PRINCIPAL.map((item) => (
-          <NavLink key={item.href} item={item} active={isActive(item.href)} />
-        ))}
-
-        {isSuperAdmin && (
-          <>
-            <div className="px-2.5 pb-2 pt-3.5 text-[10px] font-bold tracking-[0.12em] text-n-400">
-              ADMINISTRAÇÃO
-            </div>
-            <NavLink
-              item={{ href: "/admin/escolas", label: "Escolas", icon: BuildingIcon, badge: "super" }}
-              active={isActive("/admin/escolas")}
-            />
-          </>
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-[236px] flex-none flex-col border-r border-n-100 bg-white transition-transform duration-200",
+          "lg:static lg:z-auto lg:translate-x-0",
+          open ? "translate-x-0 shadow-lg" : "-translate-x-full",
         )}
-      </nav>
+      >
+        <Brand subtitle={isSuperAdmin ? "Plataforma · Super Admin" : subtitle} onClose={onClose} />
 
-      <div className="border-t border-n-100 p-3">
-        <Link
-          href="/"
-          className="flex items-center gap-3 rounded-[10px] bg-[#effbf8] px-[11px] py-2.5 text-[13px] font-semibold text-[#0d8a78] no-underline hover:bg-[#cdf3ea]"
-        >
-          <ChatBubbleIcon size={18} />
-          Ver demo do chat
-          <ExternalIcon size={14} className="ml-auto" />
-        </Link>
-      </div>
-    </aside>
+        <nav className="flex flex-1 flex-col gap-[3px] overflow-y-auto p-3">
+          <div className="px-2.5 pb-2 pt-1.5 text-[10px] font-bold tracking-[0.12em] text-n-400">
+            PRINCIPAL
+          </div>
+          {PRINCIPAL.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={onClose} />
+          ))}
+
+          {isSuperAdmin && (
+            <>
+              <div className="px-2.5 pb-2 pt-3.5 text-[10px] font-bold tracking-[0.12em] text-n-400">
+                ADMINISTRAÇÃO
+              </div>
+              <NavLink
+                item={{ href: "/admin/escolas", label: "Escolas", icon: BuildingIcon, badge: "super" }}
+                active={isActive("/admin/escolas")}
+                onNavigate={onClose}
+              />
+            </>
+          )}
+        </nav>
+
+        <div className="border-t border-n-100 p-3">
+          <Link
+            href="/"
+            onClick={onClose}
+            className="flex items-center gap-3 rounded-[10px] bg-[#effbf8] px-[11px] py-2.5 text-[13px] font-semibold text-[#0d8a78] no-underline hover:bg-[#cdf3ea]"
+          >
+            <ChatBubbleIcon size={18} />
+            Ver demo do chat
+            <ExternalIcon size={14} className="ml-auto" />
+          </Link>
+        </div>
+      </aside>
+    </>
   );
 }
