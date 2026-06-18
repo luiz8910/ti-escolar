@@ -102,6 +102,12 @@ export const CloseIcon = (p: IconProps) => (
   </svg>
 );
 
+export const MenuIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <path d="M4 6h16M4 12h16M4 18h16" />
+  </svg>
+);
+
 export const PrintIcon = (p: IconProps) => (
   <svg {...base({ strokeWidth: 1.6, ...p })}>
     <path d="M7 9V4h10v5M7 18H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M7 14h10v6H7v-6Z" />

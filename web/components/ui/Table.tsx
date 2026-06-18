@@ -1,14 +1,20 @@
 import type { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes, ReactNode } from "react";
 import { cn } from "./cn";
 
-/** Wrapper que dá a borda/raio externos. Use <Table> dentro. */
+/**
+ * Wrapper que dá a borda/raio externos. Use <Table> dentro.
+ * No mobile rola horizontalmente (`overflow-x-auto`) para a tabela não
+ * estourar a largura da tela nem quebrar o layout.
+ */
 export function TableWrap({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("overflow-hidden rounded-md border border-n-100", className)}>{children}</div>;
+  return (
+    <div className={cn("overflow-x-auto rounded-md border border-n-100", className)}>{children}</div>
+  );
 }
 
 export function Table({ className, children, ...rest }: HTMLAttributes<HTMLTableElement>) {
   return (
-    <table className={cn("w-full border-collapse", className)} {...rest}>
+    <table className={cn("w-full min-w-[420px] border-collapse", className)} {...rest}>
       {children}
     </table>
   );

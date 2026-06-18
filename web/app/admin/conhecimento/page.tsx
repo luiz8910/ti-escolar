@@ -126,7 +126,7 @@ function NovoDocumento({ onMudou }: { onMudou: () => Promise<void> }) {
     <Card>
       <CardHeader title="Enviar documento" />
       <form onSubmit={enviar} className="flex flex-col gap-3">
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <Field label="Nome do documento" htmlFor="doc-nome">
             <Input
               id="doc-nome"
