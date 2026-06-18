@@ -16,13 +16,25 @@ app = FastAPI(
     version="0.1.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# "*" libera qualquer origem (útil em testes, antes de conhecer a URL final do front).
+# Com curinga, credenciais por cookie ficam desabilitadas (o painel usa Bearer no header).
+_origens = settings.cors_origins
+if "*" in _origens:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=".*",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origens,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.include_router(chat.router)
 app.include_router(broadcast.router)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +13,19 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     database_url: str = "postgresql+psycopg://tiescolar:tiescolar@db:5432/tiescolar"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalizar_dsn(cls, valor: str) -> str:
+        """Aceita o DSN cru do Render/Heroku (``postgres://``/``postgresql://``) e força
+        o driver psycopg v3 (async) exigido pelo SQLAlchemy desta aplicação."""
+        if not isinstance(valor, str):
+            return valor
+        if valor.startswith("postgres://"):
+            valor = "postgresql://" + valor[len("postgres://") :]
+        if valor.startswith("postgresql://"):
+            valor = "postgresql+psycopg://" + valor[len("postgresql://") :]
+        return valor
     backend_cors_origins: str = "http://localhost:3000"
 
     # LLM — "fake" | "anthropic" | "openai" | "openai_compatible"
