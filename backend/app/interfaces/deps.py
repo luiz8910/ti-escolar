@@ -24,6 +24,7 @@ from app.infrastructure.db.repositories import (
 )
 from app.application.conhecimento_use_cases import IngerirDocumento
 from app.infrastructure.db.repositories_admin import (
+    SqlAlunoRepository,
     SqlContatoRepository,
     SqlGrupoRepository,
     SqlSalaRepository,
@@ -145,6 +146,10 @@ def get_contato_repo(session: AsyncSession = Depends(get_session)) -> SqlContato
 
 def get_sala_repo(session: AsyncSession = Depends(get_session)) -> SqlSalaRepository:
     return SqlSalaRepository(session)
+
+
+def get_aluno_repo(session: AsyncSession = Depends(get_session)) -> SqlAlunoRepository:
+    return SqlAlunoRepository(session)
 
 
 def get_enviar_para_grupo(

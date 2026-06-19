@@ -3,12 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
+  Aluno,
   atualizarPai,
   atualizarSala,
   cadastrarPai,
   criarSala,
   desvincularPaiDaSala,
   getSessao,
+  listarAlunos,
   listarPais,
   listarSalas,
   logout,
@@ -146,18 +148,6 @@ function SalasPanel({
     }
   }
 
-  async function confirmarExclusao() {
-    if (!excluindo) return;
-    try {
-      await removerSala(excluindo.id);
-      setExcluindo(null);
-      await onMudou();
-      toast({ tone: "success", title: "Sala excluída." });
-    } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
-    }
-  }
-
   return (
     <Card className="flex flex-col">
       <CardHeader title="Salas (turmas)" count={salas.length} />
@@ -242,14 +232,162 @@ function SalasPanel({
         </form>
       </Modal>
 
-      <ConfirmDialog
-        open={!!excluindo}
-        onClose={() => setExcluindo(null)}
-        onConfirm={confirmarExclusao}
-        title="Excluir sala"
-        message={`Excluir a sala "${excluindo?.nome}"? Os pais continuam cadastrados.`}
-      />
+      {excluindo && (
+        <ExcluirSalaModal
+          sala={excluindo}
+          salas={salas}
+          onClose={() => setExcluindo(null)}
+          onMudou={onMudou}
+        />
+      )}
     </Card>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+function ExcluirSalaModal({
+  sala,
+  salas,
+  onClose,
+  onMudou,
+}: {
+  sala: Sala;
+  salas: Sala[];
+  onClose: () => void;
+  onMudou: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [alunos, setAlunos] = useState<Aluno[] | null>(null); // null = carregando
+  const [estrategia, setEstrategia] = useState<"mover" | "excluir">("mover");
+  const [destinoId, setDestinoId] = useState("");
+  const [novaSerie, setNovaSerie] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    listarAlunos(sala.id)
+      .then(setAlunos)
+      .catch(() => {
+        setAlunos([]);
+        toast({ tone: "danger", title: "Falha ao verificar alunos da série." });
+      });
+  }, [sala.id, toast]);
+
+  const total = alunos?.length ?? 0;
+  const outras = salas.filter((s) => s.id !== sala.id);
+  const criandoSerie = destinoId === "__nova__";
+
+  async function confirmar() {
+    setSalvando(true);
+    try {
+      if (total === 0 || estrategia === "excluir") {
+        // Série vazia ou opção de excluir os alunos junto.
+        await removerSala(sala.id);
+      } else {
+        // Mover os alunos para outra série (criando-a se necessário).
+        let destino = destinoId;
+        if (criandoSerie) {
+          if (!novaSerie.trim()) {
+            toast({ tone: "danger", title: "Informe o nome da nova série." });
+            setSalvando(false);
+            return;
+          }
+          destino = (await criarSala(novaSerie.trim())).id;
+        }
+        if (!destino) {
+          toast({ tone: "danger", title: "Selecione a série destino." });
+          setSalvando(false);
+          return;
+        }
+        await removerSala(sala.id, destino);
+      }
+      onClose();
+      await onMudou();
+      toast({ tone: "success", title: "Série excluída." });
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Excluir série — ${sala.nome}`}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={confirmar}
+            loading={salvando}
+            disabled={alunos === null}
+          >
+            Excluir série
+          </Button>
+        </>
+      }
+    >
+      {alunos === null ? (
+        <p className="text-sm text-n-400">Verificando alunos…</p>
+      ) : total === 0 ? (
+        <p className="text-[13px] text-n-600">
+          A série “{sala.nome}” não tem alunos. Os pais/responsáveis continuam cadastrados.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3 text-[13px]">
+          <p className="text-n-600">
+            A série “{sala.nome}” tem <strong>{total} aluno(s)</strong>. O que fazer com eles?
+          </p>
+
+          <label className="flex items-start gap-2 font-semibold text-n-700">
+            <input
+              type="radio"
+              className="mt-1"
+              checked={estrategia === "mover"}
+              onChange={() => setEstrategia("mover")}
+            />
+            <span>Mover os alunos para outra série</span>
+          </label>
+
+          {estrategia === "mover" && (
+            <div className="flex flex-col gap-2 pl-6">
+              <Select value={destinoId} onChange={(e) => setDestinoId(e.target.value)}>
+                <option value="">Selecione a série destino…</option>
+                {outras.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.nome}
+                  </option>
+                ))}
+                <option value="__nova__">+ Criar nova série…</option>
+              </Select>
+              {criandoSerie && (
+                <Input
+                  autoFocus
+                  value={novaSerie}
+                  onChange={(e) => setNovaSerie(e.target.value)}
+                  placeholder="Nome da nova série (ex.: 6ª série A)"
+                />
+              )}
+            </div>
+          )}
+
+          <label className="flex items-start gap-2 font-semibold text-n-700">
+            <input
+              type="radio"
+              className="mt-1"
+              checked={estrategia === "excluir"}
+              onChange={() => setEstrategia("excluir")}
+            />
+            <span>Excluir os {total} aluno(s) junto com a série</span>
+          </label>
+        </div>
+      )}
+    </Modal>
   );
 }
 

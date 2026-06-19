@@ -18,7 +18,7 @@ from app.application.cadastro_use_cases import (
     RemoverSala,
     VincularPaiASala,
 )
-from tests.fakes import FakeContatoRepo, FakeSalaRepo
+from tests.fakes import FakeAlunoRepo, FakeContatoRepo, FakeSalaRepo
 
 TENANT = uuid.uuid4()
 OUTRO_TENANT = uuid.uuid4()
@@ -119,7 +119,9 @@ async def test_crud_e_vinculo_de_sala():
     )
     assert await RelatorioPaisDaSala(salas=salas).executar(tenant_id=TENANT, sala_id=sala.id) == []
 
-    assert await RemoverSala(salas=salas).executar(tenant_id=TENANT, sala_id=sala.id)
+    assert await RemoverSala(salas=salas, alunos=FakeAlunoRepo()).executar(
+        tenant_id=TENANT, sala_id=sala.id
+    )
 
 
 async def test_vincular_pai_de_outro_tenant_falha():

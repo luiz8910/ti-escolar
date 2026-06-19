@@ -337,3 +337,52 @@ class FakeSalaRepo:
         if s is None:
             raise ValueError("Sala não encontrada para o tenant.")
         return list(s.pais)
+
+
+class FakeAlunoRepo:
+    def __init__(self) -> None:
+        self.alunos: dict[uuid.UUID, "Aluno"] = {}
+        # Resolve responsáveis pelo id ao vincular (compartilhado com o FakeContatoRepo).
+        self.contatos: FakeContatoRepo | None = None
+
+    async def criar(self, aluno):
+        self.alunos[aluno.id] = aluno
+        return aluno
+
+    async def obter(self, *, tenant_id, aluno_id):
+        a = self.alunos.get(aluno_id)
+        return a if a and a.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id, sala_id=None):
+        return [
+            a
+            for a in self.alunos.values()
+            if a.tenant_id == tenant_id and (sala_id is None or a.sala_id == sala_id)
+        ]
+
+    async def atualizar(self, aluno):
+        self.alunos[aluno.id] = aluno
+        return aluno
+
+    async def remover(self, *, tenant_id, aluno_id):
+        a = self.alunos.get(aluno_id)
+        if a is None or a.tenant_id != tenant_id:
+            return False
+        del self.alunos[aluno_id]
+        return True
+
+    async def vincular_responsavel(self, *, tenant_id, aluno_id, contato_id):
+        a = await self.obter(tenant_id=tenant_id, aluno_id=aluno_id)
+        if a is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        contato = self.contatos.contatos.get(contato_id) if self.contatos else None
+        if contato is None or contato.tenant_id != tenant_id:
+            raise ValueError("Responsável não encontrado para o tenant.")
+        if all(c.id != contato_id for c in a.responsaveis):
+            a.responsaveis.append(contato)
+
+    async def desvincular_responsavel(self, *, tenant_id, aluno_id, contato_id):
+        a = await self.obter(tenant_id=tenant_id, aluno_id=aluno_id)
+        if a is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        a.responsaveis = [c for c in a.responsaveis if c.id != contato_id]

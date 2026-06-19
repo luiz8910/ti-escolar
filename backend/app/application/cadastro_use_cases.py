@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.domain.entities import Contato, Sala
-from app.domain.ports import ContatoRepository, SalaRepository
+from app.domain.entities import Aluno, Contato, Sala
+from app.domain.ports import AlunoRepository, ContatoRepository, SalaRepository
 
 
 # --------------------------------------------------------------------------- #
@@ -130,10 +130,38 @@ class AtualizarSala:
 
 
 class RemoverSala:
-    def __init__(self, *, salas: SalaRepository) -> None:
-        self._salas = salas
+    """Remove uma série/sala decidindo o destino dos alunos.
 
-    async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> bool:
+    Como ``Aluno.sala_id`` é obrigatório, a exclusão precisa de uma estratégia explícita:
+    - ``mover_para=None`` → **exclui** os alunos da série junto com ela;
+    - ``mover_para=<sala_id>`` → **transfere** os alunos para outra série e então remove a
+      série original. A série destino deve existir no tenant e ser diferente da removida
+      (crie-a antes, se necessário, via ``CriarSala``).
+    """
+
+    def __init__(self, *, salas: SalaRepository, alunos: AlunoRepository) -> None:
+        self._salas = salas
+        self._alunos = alunos
+
+    async def executar(
+        self, *, tenant_id: UUID, sala_id: UUID, mover_para: UUID | None = None
+    ) -> bool:
+        sala = await self._salas.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if sala is None:
+            return False
+
+        alunos_da_sala = await self._alunos.listar(tenant_id=tenant_id, sala_id=sala_id)
+        if mover_para is not None:
+            if mover_para == sala_id:
+                raise ValueError("A série destino deve ser diferente da que está sendo removida.")
+            await _validar_sala(self._salas, tenant_id=tenant_id, sala_id=mover_para)
+            for aluno in alunos_da_sala:
+                aluno.sala_id = mover_para
+                await self._alunos.atualizar(aluno)
+        else:
+            for aluno in alunos_da_sala:
+                await self._alunos.remover(tenant_id=tenant_id, aluno_id=aluno.id)
+
         return await self._salas.remover(tenant_id=tenant_id, sala_id=sala_id)
 
 
@@ -168,3 +196,114 @@ class RelatorioPaisDaSala:
 
     async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]:
         return await self._salas.pais(tenant_id=tenant_id, sala_id=sala_id)
+
+
+# --------------------------------------------------------------------------- #
+# Alunos (CRUD + vínculo com responsáveis e série)
+# --------------------------------------------------------------------------- #
+async def _validar_sala(salas: SalaRepository, *, tenant_id: UUID, sala_id: UUID) -> None:
+    """Garante que a série/sala informada pertence ao tenant."""
+    if await salas.obter(tenant_id=tenant_id, sala_id=sala_id) is None:
+        raise ValueError("Série/sala não encontrada para o tenant.")
+
+
+class CadastrarAluno:
+    """Cadastra um aluno, opcionalmente já com série e responsáveis vinculados."""
+
+    def __init__(self, *, alunos: AlunoRepository, salas: SalaRepository) -> None:
+        self._alunos = alunos
+        self._salas = salas
+
+    async def executar(
+        self,
+        *,
+        tenant_id: UUID,
+        nome: str,
+        sala_id: UUID,
+        matricula: str = "",
+        responsavel_ids: Sequence[UUID] = (),
+    ) -> Aluno:
+        await _validar_sala(self._salas, tenant_id=tenant_id, sala_id=sala_id)
+        aluno = await self._alunos.criar(
+            Aluno(tenant_id=tenant_id, nome=nome, sala_id=sala_id, matricula=matricula)
+        )
+        for contato_id in responsavel_ids:
+            await self._alunos.vincular_responsavel(
+                tenant_id=tenant_id, aluno_id=aluno.id, contato_id=contato_id
+            )
+        return await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno.id)
+
+
+class ListarAlunos:
+    def __init__(self, *, alunos: AlunoRepository) -> None:
+        self._alunos = alunos
+
+    async def executar(
+        self, *, tenant_id: UUID, sala_id: UUID | None = None
+    ) -> list[Aluno]:
+        return await self._alunos.listar(tenant_id=tenant_id, sala_id=sala_id)
+
+
+class ObterAluno:
+    def __init__(self, *, alunos: AlunoRepository) -> None:
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno:
+        aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
+        if aluno is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        return aluno
+
+
+class AtualizarAluno:
+    def __init__(self, *, alunos: AlunoRepository, salas: SalaRepository) -> None:
+        self._alunos = alunos
+        self._salas = salas
+
+    async def executar(
+        self,
+        *,
+        tenant_id: UUID,
+        aluno_id: UUID,
+        nome: str,
+        sala_id: UUID,
+        matricula: str = "",
+        ativo: bool = True,
+    ) -> Aluno:
+        atual = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
+        if atual is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        await _validar_sala(self._salas, tenant_id=tenant_id, sala_id=sala_id)
+        atual.nome = nome
+        atual.sala_id = sala_id
+        atual.matricula = matricula
+        atual.ativo = ativo
+        return await self._alunos.atualizar(atual)
+
+
+class RemoverAluno:
+    def __init__(self, *, alunos: AlunoRepository) -> None:
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> bool:
+        return await self._alunos.remover(tenant_id=tenant_id, aluno_id=aluno_id)
+
+
+class VincularResponsavelAoAluno:
+    def __init__(self, *, alunos: AlunoRepository) -> None:
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID, aluno_id: UUID, contato_id: UUID) -> None:
+        await self._alunos.vincular_responsavel(
+            tenant_id=tenant_id, aluno_id=aluno_id, contato_id=contato_id
+        )
+
+
+class DesvincularResponsavelDoAluno:
+    def __init__(self, *, alunos: AlunoRepository) -> None:
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID, aluno_id: UUID, contato_id: UUID) -> None:
+        await self._alunos.desvincular_responsavel(
+            tenant_id=tenant_id, aluno_id=aluno_id, contato_id=contato_id
+        )

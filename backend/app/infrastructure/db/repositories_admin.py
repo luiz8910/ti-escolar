@@ -10,8 +10,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities import Contato, Grupo, Papel, ResumoEscola, Sala, Tenant, Usuario
+from app.domain.entities import Aluno, Contato, Grupo, Papel, ResumoEscola, Sala, Tenant, Usuario
 from app.infrastructure.db.models import (
+    AlunoORM,
     BroadcastORM,
     ConhecimentoORM,
     ContatoORM,
@@ -25,6 +26,7 @@ from app.infrastructure.db.models import (
     TemplateORM,
     TenantORM,
     UsuarioORM,
+    aluno_responsaveis,
     grupo_contatos,
     sala_contatos,
 )
@@ -143,11 +145,19 @@ class SqlTenantRepository:
         broadcasts_do_tenant = select(BroadcastORM.id).where(BroadcastORM.tenant_id == tenant_id)
         grupos_do_tenant = select(GrupoORM.id).where(GrupoORM.tenant_id == tenant_id)
         contatos_do_tenant = select(ContatoORM.id).where(ContatoORM.tenant_id == tenant_id)
+        alunos_do_tenant = select(AlunoORM.id).where(AlunoORM.tenant_id == tenant_id)
 
         # Filhos primeiro, respeitando as FKs.
         await self._s.execute(
             delete(MensagemORM).where(MensagemORM.conversa_id.in_(conversas_do_tenant))
         )
+        await self._s.execute(
+            delete(aluno_responsaveis).where(
+                aluno_responsaveis.c.aluno_id.in_(alunos_do_tenant)
+                | aluno_responsaveis.c.contato_id.in_(contatos_do_tenant)
+            )
+        )
+        await self._s.execute(delete(AlunoORM).where(AlunoORM.tenant_id == tenant_id))
         await self._s.execute(delete(ConversaORM).where(ConversaORM.tenant_id == tenant_id))
         await self._s.execute(delete(ConhecimentoORM).where(ConhecimentoORM.tenant_id == tenant_id))
         await self._s.execute(delete(DocumentoORM).where(DocumentoORM.tenant_id == tenant_id))
@@ -472,3 +482,118 @@ class SqlSalaRepository:
         if row is None:
             raise ValueError("Sala não encontrada para o tenant.")
         return [_to_contato(c) for c in row.pais]
+
+
+def _to_aluno(row: AlunoORM) -> Aluno:
+    return Aluno(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        nome=row.nome,
+        matricula=row.matricula,
+        sala_id=row.sala_id,
+        ativo=row.ativo,
+        criado_em=row.criado_em,
+        responsaveis=[_to_contato(c) for c in row.responsaveis],
+        sala_nome=row.sala.nome if row.sala else "",
+    )
+
+
+class SqlAlunoRepository:
+    """CRUD de alunos, vínculo N:N com responsáveis e série 1:1, escopado por tenant."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def _orm(self, *, tenant_id: uuid.UUID, aluno_id: uuid.UUID) -> AlunoORM | None:
+        stmt = (
+            select(AlunoORM)
+            .where(AlunoORM.id == aluno_id, AlunoORM.tenant_id == tenant_id)
+            .options(selectinload(AlunoORM.responsaveis), selectinload(AlunoORM.sala))
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def criar(self, aluno: Aluno) -> Aluno:
+        self._s.add(
+            AlunoORM(
+                id=aluno.id,
+                tenant_id=aluno.tenant_id,
+                nome=aluno.nome,
+                matricula=aluno.matricula,
+                sala_id=aluno.sala_id,
+                ativo=aluno.ativo,
+                criado_em=aluno.criado_em,
+            )
+        )
+        await self._s.flush()
+        # Recarrega com os relacionamentos para devolver sala_nome/responsáveis.
+        row = await self._orm(tenant_id=aluno.tenant_id, aluno_id=aluno.id)
+        return _to_aluno(row)
+
+    async def obter(self, *, tenant_id: uuid.UUID, aluno_id: uuid.UUID) -> Aluno | None:
+        row = await self._orm(tenant_id=tenant_id, aluno_id=aluno_id)
+        return _to_aluno(row) if row else None
+
+    async def listar(
+        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID | None = None
+    ) -> list[Aluno]:
+        stmt = (
+            select(AlunoORM)
+            .where(AlunoORM.tenant_id == tenant_id)
+            .options(selectinload(AlunoORM.responsaveis), selectinload(AlunoORM.sala))
+            .order_by(AlunoORM.nome)
+        )
+        if sala_id is not None:
+            stmt = stmt.where(AlunoORM.sala_id == sala_id)
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_aluno(r) for r in rows]
+
+    async def atualizar(self, aluno: Aluno) -> Aluno:
+        row = await self._orm(tenant_id=aluno.tenant_id, aluno_id=aluno.id)
+        if row is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        row.nome = aluno.nome
+        row.matricula = aluno.matricula
+        row.sala_id = aluno.sala_id
+        row.ativo = aluno.ativo
+        await self._s.flush()
+        await self._s.refresh(row, attribute_names=["sala"])
+        return _to_aluno(row)
+
+    async def remover(self, *, tenant_id: uuid.UUID, aluno_id: uuid.UUID) -> bool:
+        row = await self._orm(tenant_id=tenant_id, aluno_id=aluno_id)
+        if row is None:
+            return False
+        # Os vínculos com responsáveis somem por ON DELETE CASCADE; o aluno some daqui.
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
+
+    async def _contato_do_tenant(
+        self, *, tenant_id: uuid.UUID, contato_id: uuid.UUID
+    ) -> ContatoORM | None:
+        stmt = select(ContatoORM).where(
+            ContatoORM.id == contato_id, ContatoORM.tenant_id == tenant_id
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def vincular_responsavel(
+        self, *, tenant_id: uuid.UUID, aluno_id: uuid.UUID, contato_id: uuid.UUID
+    ) -> None:
+        aluno = await self._orm(tenant_id=tenant_id, aluno_id=aluno_id)
+        if aluno is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        contato = await self._contato_do_tenant(tenant_id=tenant_id, contato_id=contato_id)
+        if contato is None:
+            raise ValueError("Responsável não encontrado para o tenant.")
+        if all(c.id != contato_id for c in aluno.responsaveis):
+            aluno.responsaveis.append(contato)
+            await self._s.flush()
+
+    async def desvincular_responsavel(
+        self, *, tenant_id: uuid.UUID, aluno_id: uuid.UUID, contato_id: uuid.UUID
+    ) -> None:
+        aluno = await self._orm(tenant_id=tenant_id, aluno_id=aluno_id)
+        if aluno is None:
+            raise ValueError("Aluno não encontrado para o tenant.")
+        aluno.responsaveis = [c for c in aluno.responsaveis if c.id != contato_id]
+        await self._s.flush()

@@ -444,11 +444,15 @@ export async function atualizarSala(
   return jsonOuErro(resp, "atualizar sala");
 }
 
-export async function removerSala(salaId: string): Promise<void> {
-  const resp = await apiFetch(
-    `${API_URL}/api/admin/salas/${salaId}?tenant_id=${tenantEmFoco()}`,
-    { method: "DELETE", headers: authHeaders() }
-  );
+// Remove uma série. Sem `moverPara`, exclui os alunos da série junto; com `moverPara`,
+// transfere os alunos para a série indicada antes de remover esta.
+export async function removerSala(salaId: string, moverPara?: string): Promise<void> {
+  const params = new URLSearchParams({ tenant_id: tenantEmFoco() });
+  if (moverPara) params.set("mover_para", moverPara);
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}?${params.toString()}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!resp.ok && resp.status !== 204) {
     const erro = await resp.json().catch(() => ({}));
     throw new Error(erro.detail ?? `Erro ${resp.status} ao remover sala`);
@@ -485,6 +489,107 @@ export async function relatorioPaisDaSala(salaId: string): Promise<Pai[]> {
     { headers: authHeaders() }
   );
   return jsonOuErro(resp, "obter relatório de pais da sala");
+}
+
+// --------------------------------- alunos --------------------------------- //
+export interface Aluno {
+  id: string;
+  nome: string;
+  matricula: string;
+  ativo: boolean;
+  sala_id: string;
+  sala_nome: string;
+  responsaveis: Pai[];
+}
+
+export async function listarAlunos(salaId?: string): Promise<Aluno[]> {
+  const qs = salaId ? `?sala_id=${salaId}` : "";
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/tenant/${tenantEmFoco()}${qs}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar alunos");
+}
+
+export async function cadastrarAluno(
+  nome: string,
+  salaId: string,
+  matricula = "",
+  responsavelIds: string[] = []
+): Promise<Aluno> {
+  const resp = await apiFetch(`${API_URL}/api/admin/alunos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      nome,
+      matricula,
+      sala_id: salaId,
+      responsavel_ids: responsavelIds,
+    }),
+  });
+  return jsonOuErro(resp, "cadastrar aluno");
+}
+
+export async function atualizarAluno(
+  alunoId: string,
+  nome: string,
+  salaId: string,
+  matricula: string,
+  ativo: boolean
+): Promise<Aluno> {
+  const resp = await apiFetch(`${API_URL}/api/admin/alunos/${alunoId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      nome,
+      matricula,
+      sala_id: salaId,
+      ativo,
+    }),
+  });
+  return jsonOuErro(resp, "atualizar aluno");
+}
+
+export async function removerAluno(alunoId: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/${alunoId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover aluno`);
+  }
+}
+
+export async function vincularResponsavelAoAluno(
+  alunoId: string,
+  contatoId: string
+): Promise<void> {
+  const resp = await apiFetch(`${API_URL}/api/admin/alunos/${alunoId}/responsaveis`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), contato_id: contatoId }),
+  });
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao vincular responsável`);
+  }
+}
+
+export async function desvincularResponsavelDoAluno(
+  alunoId: string,
+  contatoId: string
+): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/${alunoId}/responsaveis/${contatoId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao desvincular responsável`);
+  }
 }
 
 // --------------------- base de conhecimento (RAG) ------------------------- //
