@@ -8,6 +8,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_use_cases import EnviarBroadcastParaGrupo
+from app.application.tenant_use_cases import NotificarLicencasAVencer
 from app.application.use_cases import (
     AtenderConversa,
     EnviarBroadcast,
@@ -38,6 +39,7 @@ from app.infrastructure.db.repositories_conhecimento import (
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
+from app.infrastructure.messaging.email import LogEmailSender
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
@@ -130,6 +132,17 @@ def get_grupo_repo(session: AsyncSession = Depends(get_session)) -> SqlGrupoRepo
 
 def get_tenant_repo(session: AsyncSession = Depends(get_session)) -> SqlTenantRepository:
     return SqlTenantRepository(session)
+
+
+def get_notificar_licencas(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> NotificarLicencasAVencer:
+    return NotificarLicencasAVencer(
+        tenants=SqlTenantRepository(session),
+        usuarios=SqlUsuarioRepository(session),
+        emails=LogEmailSender(remetente=settings.email_from),
+    )
 
 
 def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConversaRepository:

@@ -22,16 +22,20 @@ from app.application.admin_use_cases import (
 )
 from app.application.tenant_use_cases import (
     AtualizarEscola,
+    BloquearEscola,
     CriarEscola,
+    DefinirLicenca,
+    DesbloquearEscola,
     ListarBroadcastsDaEscola,
     ListarConversasDaEscola,
     ListarEscolas,
+    NotificarLicencasAVencer,
     ObterConversaDaEscola,
     ObterEscola,
     RemoverEscola,
 )
 from app.config import Settings
-from app.domain.entities import Papel, Usuario
+from app.domain.entities import Papel, PlanoTenant, Tenant, Usuario
 from app.infrastructure.db.repositories import SqlBroadcastRepository, SqlConversaRepository
 from app.infrastructure.security import criar_token, decodificar_token
 from app.infrastructure.db.repositories_admin import (
@@ -44,11 +48,14 @@ from app.interfaces.deps import (
     get_conversa_repo,
     get_enviar_para_grupo,
     get_grupo_repo,
+    get_notificar_licencas,
     get_settings_dep,
     get_tenant_repo,
     get_usuario_repo,
 )
 from app.interfaces.dto import (
+    AvisoLicencaSaida,
+    BloqueioEntrada,
     BroadcastResumoSaida,
     ContatoEntrada,
     ContatoSaida,
@@ -62,6 +69,8 @@ from app.interfaces.dto import (
     EscolaSaida,
     GrupoEntrada,
     GrupoSaida,
+    LicencaEntrada,
+    LicencaSaida,
     LoginEntrada,
     MensagemConversaSaida,
     TokenSaida,
@@ -123,6 +132,16 @@ def _exige_super_admin(usuario: Usuario) -> None:
         )
 
 
+async def _exige_tenant_ativo(tenant_id: UUID, tenants: SqlTenantRepository) -> None:
+    """Recusa operações (disparos) de uma escola bloqueada."""
+    escola = await tenants.obter(tenant_id)
+    if escola is not None and escola.bloqueado:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Escola bloqueada: {escola.motivo_bloqueio}",
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Autenticação e usuários
 # --------------------------------------------------------------------------- #
@@ -130,6 +149,7 @@ def _exige_super_admin(usuario: Usuario) -> None:
 async def login(
     payload: LoginEntrada,
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
     settings: Settings = Depends(get_settings_dep),
 ) -> TokenSaida:
     usuario = await AutenticarUsuario(usuarios=usuarios).executar(
@@ -137,6 +157,15 @@ async def login(
     )
     if usuario is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
+
+    # Admin de escola bloqueada não acessa o painel (o super admin continua entrando).
+    if not usuario.eh_super_admin and usuario.tenant_id is not None:
+        escola = await tenants.obter(usuario.tenant_id)
+        if escola is not None and escola.bloqueado:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Escola bloqueada: {escola.motivo_bloqueio}",
+            )
 
     expira_em = settings.jwt_expira_minutos * 60
     token = criar_token(
@@ -250,8 +279,10 @@ async def enviar_para_grupo(
     payload: EnvioGrupoEntrada,
     usuario: Usuario = Depends(usuario_autenticado),
     uc: EnviarBroadcastParaGrupo = Depends(get_enviar_para_grupo),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
 ) -> EnvioGrupoSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
+    await _exige_tenant_ativo(payload.tenant_id, tenants)
     try:
         resultado = await uc.executar(
             tenant_id=payload.tenant_id,
@@ -283,8 +314,22 @@ async def enviar_para_grupo(
 # --------------------------------------------------------------------------- #
 # Escolas (tenants) — CRUD do super admin
 # --------------------------------------------------------------------------- #
-def _escola_saida(t) -> EscolaSaida:
-    return EscolaSaida(id=t.id, nome=t.nome, slug=t.slug, criado_em=t.criado_em)
+def _licenca_saida(t: Tenant) -> LicencaSaida:
+    return LicencaSaida(
+        status=t.status.value,
+        motivo_bloqueio=t.motivo_bloqueio,
+        bloqueado_em=t.bloqueado_em,
+        plano=t.plano.value,
+        licenca_expira_em=t.licenca_expira_em,
+        dias_para_expirar=t.dias_para_expirar,
+        licenca_expirada=t.licenca_expirada,
+    )
+
+
+def _escola_saida(t: Tenant) -> EscolaSaida:
+    return EscolaSaida(
+        id=t.id, nome=t.nome, slug=t.slug, criado_em=t.criado_em, licenca=_licenca_saida(t)
+    )
 
 
 @router.post("/escolas", response_model=EscolaSaida, status_code=status.HTTP_201_CREATED)
@@ -322,6 +367,7 @@ async def listar_escolas(
             total_conversas=r.total_conversas,
             total_contatos=r.total_contatos,
             total_broadcasts=r.total_broadcasts,
+            licenca=_licenca_saida(r.tenant),
         )
         for r in resumos
     ]
@@ -381,6 +427,95 @@ async def remover_escola(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     if not removido:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Escola não encontrada")
+
+
+# --------------------------------------------------------------------------- #
+# Licenciamento / cobrança / bloqueio (super admin)
+# --------------------------------------------------------------------------- #
+@router.post("/escolas/{tenant_id}/bloquear", response_model=EscolaSaida)
+async def bloquear_escola(
+    tenant_id: UUID,
+    payload: BloqueioEntrada,
+    criador: Usuario = Depends(usuario_autenticado),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+) -> EscolaSaida:
+    try:
+        escola = await BloquearEscola(tenants=tenants).executar(
+            criador=criador, tenant_id=tenant_id, motivo=payload.motivo
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        codigo = (
+            status.HTTP_404_NOT_FOUND
+            if "não encontrada" in str(e)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=codigo, detail=str(e)) from e
+    return _escola_saida(escola)
+
+
+@router.post("/escolas/{tenant_id}/desbloquear", response_model=EscolaSaida)
+async def desbloquear_escola(
+    tenant_id: UUID,
+    criador: Usuario = Depends(usuario_autenticado),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+) -> EscolaSaida:
+    try:
+        escola = await DesbloquearEscola(tenants=tenants).executar(
+            criador=criador, tenant_id=tenant_id
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _escola_saida(escola)
+
+
+@router.put("/escolas/{tenant_id}/licenca", response_model=EscolaSaida)
+async def definir_licenca(
+    tenant_id: UUID,
+    payload: LicencaEntrada,
+    criador: Usuario = Depends(usuario_autenticado),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+) -> EscolaSaida:
+    try:
+        plano = PlanoTenant(payload.plano)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Plano inválido (use mensal ou anual)."
+        ) from e
+    try:
+        escola = await DefinirLicenca(tenants=tenants).executar(
+            criador=criador,
+            tenant_id=tenant_id,
+            plano=plano,
+            licenca_expira_em=payload.licenca_expira_em,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _escola_saida(escola)
+
+
+@router.post("/licencas/notificar-vencimento", response_model=list[AvisoLicencaSaida])
+async def notificar_vencimento(
+    solicitante: Usuario = Depends(usuario_autenticado),
+    uc: NotificarLicencasAVencer = Depends(get_notificar_licencas),
+    settings: Settings = Depends(get_settings_dep),
+) -> list[AvisoLicencaSaida]:
+    _exige_super_admin(solicitante)
+    avisos = await uc.executar(dias_aviso=settings.license_warning_days)
+    return [
+        AvisoLicencaSaida(
+            tenant_id=a.tenant.id,
+            nome=a.tenant.nome,
+            dias_para_expirar=a.dias_para_expirar,
+            destinatarios=a.destinatarios,
+        )
+        for a in avisos
+    ]
 
 
 # --------------------------------------------------------------------------- #

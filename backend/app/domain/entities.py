@@ -23,14 +23,61 @@ def _new_id() -> UUID:
 # --------------------------------------------------------------------------- #
 # Tenant
 # --------------------------------------------------------------------------- #
+class StatusTenant(str, enum.Enum):
+    """Situação operacional da escola na plataforma."""
+
+    ATIVO = "ativo"
+    # Suspenso (falta de pagamento ou outro motivo): sem acesso ao painel e a disparos.
+    BLOQUEADO = "bloqueado"
+
+
+class PlanoTenant(str, enum.Enum):
+    """Ciclo de cobrança da licença da escola."""
+
+    MENSAL = "mensal"
+    ANUAL = "anual"
+
+
 @dataclass
 class Tenant:
-    """Uma escola. Raiz de isolamento multi-tenant."""
+    """Uma escola. Raiz de isolamento multi-tenant.
+
+    Além da identidade (``nome``/``slug``), carrega o **licenciamento**: situação
+    (``status``/``motivo_bloqueio``) e a licença (``plano``/``licenca_expira_em``).
+    Uma escola ``BLOQUEADO`` perde acesso ao painel e aos disparos.
+    """
 
     nome: str
     slug: str
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+    status: StatusTenant = StatusTenant.ATIVO
+    motivo_bloqueio: str = ""
+    bloqueado_em: datetime | None = None
+    plano: PlanoTenant = PlanoTenant.MENSAL
+    # Data de expiração da licença (relevante sobretudo no plano anual).
+    licenca_expira_em: datetime | None = None
+
+    @property
+    def bloqueado(self) -> bool:
+        return self.status == StatusTenant.BLOQUEADO
+
+    @property
+    def dias_para_expirar(self) -> int | None:
+        """Dias corridos até a licença expirar (negativo se já expirou)."""
+        if self.licenca_expira_em is None:
+            return None
+        return (self.licenca_expira_em.date() - _now().date()).days
+
+    @property
+    def licenca_expirada(self) -> bool:
+        d = self.dias_para_expirar
+        return d is not None and d < 0
+
+    def licenca_a_vencer(self, dias_aviso: int) -> bool:
+        """Licença ainda válida, porém dentro da janela de aviso de vencimento."""
+        d = self.dias_para_expirar
+        return d is not None and 0 <= d <= dias_aviso
 
 
 @dataclass

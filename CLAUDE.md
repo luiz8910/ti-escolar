@@ -234,6 +234,30 @@ ti-escolar/
   `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`.
 - **Painel:** `web/app/admin/escolas/` (lista + detalhe por `[tenantId]`).
 
+### 6e. Licenciamento, cobrança e bloqueio (super admin)
+
+- **Estado no `Tenant`:** `status` ∈ {`ativo`, `bloqueado`} + `motivo_bloqueio` e `bloqueado_em`;
+  e a licença `plano` ∈ {`mensal`, `anual`} + `licenca_expira_em`. Propriedades de domínio:
+  `bloqueado`, `dias_para_expirar`, `licenca_expirada`, `licenca_a_vencer(dias_aviso)`.
+  Migration `0006_licenciamento_tenant`.
+- **Bloqueio:** `BloquearEscola`/`DesbloquearEscola` (`app/application/tenant_use_cases.py`, só
+  super admin). Uma escola **bloqueada** perde acesso ao painel (`POST /login` recusa o
+  `tenant_admin` com 403 + motivo) **e aos disparos** (guard `_exige_tenant_ativo` em
+  `/grupos/{id}/enviar` e em `POST /api/broadcasts`). O super admin segue entrando.
+- **Licença:** `DefinirLicenca` ajusta plano e data de expiração. O contador "quanto falta para
+  expirar" é `dias_para_expirar` (exposto em `LicencaSaida`).
+- **Aviso por e-mail:** `NotificarLicencasAVencer` avisa os `tenant_admin` das escolas com
+  **plano anual** dentro da janela `LICENSE_WARNING_DAYS` (default 30) do vencimento. Porta
+  `EmailSender` no domínio; adaptador atual `LogEmailSender` (mock/log,
+  `app/infrastructure/messaging/email.py`). Disparável pelo super admin via
+  `POST /api/admin/licencas/notificar-vencimento` (ou por um job agendado).
+- **Rotas** (super admin, `app/interfaces/api/admin.py`): `/escolas/{tenant_id}/bloquear`,
+  `/escolas/{tenant_id}/desbloquear`, `PUT /escolas/{tenant_id}/licenca` e
+  `/licencas/notificar-vencimento`.
+- **Painel:** `web/app/admin/escolas/` (badge de status/expiração, modais de bloqueio e licença,
+  botão "Avisar vencimentos") e o detalhe `[tenantId]` (faixa de licença). Badge reutilizável em
+  `web/components/admin/LicencaBadge.tsx`. Login bloqueado mostra o motivo.
+
 ## 7. Camada de LLM
 
 - Contrato único: porta **`LLMProvider`** no domínio (ex.: `gerar(prompt/messages, opções) -> resposta`).
@@ -354,11 +378,13 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] **Remover** o dropdown de seleção de escola dentro do **admin da escola**
   (tenant admin é amarrado a uma única escola — não faz sentido).
 
-**Licenciamento / cobrança / bloqueio**
-- [ ] **Bloqueio de escola (tenant)** por falta de pagamento ou outro motivo — flag de status
+**Licenciamento / cobrança / bloqueio** _(ver §6e)_
+- [x] **Bloqueio de escola (tenant)** por falta de pagamento ou outro motivo — flag de status
   no `Tenant` que suspende acesso ao painel e disparos, com motivo registrado.
-- [ ] **Plano anual: contador de expiração** — exibir quanto falta para a licença expirar.
-- [ ] **Plano anual: aviso por email** de que a licença está próxima do vencimento.
+- [x] **Plano anual: contador de expiração** — exibir quanto falta para a licença expirar
+  (`dias_para_expirar` / `LicencaSaida`).
+- [x] **Plano anual: aviso por email** de que a licença está próxima do vencimento
+  (`NotificarLicencasAVencer` + porta `EmailSender`; adaptador atual é mock/log).
 
 **Cadastro em massa**
 - [ ] **Importação de alunos em massa** por **planilha ou PDF**, usando **LLM** para validar os

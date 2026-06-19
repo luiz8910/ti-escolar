@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "troque-este-segredo-jwt"
     jwt_expira_minutos: int = 480  # 8 horas
 
+    # Licenciamento / avisos por e-mail
+    # Janela (em dias) para avisar que a licença anual está perto de vencer.
+    license_warning_days: int = 30
+    # Remetente dos e-mails administrativos (adaptador atual é mock/log).
+    email_from: str = "no-reply@tiescolar.test"
+
     # Meta WhatsApp Cloud API
     meta_phone_number_id: str | None = None
     meta_waba_id: str | None = None
