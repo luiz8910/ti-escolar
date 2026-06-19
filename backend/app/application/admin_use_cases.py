@@ -13,7 +13,7 @@ from app.domain.entities import (
     Papel,
     Usuario,
 )
-from app.domain.ports import BroadcastRepository, GrupoRepository, UsuarioRepository
+from app.domain.ports import GrupoRepository, UsuarioRepository
 from app.infrastructure.security import hash_senha, verificar_senha
 
 

@@ -136,7 +136,10 @@ ti-escolar/
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
-  `0004_conhecimento_prompt` → `0005_alunos` → `0006_destinatario_entrega`.
+  `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
+  `0006_destinatario_entrega`. **Cadeia linear obrigatória:** ao criar uma migration, encadeie
+  no head atual (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade
+  head` do deploy.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -400,8 +403,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 ### 12a. Backlog priorizado (novas tasks)
 
 **Infra / deploy**
-- [ ] **Deploy automatizado do Render** via **GitHub Actions**, nos mesmos moldes do que já
-  existe para a Vercel (pipeline de CI/CD com build + deploy a cada merge na `main`).
+- [x] **Deploy automatizado do Render**: o deploy é feito nativamente pelo **Render**
+  (Auto-Deploy ligado no push à `main`). O CI (`.github/workflows/ci.yml`) roda
+  **lint (ruff) + migrations (alembic upgrade head) + pytest** em PRs e na `main`, servindo de
+  portão de qualidade antes do merge.
 
 **Observabilidade / histórico**
 - [ ] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —

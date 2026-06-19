@@ -6,13 +6,19 @@ import uuid
 from datetime import datetime, timezone
 
 from app.domain.entities import (
+    Aluno,
     Broadcast,
+    Contato,
     Conversa,
     Documento,
+    FonteConhecimento,
+    Grupo,
     MessageQuota,
     MessageTemplate,
+    PromptTenant,
     RespostaLLM,
     ResultadoBusca,
+    Sala,
     TrechoConhecimento,
     TurnoConversa,
 )

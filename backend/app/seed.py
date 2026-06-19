@@ -17,7 +17,7 @@ from app.application.cadastro_use_cases import CadastrarAluno, CadastrarPai, Cri
 from app.application.use_cases import IndexarConhecimento
 from app.config import get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
-from app.infrastructure.db.models import TemplateORM, TenantORM, UsuarioORM
+from app.infrastructure.db.models import TemplateORM, TenantORM
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,

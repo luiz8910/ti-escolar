@@ -1,0 +1,62 @@
+name: CI — Backend
+
+# Roda lint + migrations + testes em PRs e em pushes na main.
+# O deploy é feito nativamente pelo Render (Auto-Deploy ligado no push à main);
+# este workflow serve como portão de qualidade (status check) antes do merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela execuções antigas do mesmo ref para não acumular jobs concorrentes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend — testes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tiescolar
+          POSTGRES_PASSWORD: tiescolar
+          POSTGRES_DB: tiescolar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiescolar -d tiescolar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://tiescolar:tiescolar@localhost:5432/tiescolar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instala dependências
+        run: pip install -e ".[dev,llm]"
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Migrations (alembic upgrade head)
+        run: alembic upgrade head
+
+      - name: Testes (pytest)
+        run: pytest -q
