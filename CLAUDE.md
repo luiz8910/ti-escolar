@@ -398,6 +398,11 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   recebeu** o aviso. Implementado no back-end (ver §9b): o webhook da Meta atualiza o status por
   destinatário e um endpoint lista as não-entregas. **[Roadmap]** painel: depende do
   **histórico de broadcasts** no admin da escola.
+  - [ ] **Notificação ativa de não-entrega (scheduler)** — hoje a não-entrega é calculada
+    **sob demanda** no endpoint `.../nao-entregues`. Falta o **job agendado** que, depois do
+    intervalo, roda `VerificarRecebimentoBroadcast` e **notifica o admin ativamente** (push/email)
+    sobre os responsáveis que não receberam. Depende da **fila/scheduler de broadcasts** (§9a,
+    ainda roadmap); o caso de uso já está pronto para ser chamado por ele.
 
 **Super admin — histórico da escola**
 - [ ] **Histórico/ficha financeira da escola** no super admin:
