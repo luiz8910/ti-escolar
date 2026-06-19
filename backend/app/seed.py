@@ -223,7 +223,8 @@ async def _seed() -> None:
         alunos_repo = SqlAlunoRepository(session)
         if not await alunos_repo.listar(tenant_id=DEMO_TENANT_ID):
             cadastrar_aluno = CadastrarAluno(alunos=alunos_repo, salas=salas_repo)
-            for i, sala in enumerate(await salas_repo.listar(tenant_id=DEMO_TENANT_ID), start=1):
+            salas_demo = await salas_repo.listar(tenant_id=DEMO_TENANT_ID)
+            for i, sala in enumerate(salas_demo, start=1):
                 responsaveis = await salas_repo.pais(tenant_id=DEMO_TENANT_ID, sala_id=sala.id)
                 await cadastrar_aluno.executar(
                     tenant_id=DEMO_TENANT_ID,
@@ -231,6 +232,15 @@ async def _seed() -> None:
                     sala_id=sala.id,
                     matricula=f"2026-{i:03d}",
                     responsavel_ids=[c.id for c in responsaveis[:1]],
+                )
+            # Um aluno propositalmente sem responsável com telefone, para demonstrar o
+            # alerta de cobertura de contatos da turma e a notificação ao professor.
+            if salas_demo:
+                await cadastrar_aluno.executar(
+                    tenant_id=DEMO_TENANT_ID,
+                    nome="Aluno Sem Contato",
+                    sala_id=salas_demo[0].id,
+                    matricula="2026-099",
                 )
 
         # System prompt do tenant demo — só define se ainda não houver um

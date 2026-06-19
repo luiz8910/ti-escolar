@@ -46,6 +46,16 @@ export interface Quota {
   restante: number;
 }
 
+export interface Licenca {
+  status: "ativo" | "bloqueado";
+  motivo_bloqueio: string;
+  bloqueado_em: string | null;
+  plano: "mensal" | "anual";
+  licenca_expira_em: string | null;
+  dias_para_expirar: number | null;
+  licenca_expirada: boolean;
+}
+
 export interface Escola {
   id: string;
   nome: string;
@@ -54,6 +64,14 @@ export interface Escola {
   total_conversas: number;
   total_contatos: number;
   total_broadcasts: number;
+  licenca: Licenca;
+}
+
+export interface AvisoLicenca {
+  tenant_id: string;
+  nome: string;
+  dias_para_expirar: number;
+  destinatarios: string[];
 }
 
 export interface ConversaResumo {
@@ -186,7 +204,14 @@ export async function login(email: string, senha: string): Promise<Usuario> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, senha }),
   });
-  if (!resp.ok) throw new Error("Credenciais inválidas");
+  if (!resp.ok) {
+    // 403 = escola bloqueada (traz o motivo no detail); 401 = credenciais inválidas.
+    if (resp.status === 403) {
+      const corpo = await resp.json().catch(() => ({}));
+      throw new Error(corpo.detail ?? "Acesso bloqueado.");
+    }
+    throw new Error("Credenciais inválidas");
+  }
   const dados = (await resp.json()) as RespostaLogin;
   setSessao({
     usuario: dados.usuario,
@@ -315,6 +340,49 @@ export async function removerEscola(id: string): Promise<void> {
   if (!resp.ok && resp.status !== 204) {
     throw await erroDe(resp, `Erro ${resp.status} ao remover escola`);
   }
+}
+
+// --------------------- licenciamento / bloqueio (super admin) -------------- //
+export async function bloquearEscola(id: string, motivo: string): Promise<Escola> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/bloquear`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ motivo }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao bloquear escola`);
+  return resp.json();
+}
+
+export async function desbloquearEscola(id: string): Promise<Escola> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/desbloquear`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao desbloquear escola`);
+  return resp.json();
+}
+
+export async function definirLicenca(
+  id: string,
+  plano: "mensal" | "anual",
+  licencaExpiraEm: string | null
+): Promise<Escola> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/licenca`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ plano, licenca_expira_em: licencaExpiraEm }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao definir licença`);
+  return resp.json();
+}
+
+export async function notificarVencimento(): Promise<AvisoLicenca[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/licencas/notificar-vencimento`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao notificar vencimentos`);
+  return resp.json();
 }
 
 // --------------------------- conversas e broadcasts ------------------------ //
@@ -489,6 +557,59 @@ export async function relatorioPaisDaSala(salaId: string): Promise<Pai[]> {
     { headers: authHeaders() }
   );
   return jsonOuErro(resp, "obter relatório de pais da sala");
+}
+
+// ----- cobertura de contatos (alunos sem responsável com telefone) ----- //
+export interface AlunoResumo {
+  id: string;
+  nome: string;
+  matricula: string;
+}
+
+export interface CoberturaSala {
+  sala_id: string;
+  sala_nome: string;
+  total_alunos: number;
+  total_sem_contato: number;
+  alunos_sem_contato: AlunoResumo[];
+}
+
+export interface ResultadoNotificacaoProfessor {
+  enviado: boolean;
+  id_externo: string;
+  telefone: string;
+  total_sem_contato: number;
+  cobertura: CoberturaSala;
+}
+
+export async function coberturaDasSalas(): Promise<CoberturaSala[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/salas/tenant/${tenantEmFoco()}/cobertura`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar cobertura de contatos das salas");
+}
+
+export async function coberturaDaSala(salaId: string): Promise<CoberturaSala> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/salas/${salaId}/cobertura?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar cobertura de contatos da sala");
+}
+
+// Dispara ao professor um aviso pedindo os contatos de responsáveis faltantes.
+export async function notificarProfessor(
+  salaId: string,
+  telefone: string,
+  mensagem = ""
+): Promise<ResultadoNotificacaoProfessor> {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}/notificar-professor`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), telefone, mensagem }),
+  });
+  return jsonOuErro(resp, "notificar professor");
 }
 
 // --------------------------------- alunos --------------------------------- //

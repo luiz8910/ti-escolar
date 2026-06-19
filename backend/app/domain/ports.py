@@ -137,6 +137,16 @@ class RateLimiter(Protocol):
 
 
 # --------------------------------------------------------------------------- #
+# E-mail (avisos administrativos, ex.: licença a vencer)
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class EmailSender(Protocol):
+    """Envio de e-mails transacionais. Implementação atual: log (mock)."""
+
+    async def enviar(self, *, destinatario: str, assunto: str, corpo: str) -> None: ...
+
+
+# --------------------------------------------------------------------------- #
 # Repositórios de persistência
 # --------------------------------------------------------------------------- #
 @runtime_checkable

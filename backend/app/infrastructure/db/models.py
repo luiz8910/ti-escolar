@@ -35,6 +35,12 @@ class TenantORM(Base):
     nome: Mapped[str] = mapped_column(String(200))
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     criado_em: Mapped[datetime] = mapped_column()
+    # Licenciamento / cobrança / bloqueio.
+    status: Mapped[str] = mapped_column(String(20), default="ativo", server_default="ativo")
+    motivo_bloqueio: Mapped[str] = mapped_column(Text, default="", server_default="")
+    bloqueado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    plano: Mapped[str] = mapped_column(String(20), default="mensal", server_default="mensal")
+    licenca_expira_em: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class ConversaORM(Base):

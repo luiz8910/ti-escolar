@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
 import { cn } from "@/components/ui/cn";
+import { LicencaBadge } from "@/components/admin/LicencaBadge";
 import { ChatBubbleIcon, BellIcon } from "@/components/ui/icons";
 
 type Aba = "conversas" | "broadcasts";
@@ -94,6 +95,8 @@ export default function EscolaDetalhePage() {
       onLogout={sair}
     >
       <div className="flex flex-col gap-[18px]">
+        {escola && <LicencaInfo escola={escola} />}
+
         {/* Abas segmentadas */}
         <div className="inline-flex w-fit gap-1 rounded-lg border border-n-200 bg-white p-1 shadow-sm">
           <Segment active={aba === "conversas"} onClick={() => setAba("conversas")}>
@@ -115,6 +118,26 @@ export default function EscolaDetalhePage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+function LicencaInfo({ escola }: { escola: Escola }) {
+  const l = escola.licenca;
+  return (
+    <Card className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <LicencaBadge licenca={l} />
+        <div className="text-xs text-n-500">
+          <span className="font-semibold text-n-700">
+            Plano {l.plano === "anual" ? "anual" : "mensal"}
+          </span>
+          {l.licenca_expira_em && <> · expira em {formatar(l.licenca_expira_em)}</>}
+        </div>
+      </div>
+      {l.status === "bloqueado" && l.motivo_bloqueio && (
+        <p className="text-xs text-danger">Motivo do bloqueio: {l.motivo_bloqueio}</p>
+      )}
+    </Card>
   );
 }
 

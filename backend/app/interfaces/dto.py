@@ -134,11 +134,24 @@ class EscolaEntrada(BaseModel):
     slug: str = ""
 
 
+class LicencaSaida(BaseModel):
+    """Estado de licenciamento/cobrança/bloqueio de uma escola."""
+
+    status: str  # "ativo" | "bloqueado"
+    motivo_bloqueio: str = ""
+    bloqueado_em: datetime | None = None
+    plano: str  # "mensal" | "anual"
+    licenca_expira_em: datetime | None = None
+    dias_para_expirar: int | None = None
+    licenca_expirada: bool = False
+
+
 class EscolaSaida(BaseModel):
     id: UUID
     nome: str
     slug: str
     criado_em: datetime
+    licenca: LicencaSaida
 
 
 class EscolaResumoSaida(BaseModel):
@@ -149,6 +162,23 @@ class EscolaResumoSaida(BaseModel):
     total_conversas: int
     total_contatos: int
     total_broadcasts: int
+    licenca: LicencaSaida
+
+
+class BloqueioEntrada(BaseModel):
+    motivo: str = Field(..., examples=["Inadimplência: mensalidade de junho/2026 em aberto."])
+
+
+class LicencaEntrada(BaseModel):
+    plano: str = Field("mensal", examples=["mensal", "anual"])
+    licenca_expira_em: datetime | None = None
+
+
+class AvisoLicencaSaida(BaseModel):
+    tenant_id: UUID
+    nome: str
+    dias_para_expirar: int
+    destinatarios: list[str] = []
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +311,39 @@ class AlunoSaida(BaseModel):
     sala_id: UUID
     sala_nome: str = ""
     responsaveis: list[PaiSaida] = []
+
+
+# --------------------------------------------------------------------------- #
+# Cobertura de contatos da turma e notificação ao professor
+# --------------------------------------------------------------------------- #
+class AlunoResumoSaida(BaseModel):
+    id: UUID
+    nome: str
+    matricula: str = ""
+
+
+class CoberturaSalaSaida(BaseModel):
+    sala_id: UUID
+    sala_nome: str
+    total_alunos: int
+    total_sem_contato: int
+    alunos_sem_contato: list[AlunoResumoSaida] = []
+
+
+class NotificarProfessorEntrada(BaseModel):
+    tenant_id: UUID
+    # WhatsApp do professor que vai coletar os contatos faltantes.
+    telefone: str = Field(..., examples=["+5511999990000"])
+    # Mensagem opcional acrescentada antes do aviso automático.
+    mensagem: str = ""
+
+
+class NotificarProfessorSaida(BaseModel):
+    enviado: bool
+    id_externo: str
+    telefone: str
+    total_sem_contato: int
+    cobertura: CoberturaSalaSaida
 
 
 # --------------------------------------------------------------------------- #

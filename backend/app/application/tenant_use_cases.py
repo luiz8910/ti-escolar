@@ -11,22 +11,31 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import UUID
 
 from app.domain.entities import (
     Broadcast,
     Conversa,
     Mensagem,
+    PlanoTenant,
     ResumoConversa,
     ResumoEscola,
+    StatusTenant,
     Tenant,
     Usuario,
 )
 from app.domain.ports import (
     BroadcastRepository,
     ConversaRepository,
+    EmailSender,
     TenantRepository,
+    UsuarioRepository,
 )
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _exige_super_admin(usuario: Usuario) -> None:
@@ -95,9 +104,10 @@ class AtualizarEscola:
         conflito = await self._tenants.por_slug(slug)
         if conflito and conflito.id != tenant_id:
             raise ValueError("Já existe uma escola com este slug.")
-        return await self._tenants.atualizar(
-            Tenant(id=tenant_id, nome=nome, slug=slug, criado_em=existente.criado_em)
-        )
+        # Renomear não mexe no licenciamento: preserva status/plano/expiração.
+        existente.nome = nome
+        existente.slug = slug
+        return await self._tenants.atualizar(existente)
 
 
 class RemoverEscola:
@@ -107,6 +117,124 @@ class RemoverEscola:
     async def executar(self, *, criador: Usuario, tenant_id: UUID) -> bool:
         _exige_super_admin(criador)
         return await self._tenants.remover(tenant_id)
+
+
+# --------------------------------------------------------------------------- #
+# Licenciamento / cobrança / bloqueio (super admin)
+# --------------------------------------------------------------------------- #
+async def _obter_existente(tenants: TenantRepository, tenant_id: UUID) -> Tenant:
+    escola = await tenants.obter(tenant_id)
+    if escola is None:
+        raise ValueError("Escola não encontrada.")
+    return escola
+
+
+class BloquearEscola:
+    """Suspende a escola (falta de pagamento ou outro motivo). Só super admin.
+
+    Uma escola bloqueada perde acesso ao painel e aos disparos; o motivo fica
+    registrado para rastreabilidade.
+    """
+
+    def __init__(self, *, tenants: TenantRepository) -> None:
+        self._tenants = tenants
+
+    async def executar(self, *, criador: Usuario, tenant_id: UUID, motivo: str) -> Tenant:
+        _exige_super_admin(criador)
+        motivo = motivo.strip()
+        if not motivo:
+            raise ValueError("O motivo do bloqueio é obrigatório.")
+        escola = await _obter_existente(self._tenants, tenant_id)
+        escola.status = StatusTenant.BLOQUEADO
+        escola.motivo_bloqueio = motivo
+        escola.bloqueado_em = _now()
+        return await self._tenants.atualizar(escola)
+
+
+class DesbloquearEscola:
+    def __init__(self, *, tenants: TenantRepository) -> None:
+        self._tenants = tenants
+
+    async def executar(self, *, criador: Usuario, tenant_id: UUID) -> Tenant:
+        _exige_super_admin(criador)
+        escola = await _obter_existente(self._tenants, tenant_id)
+        escola.status = StatusTenant.ATIVO
+        escola.motivo_bloqueio = ""
+        escola.bloqueado_em = None
+        return await self._tenants.atualizar(escola)
+
+
+class DefinirLicenca:
+    """Define o plano de cobrança e a data de expiração da licença. Só super admin."""
+
+    def __init__(self, *, tenants: TenantRepository) -> None:
+        self._tenants = tenants
+
+    async def executar(
+        self,
+        *,
+        criador: Usuario,
+        tenant_id: UUID,
+        plano: PlanoTenant,
+        licenca_expira_em: datetime | None,
+    ) -> Tenant:
+        _exige_super_admin(criador)
+        escola = await _obter_existente(self._tenants, tenant_id)
+        escola.plano = plano
+        escola.licenca_expira_em = licenca_expira_em
+        return await self._tenants.atualizar(escola)
+
+
+@dataclass
+class AvisoLicenca:
+    """Resultado de um aviso de vencimento enviado para uma escola."""
+
+    tenant: Tenant
+    dias_para_expirar: int
+    destinatarios: list[str]
+
+
+class NotificarLicencasAVencer:
+    """Avisa por e-mail os admins de escolas com licença anual próxima do vencimento.
+
+    Considera apenas o **plano anual** com licença ainda válida, porém dentro da
+    janela de ``dias_aviso`` dias do vencimento. Envia a cada ``tenant_admin`` da
+    escola. Pode ser disparado por um job agendado ou manualmente pelo super admin.
+    """
+
+    def __init__(
+        self,
+        *,
+        tenants: TenantRepository,
+        usuarios: UsuarioRepository,
+        emails: EmailSender,
+    ) -> None:
+        self._tenants = tenants
+        self._usuarios = usuarios
+        self._emails = emails
+
+    async def executar(self, *, dias_aviso: int = 30) -> list[AvisoLicenca]:
+        avisos: list[AvisoLicenca] = []
+        for escola in await self._tenants.listar():
+            if escola.plano != PlanoTenant.ANUAL or not escola.licenca_a_vencer(dias_aviso):
+                continue
+            admins = await self._usuarios.listar(tenant_id=escola.id)
+            destinatarios = [u.email for u in admins if u.ativo]
+            dias = escola.dias_para_expirar or 0
+            for email in destinatarios:
+                await self._emails.enviar(
+                    destinatario=email,
+                    assunto=f"Sua licença do TI-Escolar vence em {dias} dia(s)",
+                    corpo=(
+                        f"Olá! A licença anual da escola {escola.nome} vence em {dias} "
+                        f"dia(s) ({escola.licenca_expira_em:%d/%m/%Y}). "
+                        "Para evitar a suspensão do acesso, regularize a renovação."
+                    ),
+                )
+            avisos.append(
+                AvisoLicenca(tenant=escola, dias_para_expirar=dias, destinatarios=destinatarios)
+            )
+        return avisos
 
 
 # --------------------------------------------------------------------------- #

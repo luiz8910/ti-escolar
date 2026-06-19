@@ -7,6 +7,8 @@ import {
   atualizarPai,
   atualizarSala,
   cadastrarPai,
+  CoberturaSala,
+  coberturaDasSalas,
   criarSala,
   desvincularPaiDaSala,
   getSessao,
@@ -14,6 +16,7 @@ import {
   listarPais,
   listarSalas,
   logout,
+  notificarProfessor,
   Pai,
   relatorioPaisDaSala,
   removerPai,
@@ -26,7 +29,7 @@ import {
 import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Input, Select, Field } from "@/components/ui/form";
+import { Input, Select, Field, Textarea } from "@/components/ui/form";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
@@ -38,13 +41,19 @@ export default function SalasEPais() {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
   const [pais, setPais] = useState<Pai[]>([]);
+  const [coberturas, setCoberturas] = useState<Record<string, CoberturaSala>>({});
   const [selecionada, setSelecionada] = useState<Sala | null>(null);
   const toast = useToast();
 
   const recarregar = useCallback(async () => {
-    const [ss, ps] = await Promise.all([listarSalas(), listarPais()]);
+    const [ss, ps, cobs] = await Promise.all([
+      listarSalas(),
+      listarPais(),
+      coberturaDasSalas(),
+    ]);
     setSalas(ss);
     setPais(ps);
+    setCoberturas(Object.fromEntries(cobs.map((c) => [c.sala_id, c])));
     setSelecionada((atual) => (atual ? ss.find((s) => s.id === atual.id) ?? null : null));
   }, []);
 
@@ -80,11 +89,17 @@ export default function SalasEPais() {
         <div className="grid grid-cols-1 gap-[18px] lg:grid-cols-[320px_1fr]">
           <SalasPanel
             salas={salas}
+            coberturas={coberturas}
             selecionada={selecionada}
             onSelecionar={setSelecionada}
             onMudou={recarregar}
           />
-          <SalaDetalhe sala={selecionada} pais={pais} onMudou={recarregar} />
+          <SalaDetalhe
+            sala={selecionada}
+            pais={pais}
+            cobertura={selecionada ? coberturas[selecionada.id] ?? null : null}
+            onMudou={recarregar}
+          />
         </div>
 
         <PaisPanel pais={pais} onMudou={recarregar} />
@@ -96,11 +111,13 @@ export default function SalasEPais() {
 // --------------------------------------------------------------------------- //
 function SalasPanel({
   salas,
+  coberturas,
   selecionada,
   onSelecionar,
   onMudou,
 }: {
   salas: Sala[];
+  coberturas: Record<string, CoberturaSala>;
   selecionada: Sala | null;
   onSelecionar: (s: Sala) => void;
   onMudou: () => Promise<void>;
@@ -154,6 +171,7 @@ function SalasPanel({
       <div className="flex flex-col gap-1">
         {salas.map((s) => {
           const active = selecionada?.id === s.id;
+          const semContato = coberturas[s.id]?.total_sem_contato ?? 0;
           return (
             <div
               key={s.id}
@@ -172,6 +190,17 @@ function SalasPanel({
                 >
                   {s.total_pais}
                 </span>
+                {semContato > 0 && (
+                  <span
+                    title={`${semContato} aluno(s) sem contato de responsável`}
+                    className={
+                      "rounded-full px-2 py-0.5 text-[11px] font-bold " +
+                      (active ? "bg-white/20 text-white" : "bg-warning-soft text-warning")
+                    }
+                  >
+                    ⚠ {semContato}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => abrirEdicao(s)}
@@ -392,13 +421,132 @@ function ExcluirSalaModal({
 }
 
 // --------------------------------------------------------------------------- //
+// Alerta de cobertura de contatos: quantos alunos da turma estão sem nenhum
+// responsável com WhatsApp vinculado, com disparo de aviso ao professor.
+function CoberturaAlerta({
+  sala,
+  cobertura,
+  onMudou,
+}: {
+  sala: Sala;
+  cobertura: CoberturaSala | null;
+  onMudou: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [notificando, setNotificando] = useState(false);
+  const [telefone, setTelefone] = useState("");
+  const [mensagem, setMensagem] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  if (!cobertura || cobertura.total_alunos === 0) return null;
+
+  const semContato = cobertura.total_sem_contato;
+
+  async function notificar() {
+    if (!telefone.trim()) {
+      toast({ tone: "danger", title: "Informe o WhatsApp do professor." });
+      return;
+    }
+    setEnviando(true);
+    try {
+      await notificarProfessor(sala.id, telefone.trim(), mensagem.trim());
+      setNotificando(false);
+      setTelefone("");
+      setMensagem("");
+      await onMudou();
+      toast({ tone: "success", title: "Aviso enviado ao professor." });
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao notificar." });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  if (semContato === 0) {
+    return (
+      <div className="mb-3.5 rounded-[10px] border border-success/30 bg-success-soft px-3.5 py-3 text-[13px] font-semibold text-success">
+        ✓ Todos os {cobertura.total_alunos} aluno(s) da turma têm contato de responsável.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3.5 rounded-[10px] border border-warning/40 bg-warning-soft px-3.5 py-3 text-[13px]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold text-warning">
+          ⚠️ {cobertura.total_alunos} aluno(s) na turma · {semContato} sem contato de responsável
+        </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setNotificando(true)}
+          className="print:hidden"
+        >
+          Notificar professor
+        </Button>
+      </div>
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-warning/90">
+        {cobertura.alunos_sem_contato.map((a) => (
+          <li key={a.id}>
+            • {a.nome}
+            {a.matricula ? ` (${a.matricula})` : ""}
+          </li>
+        ))}
+      </ul>
+
+      <Modal
+        open={notificando}
+        onClose={() => setNotificando(false)}
+        title={`Notificar professor — ${sala.nome}`}
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setNotificando(false)}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={notificar} loading={enviando}>
+              Enviar aviso
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-n-600">
+            Enviaremos ao professor um aviso pelo WhatsApp com os {semContato} aluno(s) sem contato,
+            pedindo que colete os números na reunião.
+          </p>
+          <Field label="WhatsApp do professor">
+            <Input
+              autoFocus
+              mono
+              value={telefone}
+              onChange={(e) => setTelefone(e.target.value)}
+              placeholder="+5511999990000"
+            />
+          </Field>
+          <Field label="Mensagem (opcional)">
+            <Textarea
+              rows={3}
+              value={mensagem}
+              onChange={(e) => setMensagem(e.target.value)}
+              placeholder="Ex.: Prezado professor, na reunião de hoje…"
+            />
+          </Field>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
 function SalaDetalhe({
   sala,
   pais,
+  cobertura,
   onMudou,
 }: {
   sala: Sala | null;
   pais: Pai[];
+  cobertura: CoberturaSala | null;
   onMudou: () => Promise<void>;
 }) {
   const toast = useToast();
@@ -481,6 +629,8 @@ function SalaDetalhe({
           </Button>
         }
       />
+
+      <CoberturaAlerta sala={sala} cobertura={cobertura} onMudou={onMudou} />
 
       <TableWrap>
         <Table>

@@ -10,8 +10,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.domain.entities import Aluno, Contato, Sala
-from app.domain.ports import AlunoRepository, ContatoRepository, SalaRepository
+from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Sala
+from app.domain.ports import (
+    AlunoRepository,
+    ContatoRepository,
+    MessageChannel,
+    SalaRepository,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -196,6 +201,118 @@ class RelatorioPaisDaSala:
 
     async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]:
         return await self._salas.pais(tenant_id=tenant_id, sala_id=sala_id)
+
+
+# --------------------------------------------------------------------------- #
+# Cobertura de contatos: alunos sem responsável com telefone vinculado
+# --------------------------------------------------------------------------- #
+def _cobertura(sala: Sala, alunos: list[Aluno]) -> CoberturaContatosSala:
+    """Monta a cobertura de uma turma considerando apenas os alunos **ativos**.
+
+    Um aluno conta como "sem contato" quando nenhum de seus responsáveis tem
+    telefone (WhatsApp) cadastrado. Ex-alunos (``ativo=False``) são ignorados.
+    """
+    ativos = [a for a in alunos if a.ativo]
+    return CoberturaContatosSala(
+        sala_id=sala.id,
+        sala_nome=sala.nome,
+        total_alunos=len(ativos),
+        alunos_sem_contato=[a for a in ativos if not a.tem_contato],
+    )
+
+
+class CoberturaDeContatosDaSala:
+    """Cobertura de contatos de uma turma específica (com a lista de alunos sem contato)."""
+
+    def __init__(self, *, salas: SalaRepository, alunos: AlunoRepository) -> None:
+        self._salas = salas
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> CoberturaContatosSala:
+        sala = await self._salas.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if sala is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        alunos = await self._alunos.listar(tenant_id=tenant_id, sala_id=sala_id)
+        return _cobertura(sala, alunos)
+
+
+class ResumoCoberturaDasSalas:
+    """Cobertura de contatos de todas as turmas do tenant, para o painel de salas.
+
+    Carrega os alunos uma única vez e os agrupa por sala (evita um N+1 por turma).
+    """
+
+    def __init__(self, *, salas: SalaRepository, alunos: AlunoRepository) -> None:
+        self._salas = salas
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID) -> list[CoberturaContatosSala]:
+        salas = await self._salas.listar(tenant_id=tenant_id)
+        todos = await self._alunos.listar(tenant_id=tenant_id)
+        por_sala: dict[UUID, list[Aluno]] = {}
+        for aluno in todos:
+            por_sala.setdefault(aluno.sala_id, []).append(aluno)
+        return [_cobertura(sala, por_sala.get(sala.id, [])) for sala in salas]
+
+
+def _montar_aviso_professor(cobertura: CoberturaContatosSala, mensagem: str = "") -> str:
+    """Texto enviado ao professor pedindo os contatos de responsáveis faltantes."""
+    linhas = [
+        f"• {a.nome}" + (f" (mat. {a.matricula})" if a.matricula else "")
+        for a in cobertura.alunos_sem_contato
+    ]
+    corpo = (
+        f"⚠️ Turma {cobertura.sala_nome}: {cobertura.total_sem_contato} de "
+        f"{cobertura.total_alunos} aluno(s) sem contato de responsável (WhatsApp).\n\n"
+        "Alunos sem contato:\n"
+        + "\n".join(linhas)
+        + "\n\nPor favor, colete o WhatsApp de um responsável e repasse à secretaria "
+        "para cadastro."
+    )
+    prefixo = mensagem.strip()
+    return f"{prefixo}\n\n{corpo}" if prefixo else corpo
+
+
+class NotificarProfessorContatosFaltantes:
+    """Dispara ao professor uma notificação pedindo os contatos faltantes de uma turma.
+
+    Envia um texto livre pelo ``MessageChannel`` para o telefone informado do professor,
+    listando os alunos sem contato de responsável. Falha se não há nenhum faltante.
+    """
+
+    def __init__(
+        self,
+        *,
+        salas: SalaRepository,
+        alunos: AlunoRepository,
+        canal: MessageChannel,
+    ) -> None:
+        self._salas = salas
+        self._alunos = alunos
+        self._canal = canal
+
+    async def executar(
+        self,
+        *,
+        tenant_id: UUID,
+        sala_id: UUID,
+        telefone_professor: str,
+        mensagem: str = "",
+    ) -> tuple[CoberturaContatosSala, str]:
+        if not telefone_professor.strip():
+            raise ValueError("Informe o telefone (WhatsApp) do professor.")
+        cobertura = await CoberturaDeContatosDaSala(
+            salas=self._salas, alunos=self._alunos
+        ).executar(tenant_id=tenant_id, sala_id=sala_id)
+        if cobertura.total_sem_contato == 0:
+            raise ValueError(
+                "Todos os alunos da turma já têm um responsável com telefone cadastrado."
+            )
+        texto = _montar_aviso_professor(cobertura, mensagem)
+        id_externo = await self._canal.enviar_texto(
+            contato=telefone_professor.strip(), texto=texto
+        )
+        return cobertura, id_externo
 
 
 # --------------------------------------------------------------------------- #

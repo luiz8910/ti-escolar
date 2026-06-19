@@ -8,6 +8,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_use_cases import EnviarBroadcastParaGrupo
+from app.application.tenant_use_cases import NotificarLicencasAVencer
 from app.application.use_cases import (
     AtenderConversa,
     EnviarBroadcast,
@@ -16,6 +17,7 @@ from app.application.use_cases import (
     ResponderDuvida,
 )
 from app.config import Settings, get_settings
+from app.domain.ports import MessageChannel
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
     SqlBroadcastRepository,
@@ -38,6 +40,7 @@ from app.infrastructure.db.repositories_conhecimento import (
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
+from app.infrastructure.messaging.email import LogEmailSender
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
@@ -132,6 +135,17 @@ def get_tenant_repo(session: AsyncSession = Depends(get_session)) -> SqlTenantRe
     return SqlTenantRepository(session)
 
 
+def get_notificar_licencas(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> NotificarLicencasAVencer:
+    return NotificarLicencasAVencer(
+        tenants=SqlTenantRepository(session),
+        usuarios=SqlUsuarioRepository(session),
+        emails=LogEmailSender(remetente=settings.email_from),
+    )
+
+
 def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConversaRepository:
     return SqlConversaRepository(session)
 
@@ -150,6 +164,11 @@ def get_sala_repo(session: AsyncSession = Depends(get_session)) -> SqlSalaReposi
 
 def get_aluno_repo(session: AsyncSession = Depends(get_session)) -> SqlAlunoRepository:
     return SqlAlunoRepository(session)
+
+
+def get_canal(settings: Settings = Depends(get_settings_dep)) -> MessageChannel:
+    """Canal de mensagens (demo ou Meta) para envios avulsos de texto."""
+    return criar_canal(settings)
 
 
 def get_enviar_para_grupo(
