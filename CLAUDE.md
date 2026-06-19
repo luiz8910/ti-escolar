@@ -364,6 +364,20 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] **Importação de alunos em massa** por **planilha ou PDF**, usando **LLM** para validar os
   dados e normalizar a formatação da planilha/PDF antes de persistir.
 
+**Engajamento / cobertura de contatos** _(feedback de diretora — campo)_
+- [ ] **Alerta de aluno sem responsável com telefone vinculado** — ao criar/gerenciar uma
+  **turma (`Sala`)**, sinalizar quantos alunos estão **sem nenhum responsável (`Contato`) com
+  telefone vinculado** (ex.: "30 alunos na sala, 2 sem contato de responsável"). Permitir
+  **disparar uma notificação ao professor** (ex.: na reunião de pais) para **solicitar o contato
+  faltante** na hora. **Dor real:** hoje pedem ao professor para coletar os contatos e ele
+  esquece. Conecta com `Aluno` (§6c-bis, responsáveis N:N) e o cadastro de salas.
+- [ ] **Confirmação de recebimento de avisos (não-entrega reativa)** — análogo à "confirmação de
+  recebimento" de e-mail: após um broadcast, se algum número **não recebeu** a mensagem (celular
+  desligado, sem sinal, etc.), depois de um intervalo o sistema **notifica o admin de que o
+  responsável X não recebeu** o aviso — pois pode ser algo crítico que passou despercebido.
+  Aproveita o **status de entrega via webhooks da Meta** (`sent`/`delivered`/`read`/`failed`,
+  §9a) e o futuro **histórico de broadcasts**.
+
 **Super admin — histórico da escola**
 - [ ] **Histórico/ficha financeira da escola** no super admin:
   - Quando entrou (data de início).
