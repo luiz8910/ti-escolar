@@ -403,11 +403,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 ### 12a. Backlog priorizado (novas tasks)
 
 **Infra / deploy**
-- [x] **Deploy automatizado do Render** via **GitHub Actions**
-  (`.github/workflows/deploy-render.yml`): roda lint + migrations + pytest em PRs e, no merge à
-  `main`, dispara o **Deploy Hook** do Render apenas se o CI passar. Requer o secret
-  `RENDER_DEPLOY_HOOK_URL` no repositório e o Auto-Deploy do Render desligado (para o deploy ser
-  controlado pelo CI e não duplicar).
+- [x] **Deploy automatizado do Render**: o deploy é feito nativamente pelo **Render**
+  (Auto-Deploy ligado no push à `main`). O CI (`.github/workflows/ci.yml`) roda
+  **lint (ruff) + migrations (alembic upgrade head) + pytest** em PRs e na `main`, servindo de
+  portão de qualidade antes do merge.
 
 **Observabilidade / histórico**
 - [ ] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —

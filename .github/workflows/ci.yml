@@ -1,17 +1,17 @@
-name: CI/CD — Deploy Render
+name: CI — Backend
 
-# Dispara em todo push na main (o que inclui o merge de um PR) e também em PRs,
-# para rodar os testes antes do merge. O deploy no Render só acontece na main e
-# somente se os testes passarem (deploy "gated" por CI, nos moldes da Vercel).
+# Roda lint + migrations + testes em PRs e em pushes na main.
+# O deploy é feito nativamente pelo Render (Auto-Deploy ligado no push à main);
+# este workflow serve como portão de qualidade (status check) antes do merge.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-# Cancela execuções antigas do mesmo ref para não acumular deploys concorrentes.
+# Cancela execuções antigas do mesmo ref para não acumular jobs concorrentes.
 concurrency:
-  group: deploy-render-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -60,22 +60,3 @@ jobs:
 
       - name: Testes (pytest)
         run: pytest -q
-
-  deploy:
-    name: Dispara deploy no Render
-    runs-on: ubuntu-latest
-    needs: test
-    # Só na main (merge do PR), nunca em pull_request.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Aciona o Deploy Hook do Render
-        env:
-          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: |
-          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "::error::Secret RENDER_DEPLOY_HOOK_URL não configurado no repositório."
-            exit 1
-          fi
-          echo "Disparando deploy no Render..."
-          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
-          echo "Deploy acionado com sucesso."
