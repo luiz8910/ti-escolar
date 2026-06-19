@@ -118,6 +118,27 @@ class Sala:
     pais: list[Contato] = field(default_factory=list)
 
 
+@dataclass
+class Aluno:
+    """Aluno da escola, dentro de um tenant.
+
+    Pertence **obrigatoriamente** a uma série/turma (``sala_id`` — relação 1:1 com
+    ``Sala``) e tem **N** responsáveis (``Contato``s, N:N via ``aluno_responsaveis``).
+    ``ativo=False`` marca um ex-aluno (base para a futura transferência/promoção de
+    série). ``sala_nome`` é denormalizado só para exibição.
+    """
+
+    tenant_id: UUID
+    nome: str
+    sala_id: UUID
+    matricula: str = ""
+    ativo: bool = True
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    responsaveis: list[Contato] = field(default_factory=list)
+    sala_nome: str = ""
+
+
 # --------------------------------------------------------------------------- #
 # Conversa / mensagens (inbound)
 # --------------------------------------------------------------------------- #

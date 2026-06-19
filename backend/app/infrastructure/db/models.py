@@ -205,6 +205,25 @@ grupo_contatos = Table(
 )
 
 
+# Associação N:N entre alunos e contatos (responsáveis).
+aluno_responsaveis = Table(
+    "aluno_responsaveis",
+    Base.metadata,
+    Column(
+        "aluno_id",
+        PGUUID(as_uuid=True),
+        ForeignKey("alunos.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "contato_id",
+        PGUUID(as_uuid=True),
+        ForeignKey("contatos.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
 # Associação N:N entre salas (turmas) e contatos (pais/responsáveis).
 sala_contatos = Table(
     "sala_contatos",
@@ -240,6 +259,9 @@ class ContatoORM(Base):
     )
     salas: Mapped[list["SalaORM"]] = relationship(
         secondary=sala_contatos, back_populates="pais"
+    )
+    alunos: Mapped[list["AlunoORM"]] = relationship(
+        secondary=aluno_responsaveis, back_populates="responsaveis"
     )
 
     __table_args__ = (
@@ -281,6 +303,29 @@ class SalaORM(Base):
     )
 
     __table_args__ = (UniqueConstraint("tenant_id", "nome", name="uq_sala_tenant_nome"),)
+
+
+class AlunoORM(Base):
+    __tablename__ = "alunos"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    nome: Mapped[str] = mapped_column(String(200))
+    matricula: Mapped[str] = mapped_column(String(50), default="")
+    # Série/turma do aluno (1:1, obrigatória). A exclusão de uma série é mediada pelos
+    # casos de uso (excluir os alunos ou movê-los), por isso a FK é restritiva.
+    sala_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("salas.id"), nullable=False, index=True
+    )
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    criado_em: Mapped[datetime] = mapped_column()
+
+    sala: Mapped["SalaORM | None"] = relationship()
+    responsaveis: Mapped[list[ContatoORM]] = relationship(
+        secondary=aluno_responsaveis, back_populates="alunos"
+    )
 
 
 # --------------------------------------------------------------------------- #

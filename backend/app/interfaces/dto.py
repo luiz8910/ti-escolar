@@ -243,6 +243,37 @@ class VinculoPaiEntrada(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Alunos (CRUD) — responsáveis N:N, série 1:1
+# --------------------------------------------------------------------------- #
+class AlunoEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str
+    matricula: str = ""
+    # Série/turma (1:1) — obrigatória.
+    sala_id: UUID
+    # Responsáveis a vincular já no cadastro (opcional).
+    responsavel_ids: list[UUID] = []
+
+
+class AlunoAtualizar(BaseModel):
+    tenant_id: UUID
+    nome: str
+    matricula: str = ""
+    sala_id: UUID
+    ativo: bool = True
+
+
+class AlunoSaida(BaseModel):
+    id: UUID
+    nome: str
+    matricula: str
+    ativo: bool
+    sala_id: UUID
+    sala_nome: str = ""
+    responsaveis: list[PaiSaida] = []
+
+
+# --------------------------------------------------------------------------- #
 # Base de conhecimento (RAG) e system prompt por tenant
 # --------------------------------------------------------------------------- #
 class DocumentoConhecimentoEntrada(BaseModel):

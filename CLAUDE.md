@@ -135,7 +135,8 @@ ti-escolar/
   `PromptTenant` (system prompt da escola) e `ResumoEscola` (visão agregada do super admin).
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
-- **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` → `0004_conhecimento_prompt`.
+- **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
+  `0004_conhecimento_prompt` → `0005_alunos`.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -192,6 +193,30 @@ ti-escolar/
   `salas/{id}/pais/{contato_id}` (DELETE desvincular).
 - **Painel:** `web/app/admin/salas/` — CRUD de salas e pais, vínculo e **relatório imprimível**
   (PDF). O seed cria salas demo ("4ª série B", "5ª série A") com responsáveis vinculados.
+
+### 6c-bis. Alunos (CRUD)
+
+- **`Aluno`** por tenant, com **série 1:1 obrigatória** (`sala_id` → `Sala`, FK restritiva) e
+  **responsáveis N:N** (`Contato`s via `aluno_responsaveis`, `ON DELETE CASCADE`). Campos: `nome`,
+  `matricula` (opcional), `ativo` (marca **ex-aluno** — base da futura transferência/promoção de
+  série). `sala_nome` é denormalizado só para exibição.
+- **CRUD completo** + vínculo/desvínculo de responsáveis e filtro por série. Casos de uso em
+  `app/application/cadastro_use_cases.py` (`CadastrarAluno`, `ListarAlunos`, `ObterAluno`,
+  `AtualizarAluno`, `RemoverAluno`, `VincularResponsavelAoAluno`, `DesvincularResponsavelDoAluno`);
+  a série informada é validada como pertencente ao tenant. Repositório `SqlAlunoRepository`.
+- **Exclusão de série com alunos:** como `sala_id` é obrigatório, `RemoverSala` exige uma
+  estratégia: sem `mover_para` **exclui** os alunos junto com a série; com `mover_para=<sala_id>`
+  **transfere** os alunos para outra série (validada no tenant, diferente da removida) antes de
+  apagar a original. No painel, o diálogo de exclusão oferece as duas opções e permite **criar a
+  série destino** na hora (reusando `POST /salas`).
+- **Rotas** em `app/interfaces/api/cadastro.py`: `alunos` (POST · GET `tenant/{tenant_id}` com
+  `?sala_id=` opcional), `alunos/{id}` (GET/PUT/DELETE), `alunos/{id}/responsaveis`
+  (POST vincular · DELETE `/{contato_id}` desvincular) e `DELETE /salas/{id}?mover_para=` para a
+  exclusão de série com transferência.
+- **Painel:** `web/app/admin/alunos/` — cadastro, edição (série + situação ativo/ex-aluno),
+  gestão de responsáveis e filtro por série. O seed cria um aluno por sala demo.
+- A remoção de tenant (`SqlTenantRepository.remover`) apaga `aluno_responsaveis` → `alunos` na
+  cascata explícita.
 
 ### 6d. Gestão de escolas (super admin)
 
@@ -304,4 +329,6 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   `localStorage`. Ver §6a.
 - [ ] Endpoint para listar/gerenciar **templates** (o painel ainda usa o template do seed).
 - [ ] **Transferência de responsáveis** Ser possível que os pais de alunos sejam transferidos para a série seguinte ou fiquem inativos caso estejam na última série disponível. Apenas tornar responsáveis inativos se todos os alunos deste responsável já são ex-alunos.
-- [ ] **CRUD de Alunos** Fazer um CRUD de alunos relacionando responsáveis 1 -> N (1 para N) e série 1 -> 1 (1 para 1)
+- [x] **CRUD de Alunos** Aluno por tenant com **série 1:1** (`sala_id`) e **responsáveis N:N**
+  (`aluno_responsaveis`), com `ativo` para marcar ex-aluno. Ver §6c-bis
+  (`app/interfaces/api/cadastro.py`, `web/app/admin/alunos/`).

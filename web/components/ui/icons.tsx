@@ -44,6 +44,14 @@ export const UsersIcon = (p: IconProps) => (
   </svg>
 );
 
+export const CapIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 9l9-4 9 4-9 4-9-4Z" />
+    <path d="M7 11v4c0 1.1 2.2 2 5 2s5-.9 5-2v-4" />
+    <path d="M21 9v4" />
+  </svg>
+);
+
 export const BookIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M6 4h10a2 2 0 0 1 2 2v14H8a2 2 0 0 0-2 2V4Z" />

@@ -13,13 +13,14 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.application.admin_use_cases import CriarGrupo
-from app.application.cadastro_use_cases import CadastrarPai, CriarSala
+from app.application.cadastro_use_cases import CadastrarAluno, CadastrarPai, CriarSala
 from app.application.use_cases import IndexarConhecimento
 from app.config import get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
 from app.infrastructure.db.models import TemplateORM, TenantORM, UsuarioORM
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories_admin import (
+    SqlAlunoRepository,
     SqlContatoRepository,
     SqlGrupoRepository,
     SqlSalaRepository,
@@ -217,6 +218,20 @@ async def _seed() -> None:
                             sala_id=sala.id,
                             contato_id=existente.id,
                         )
+
+        # Alunos de demonstração — vinculados às salas e responsáveis já criados.
+        alunos_repo = SqlAlunoRepository(session)
+        if not await alunos_repo.listar(tenant_id=DEMO_TENANT_ID):
+            cadastrar_aluno = CadastrarAluno(alunos=alunos_repo, salas=salas_repo)
+            for i, sala in enumerate(await salas_repo.listar(tenant_id=DEMO_TENANT_ID), start=1):
+                responsaveis = await salas_repo.pais(tenant_id=DEMO_TENANT_ID, sala_id=sala.id)
+                await cadastrar_aluno.executar(
+                    tenant_id=DEMO_TENANT_ID,
+                    nome=f"Aluno Demonstração {i}",
+                    sala_id=sala.id,
+                    matricula=f"2026-{i:03d}",
+                    responsavel_ids=[c.id for c in responsaveis[:1]],
+                )
 
         # System prompt do tenant demo — só define se ainda não houver um
         prompts_repo = SqlPromptTenantRepository(session)

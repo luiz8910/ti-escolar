@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from app.domain.entities import (
+    Aluno,
     Broadcast,
     Contato,
     Conversa,
@@ -273,3 +274,26 @@ class SalaRepository(Protocol):
     async def desvincular_pai(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None: ...
 
     async def pais(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]: ...
+
+
+@runtime_checkable
+class AlunoRepository(Protocol):
+    """CRUD de alunos e vínculo N:N com responsáveis (contatos), escopado por tenant."""
+
+    async def criar(self, aluno: Aluno) -> Aluno: ...
+
+    async def obter(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno | None: ...
+
+    async def listar(self, *, tenant_id: UUID, sala_id: UUID | None = None) -> list[Aluno]: ...
+
+    async def atualizar(self, aluno: Aluno) -> Aluno: ...
+
+    async def remover(self, *, tenant_id: UUID, aluno_id: UUID) -> bool: ...
+
+    async def vincular_responsavel(
+        self, *, tenant_id: UUID, aluno_id: UUID, contato_id: UUID
+    ) -> None: ...
+
+    async def desvincular_responsavel(
+        self, *, tenant_id: UUID, aluno_id: UUID, contato_id: UUID
+    ) -> None: ...
