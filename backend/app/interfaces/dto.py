@@ -304,6 +304,39 @@ class AlunoSaida(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Cobertura de contatos da turma e notificação ao professor
+# --------------------------------------------------------------------------- #
+class AlunoResumoSaida(BaseModel):
+    id: UUID
+    nome: str
+    matricula: str = ""
+
+
+class CoberturaSalaSaida(BaseModel):
+    sala_id: UUID
+    sala_nome: str
+    total_alunos: int
+    total_sem_contato: int
+    alunos_sem_contato: list[AlunoResumoSaida] = []
+
+
+class NotificarProfessorEntrada(BaseModel):
+    tenant_id: UUID
+    # WhatsApp do professor que vai coletar os contatos faltantes.
+    telefone: str = Field(..., examples=["+5511999990000"])
+    # Mensagem opcional acrescentada antes do aviso automático.
+    mensagem: str = ""
+
+
+class NotificarProfessorSaida(BaseModel):
+    enviado: bool
+    id_externo: str
+    telefone: str
+    total_sem_contato: int
+    cobertura: CoberturaSalaSaida
+
+
+# --------------------------------------------------------------------------- #
 # Base de conhecimento (RAG) e system prompt por tenant
 # --------------------------------------------------------------------------- #
 class DocumentoConhecimentoEntrada(BaseModel):

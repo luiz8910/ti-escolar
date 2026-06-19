@@ -17,33 +17,41 @@ from app.application.cadastro_use_cases import (
     AtualizarSala,
     CadastrarAluno,
     CadastrarPai,
+    CoberturaDeContatosDaSala,
     CriarSala,
     DesvincularPaiDaSala,
     DesvincularResponsavelDoAluno,
     ListarAlunos,
     ListarPais,
     ListarSalas,
+    NotificarProfessorContatosFaltantes,
     ObterAluno,
     ObterSala,
     RelatorioPaisDaSala,
     RemoverAluno,
     RemoverPai,
     RemoverSala,
+    ResumoCoberturaDasSalas,
     VincularPaiASala,
     VincularResponsavelAoAluno,
 )
-from app.domain.entities import Aluno, Contato, Sala, Usuario
+from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Sala, Usuario
+from app.domain.ports import MessageChannel
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
     SqlContatoRepository,
     SqlSalaRepository,
 )
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
-from app.interfaces.deps import get_aluno_repo, get_contato_repo, get_sala_repo
+from app.interfaces.deps import get_aluno_repo, get_canal, get_contato_repo, get_sala_repo
 from app.interfaces.dto import (
     AlunoAtualizar,
     AlunoEntrada,
+    AlunoResumoSaida,
     AlunoSaida,
+    CoberturaSalaSaida,
+    NotificarProfessorEntrada,
+    NotificarProfessorSaida,
     PaiAtualizar,
     PaiEntrada,
     PaiSaida,
@@ -67,6 +75,19 @@ def _sala_saida(s: Sala) -> SalaSaida:
         descricao=s.descricao,
         total_pais=len(s.pais),
         pais=[_pai_saida(c) for c in s.pais],
+    )
+
+
+def _cobertura_saida(c: CoberturaContatosSala) -> CoberturaSalaSaida:
+    return CoberturaSalaSaida(
+        sala_id=c.sala_id,
+        sala_nome=c.sala_nome,
+        total_alunos=c.total_alunos,
+        total_sem_contato=c.total_sem_contato,
+        alunos_sem_contato=[
+            AlunoResumoSaida(id=a.id, nome=a.nome, matricula=a.matricula)
+            for a in c.alunos_sem_contato
+        ],
     )
 
 
@@ -283,6 +304,75 @@ async def relatorio_pais_da_sala(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return [_pai_saida(c) for c in pais]
+
+
+# --------------------------------------------------------------------------- #
+# Cobertura de contatos da turma e notificação ao professor
+# --------------------------------------------------------------------------- #
+@router.get("/salas/tenant/{tenant_id}/cobertura", response_model=list[CoberturaSalaSaida])
+async def cobertura_das_salas(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+) -> list[CoberturaSalaSaida]:
+    """Cobertura de contatos de todas as turmas: quantos alunos estão sem responsável
+    com telefone (WhatsApp) vinculado."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    coberturas = await ResumoCoberturaDasSalas(salas=salas, alunos=alunos).executar(
+        tenant_id=tenant_id
+    )
+    return [_cobertura_saida(c) for c in coberturas]
+
+
+@router.get("/salas/{sala_id}/cobertura", response_model=CoberturaSalaSaida)
+async def cobertura_da_sala(
+    sala_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+) -> CoberturaSalaSaida:
+    """Cobertura de contatos de uma turma, com a lista de alunos sem contato."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        cobertura = await CoberturaDeContatosDaSala(salas=salas, alunos=alunos).executar(
+            tenant_id=tenant_id, sala_id=sala_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _cobertura_saida(cobertura)
+
+
+@router.post("/salas/{sala_id}/notificar-professor", response_model=NotificarProfessorSaida)
+async def notificar_professor(
+    sala_id: UUID,
+    payload: NotificarProfessorEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    canal: MessageChannel = Depends(get_canal),
+) -> NotificarProfessorSaida:
+    """Dispara ao professor um aviso pedindo os contatos de responsáveis faltantes."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        cobertura, id_externo = await NotificarProfessorContatosFaltantes(
+            salas=salas, alunos=alunos, canal=canal
+        ).executar(
+            tenant_id=payload.tenant_id,
+            sala_id=sala_id,
+            telefone_professor=payload.telefone,
+            mensagem=payload.mensagem,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return NotificarProfessorSaida(
+        enviado=True,
+        id_externo=id_externo,
+        telefone=payload.telefone,
+        total_sem_contato=cobertura.total_sem_contato,
+        cobertura=_cobertura_saida(cobertura),
+    )
 
 
 # --------------------------------------------------------------------------- #
