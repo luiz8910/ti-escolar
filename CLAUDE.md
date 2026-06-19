@@ -136,7 +136,10 @@ ti-escolar/
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
-  `0004_conhecimento_prompt` → `0005_alunos` → `0006_destinatario_entrega`.
+  `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
+  `0006_destinatario_entrega`. **Cadeia linear obrigatória:** ao criar uma migration, encadeie
+  no head atual (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade
+  head` do deploy.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -400,8 +403,11 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 ### 12a. Backlog priorizado (novas tasks)
 
 **Infra / deploy**
-- [ ] **Deploy automatizado do Render** via **GitHub Actions**, nos mesmos moldes do que já
-  existe para a Vercel (pipeline de CI/CD com build + deploy a cada merge na `main`).
+- [x] **Deploy automatizado do Render** via **GitHub Actions**
+  (`.github/workflows/deploy-render.yml`): roda lint + migrations + pytest em PRs e, no merge à
+  `main`, dispara o **Deploy Hook** do Render apenas se o CI passar. Requer o secret
+  `RENDER_DEPLOY_HOOK_URL` no repositório e o Auto-Deploy do Render desligado (para o deploy ser
+  controlado pelo CI e não duplicar).
 
 **Observabilidade / histórico**
 - [ ] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —

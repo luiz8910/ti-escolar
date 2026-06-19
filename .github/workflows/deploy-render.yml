@@ -1,0 +1,81 @@
+name: CI/CD — Deploy Render
+
+# Dispara em todo push na main (o que inclui o merge de um PR) e também em PRs,
+# para rodar os testes antes do merge. O deploy no Render só acontece na main e
+# somente se os testes passarem (deploy "gated" por CI, nos moldes da Vercel).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela execuções antigas do mesmo ref para não acumular deploys concorrentes.
+concurrency:
+  group: deploy-render-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend — testes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tiescolar
+          POSTGRES_PASSWORD: tiescolar
+          POSTGRES_DB: tiescolar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiescolar -d tiescolar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://tiescolar:tiescolar@localhost:5432/tiescolar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instala dependências
+        run: pip install -e ".[dev,llm]"
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Migrations (alembic upgrade head)
+        run: alembic upgrade head
+
+      - name: Testes (pytest)
+        run: pytest -q
+
+  deploy:
+    name: Dispara deploy no Render
+    runs-on: ubuntu-latest
+    needs: test
+    # Só na main (merge do PR), nunca em pull_request.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Aciona o Deploy Hook do Render
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::Secret RENDER_DEPLOY_HOOK_URL não configurado no repositório."
+            exit 1
+          fi
+          echo "Disparando deploy no Render..."
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+          echo "Deploy acionado com sucesso."
