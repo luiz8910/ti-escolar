@@ -20,6 +20,7 @@ from app.application.admin_use_cases import (
     CriarUsuario,
     EnviarBroadcastParaGrupo,
 )
+from app.application.use_cases import VerificarRecebimentoBroadcast
 from app.application.tenant_use_cases import (
     AtualizarEscola,
     BloquearEscola,
@@ -39,12 +40,14 @@ from app.domain.entities import Papel, PlanoTenant, Tenant, Usuario
 from app.infrastructure.db.repositories import SqlBroadcastRepository, SqlConversaRepository
 from app.infrastructure.security import criar_token, decodificar_token
 from app.infrastructure.db.repositories_admin import (
+    SqlContatoRepository,
     SqlGrupoRepository,
     SqlTenantRepository,
     SqlUsuarioRepository,
 )
 from app.interfaces.deps import (
     get_broadcast_repo,
+    get_contato_repo,
     get_conversa_repo,
     get_enviar_para_grupo,
     get_grupo_repo,
@@ -73,6 +76,7 @@ from app.interfaces.dto import (
     LicencaSaida,
     LoginEntrada,
     MensagemConversaSaida,
+    NaoEntregaSaida,
     TokenSaida,
     UsuarioSaida,
 )
@@ -593,4 +597,37 @@ async def listar_broadcasts(
             por_status=dict(Counter(d.status.value for d in b.destinatarios)),
         )
         for b in bs
+    ]
+
+
+@router.get(
+    "/escolas/{tenant_id}/broadcasts/{broadcast_id}/nao-entregues",
+    response_model=list[NaoEntregaSaida],
+)
+async def listar_nao_entregues(
+    tenant_id: UUID,
+    broadcast_id: UUID,
+    apos_minutos: int = 60,
+    usuario: Usuario = Depends(usuario_autenticado),
+    broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
+) -> list[NaoEntregaSaida]:
+    """Confirmação de recebimento: responsáveis que não confirmaram a entrega do aviso.
+
+    Sinaliza falhas de envio e mensagens enviadas há mais de ``apos_minutos`` ainda sem
+    confirmação de entrega (``delivered``/``read``) pela Meta.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    avisos = await VerificarRecebimentoBroadcast(
+        broadcasts=broadcasts, contatos=contatos
+    ).executar(tenant_id=tenant_id, broadcast_id=broadcast_id, apos_minutos=apos_minutos)
+    return [
+        NaoEntregaSaida(
+            contato=a.contato,
+            nome=a.nome,
+            status=a.status.value,
+            motivo=a.motivo,
+            atualizado_em=a.atualizado_em,
+        )
+        for a in avisos
     ]

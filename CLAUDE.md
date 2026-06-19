@@ -136,7 +136,7 @@ ti-escolar/
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
-  `0004_conhecimento_prompt` → `0005_alunos`.
+  `0004_conhecimento_prompt` → `0005_alunos` → `0006_destinatario_entrega`.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -322,6 +322,27 @@ Disparo de notificações/avisos a pais/responsáveis. Pontos obrigatórios de p
 - **Consentimento e status:** registrar **opt-in/opt-out**, respeitar a **janela de 24h**, e atualizar
   **status de entrega** (`sent` / `delivered` / `read` / `failed`) a partir dos **webhooks** da Meta.
 
+### 9b. Confirmação de recebimento (não-entrega reativa)
+
+Análogo à "confirmação de recebimento" de e-mail: depois de um broadcast, aponta quais
+responsáveis **provavelmente não receberam** o aviso, para que o admin possa agir (pode ser algo
+crítico que passou despercebido).
+
+- **Correlação webhook ↔ destinatário:** ao enviar, `EnviarBroadcast` guarda o **id externo da
+  Meta** (`wamid`) em `DestinatarioBroadcast.mensagem_id_externo` e o `atualizado_em`. O webhook
+  (`POST /api/webhook/meta`) chama `RegistrarStatusEntrega`, que percorre os `statuses` do payload
+  e atualiza o status do destinatário pelo `wamid` (`StatusEntrega` casa diretamente com
+  `sent`/`delivered`/`read`/`failed`). Persistência em `destinatarios_broadcast` (migration
+  `0006_destinatario_entrega`).
+- **Detecção reativa:** `VerificarRecebimentoBroadcast` (recebe `BroadcastRepository` +
+  `ContatoRepository`) sinaliza, **escopado por tenant**: destinatários em `FALHOU` (imediato) e
+  em `ENVIADO` sem confirmação (`delivered`/`read`) há mais de `apos_minutos` (default 60).
+  `ENTREGUE`/`LIDO` confirmam recebimento; `PENDENTE`/`ENFILEIRADO` (bloqueados por cota) ficam de
+  fora. Resolve o **nome do responsável** via `Contato.por_telefone`.
+- **Endpoint:** `GET /api/admin/escolas/{tenant_id}/broadcasts/{broadcast_id}/nao-entregues`
+  (`?apos_minutos=`), guardado por `_exige_acesso_tenant`. O **painel** depende do histórico de
+  broadcasts no admin da escola — ver §12a (**[Roadmap]**).
+
 ---
 
 ## 10. Desenvolvimento com Docker — **[Roadmap: compose]**
@@ -416,10 +437,15 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   Ver §6c-ter (`app/interfaces/api/cadastro.py`, `web/app/admin/salas/`).
 - [ ] **Confirmação de recebimento de avisos (não-entrega reativa)** — análogo à "confirmação de
   recebimento" de e-mail: após um broadcast, se algum número **não recebeu** a mensagem (celular
-  desligado, sem sinal, etc.), depois de um intervalo o sistema **notifica o admin de que o
-  responsável X não recebeu** o aviso — pois pode ser algo crítico que passou despercebido.
-  Aproveita o **status de entrega via webhooks da Meta** (`sent`/`delivered`/`read`/`failed`,
-  §9a) e o futuro **histórico de broadcasts**.
+  desligado, sem sinal, etc.), depois de um intervalo o sistema **aponta que o responsável X não
+  recebeu** o aviso. Implementado no back-end (ver §9b): o webhook da Meta atualiza o status por
+  destinatário e um endpoint lista as não-entregas. **[Roadmap]** painel: depende do
+  **histórico de broadcasts** no admin da escola.
+  - [ ] **Notificação ativa de não-entrega (scheduler)** — hoje a não-entrega é calculada
+    **sob demanda** no endpoint `.../nao-entregues`. Falta o **job agendado** que, depois do
+    intervalo, roda `VerificarRecebimentoBroadcast` e **notifica o admin ativamente** (push/email)
+    sobre os responsáveis que não receberam. Depende da **fila/scheduler de broadcasts** (§9a,
+    ainda roadmap); o caso de uso já está pronto para ser chamado por ele.
 
 **Super admin — histórico da escola**
 - [ ] **Histórico/ficha financeira da escola** no super admin:

@@ -7,7 +7,7 @@ coordenação. Tudo é escopado por ``tenant_id`` (multi-tenant).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.application.prompts import montar_sistema, montar_sistema_agente
@@ -25,6 +25,7 @@ from app.domain.entities import (
 )
 from app.domain.ports import (
     BroadcastRepository,
+    ContatoRepository,
     ConversaRepository,
     DocumentSource,
     Embedder,
@@ -426,14 +427,17 @@ class EnviarBroadcast:
 
             await self._rate_limiter.aguardar_vaga()
             try:
-                await self._canal.enviar_template(
+                mensagem_id = await self._canal.enviar_template(
                     contato=dest.contato, template=template, parametros=dest.parametros
                 )
                 dest.status = StatusEntrega.ENVIADO
+                dest.mensagem_id_externo = mensagem_id
+                dest.atualizado_em = datetime.now(timezone.utc)
                 await self._quota.consumir(broadcast.tenant_id, 1)
                 enviados += 1
             except Exception:  # noqa: BLE001 — falha de envio não derruba o lote
                 dest.status = StatusEntrega.FALHOU
+                dest.atualizado_em = datetime.now(timezone.utc)
                 falhas += 1
 
         broadcast.status = (
@@ -487,3 +491,103 @@ class DispararNotificacaoAtiva:
                 status=StatusBroadcast.AGENDADO,
             )
         return await self._enviar.executar(broadcast=broadcast)
+
+
+# --------------------------------------------------------------------------- #
+# Confirmação de recebimento (não-entrega reativa)
+# --------------------------------------------------------------------------- #
+class RegistrarStatusEntrega:
+    """Aplica os eventos de status de entrega da Meta (webhook) aos destinatários.
+
+    A Meta envia, no webhook, atualizações ``sent``/``delivered``/``read``/``failed`` por
+    mensagem (``wamid``). Este caso de uso percorre o payload e atualiza o status de cada
+    destinatário correspondente. Os valores casam diretamente com ``StatusEntrega``.
+    """
+
+    def __init__(self, *, broadcasts: BroadcastRepository) -> None:
+        self._broadcasts = broadcasts
+
+    async def executar(self, *, payload: dict) -> int:
+        atualizados = 0
+        for entry in payload.get("entry", []) or []:
+            for change in entry.get("changes", []) or []:
+                valor = change.get("value", {}) or {}
+                for evento in valor.get("statuses", []) or []:
+                    mensagem_id = evento.get("id")
+                    bruto = evento.get("status")
+                    if not mensagem_id or not bruto:
+                        continue
+                    try:
+                        status = StatusEntrega(bruto)
+                    except ValueError:
+                        continue  # status desconhecido da Meta — ignora
+                    if await self._broadcasts.registrar_status(
+                        mensagem_id_externo=mensagem_id, status=status
+                    ):
+                        atualizados += 1
+        return atualizados
+
+
+@dataclass
+class AvisoNaoEntrega:
+    """Um destinatário que (provavelmente) não recebeu o aviso de um broadcast."""
+
+    contato: str  # telefone E.164
+    nome: str  # nome do responsável, se cadastrado (ou "")
+    status: StatusEntrega
+    motivo: str  # "falha_envio" | "sem_confirmacao"
+    atualizado_em: datetime | None
+
+
+class VerificarRecebimentoBroadcast:
+    """Não-entrega reativa: aponta quem não confirmou o recebimento de um broadcast.
+
+    Análogo à "confirmação de recebimento" de e-mail. Depois de ``apos_minutos`` desde o
+    envio, um destinatário ainda em ``ENVIADO`` (sem ``delivered``/``read`` pela Meta) é
+    sinalizado como possível não-entrega (celular desligado, sem sinal...). Destinatários
+    em ``FALHOU`` são sinalizados de imediato. ``ENTREGUE``/``LIDO`` confirmam recebimento;
+    ``PENDENTE``/``ENFILEIRADO`` ainda nem foram enviados (limite de cota) e ficam de fora.
+    """
+
+    def __init__(
+        self, *, broadcasts: BroadcastRepository, contatos: ContatoRepository
+    ) -> None:
+        self._broadcasts = broadcasts
+        self._contatos = contatos
+
+    async def executar(
+        self, *, tenant_id: UUID, broadcast_id: UUID, apos_minutos: int = 60
+    ) -> list[AvisoNaoEntrega]:
+        broadcast = await self._broadcasts.obter(broadcast_id)
+        if broadcast is None or broadcast.tenant_id != tenant_id:
+            return []
+
+        agora = datetime.now(timezone.utc)
+        limite = timedelta(minutes=apos_minutos)
+        avisos: list[AvisoNaoEntrega] = []
+        for dest in broadcast.destinatarios:
+            if dest.status == StatusEntrega.FALHOU:
+                motivo = "falha_envio"
+            elif dest.status == StatusEntrega.ENVIADO:
+                ref = dest.atualizado_em
+                if ref is not None and ref.tzinfo is None:
+                    ref = ref.replace(tzinfo=timezone.utc)
+                if ref is None or agora - ref < limite:
+                    continue  # ainda dentro da janela de espera por confirmação
+                motivo = "sem_confirmacao"
+            else:
+                continue  # entregue/lido = recebeu; pendente/enfileirado = não enviado
+
+            contato = await self._contatos.por_telefone(
+                tenant_id=tenant_id, telefone=dest.contato
+            )
+            avisos.append(
+                AvisoNaoEntrega(
+                    contato=dest.contato,
+                    nome=contato.nome if contato else "",
+                    status=dest.status,
+                    motivo=motivo,
+                    atualizado_em=dest.atualizado_em,
+                )
+            )
+        return avisos
