@@ -41,6 +41,12 @@ class TenantORM(Base):
     bloqueado_em: Mapped[datetime | None] = mapped_column(nullable=True)
     plano: Mapped[str] = mapped_column(String(20), default="mensal", server_default="mensal")
     licenca_expira_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Cobrança: preços por ciclo, em centavos.
+    valor_mensal_centavos: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    valor_anual_centavos: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Cancelamento (churn): data e motivo da saída da plataforma.
+    cancelado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    motivo_cancelamento: Mapped[str] = mapped_column(Text, default="", server_default="")
 
 
 class ConversaORM(Base):
