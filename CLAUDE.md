@@ -332,3 +332,45 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] **CRUD de Alunos** Aluno por tenant com **série 1:1** (`sala_id`) e **responsáveis N:N**
   (`aluno_responsaveis`), com `ativo` para marcar ex-aluno. Ver §6c-bis
   (`app/interfaces/api/cadastro.py`, `web/app/admin/alunos/`).
+
+### 12a. Backlog priorizado (novas tasks)
+
+**Infra / deploy**
+- [ ] **Deploy automatizado do Render** via **GitHub Actions**, nos mesmos moldes do que já
+  existe para a Vercel (pipeline de CI/CD com build + deploy a cada merge na `main`).
+
+**Observabilidade / histórico**
+- [ ] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —
+  listar disparos com template, grupo/destinatários, status de entrega e data.
+- [ ] **Histórico completo de conversas do WhatsApp** (mensagens recebidas e enviadas pela LLM),
+  consultável no admin da escola.
+- [ ] **Log de auditoria de ações** — gravar ações feitas por **usuários logados** no admin da
+  escola **e** ações da **LLM** (quem, o quê, quando, payload relevante). Base para
+  rastreabilidade/compliance.
+
+**Limpeza de UI (remoções)**
+- [ ] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"
+  (não faz sentido manter).
+- [ ] **Remover** o dropdown de seleção de escola dentro do **admin da escola**
+  (tenant admin é amarrado a uma única escola — não faz sentido).
+
+**Licenciamento / cobrança / bloqueio**
+- [ ] **Bloqueio de escola (tenant)** por falta de pagamento ou outro motivo — flag de status
+  no `Tenant` que suspende acesso ao painel e disparos, com motivo registrado.
+- [ ] **Plano anual: contador de expiração** — exibir quanto falta para a licença expirar.
+- [ ] **Plano anual: aviso por email** de que a licença está próxima do vencimento.
+
+**Cadastro em massa**
+- [ ] **Importação de alunos em massa** por **planilha ou PDF**, usando **LLM** para validar os
+  dados e normalizar a formatação da planilha/PDF antes de persistir.
+
+**Super admin — histórico da escola**
+- [ ] **Histórico/ficha financeira da escola** no super admin:
+  - Quando entrou (data de início).
+  - Quando cancelou (se aplicável) e **motivo do cancelamento**.
+  - Quanto pagou no **plano anual** e quanto paga no **plano mensal**.
+  - **Métricas sugeridas (adicionais):** MRR/ARR e receita acumulada (LTV) por escola;
+    plano atual e ciclo (mensal/anual); status de pagamento e histórico de faturas;
+    data da próxima renovação; churn e motivo; uso vs. cota (broadcasts/mensagens no
+    período); nº de usuários ativos, contatos e alunos; data do último acesso/atividade;
+    health score (qualidade do número Meta + tier de envio).
