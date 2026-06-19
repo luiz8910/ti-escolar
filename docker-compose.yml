@@ -6,8 +6,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tiescolar}
       POSTGRES_DB: ${POSTGRES_DB:-tiescolar}
     ports:
-      # 5433 no host evita conflito com um Postgres local já em execução.
-      - "5433:5432"
+      # Porta do host configurável (DB_PORT) para rodar worktrees em paralelo;
+      # 5433 (default) evita conflito com um Postgres local já em execução.
+      - "${DB_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +23,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tiescolar:tiescolar@db:5432/tiescolar}
     ports:
-      - "8000:8000"
+      # Porta do host configurável (BACKEND_PORT) para rodar worktrees em paralelo.
+      - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -37,10 +39,11 @@ services:
   web:
     build: ./web
     environment:
-      # No browser usamos localhost; o backend é exposto na porta 8000 do host.
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      # No browser usamos localhost; o backend é exposto na porta BACKEND_PORT do host.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
-      - "3000:3000"
+      # Porta do host configurável (WEB_PORT) para rodar worktrees em paralelo.
+      - "${WEB_PORT:-3000}:3000"
     depends_on:
       - backend
     volumes:
