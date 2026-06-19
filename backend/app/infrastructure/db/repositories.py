@@ -192,6 +192,8 @@ class SqlBroadcastRepository:
                     contato=dest.contato,
                     parametros="|".join(dest.parametros),
                     status=dest.status.value,
+                    mensagem_id_externo=dest.mensagem_id_externo,
+                    atualizado_em=dest.atualizado_em,
                 )
             )
         await self._s.flush()
@@ -208,6 +210,8 @@ class SqlBroadcastRepository:
                 contato=d.contato,
                 parametros=[p for p in d.parametros.split("|") if p],
                 status=StatusEntrega(d.status),
+                mensagem_id_externo=d.mensagem_id_externo or "",
+                atualizado_em=d.atualizado_em,
             )
             for d in row.destinatarios
         ]
@@ -240,3 +244,18 @@ class SqlBroadcastRepository:
         )
         rows = (await self._s.execute(stmt)).scalars().all()
         return [self._to_broadcast(r) for r in rows]
+
+    async def registrar_status(
+        self, *, mensagem_id_externo: str, status: StatusEntrega
+    ) -> bool:
+        if not mensagem_id_externo:
+            return False
+        stmt = select(DestinatarioORM).where(
+            DestinatarioORM.mensagem_id_externo == mensagem_id_externo
+        )
+        rows = list((await self._s.execute(stmt)).scalars().all())
+        for row in rows:
+            row.status = status.value
+            row.atualizado_em = _now()
+        await self._s.flush()
+        return bool(rows)

@@ -355,6 +355,12 @@ class DestinatarioBroadcast:
     contato: str  # telefone E.164
     parametros: list[str] = field(default_factory=list)
     status: StatusEntrega = StatusEntrega.PENDENTE
+    # Id externo da mensagem na Meta (``wamid...``), usado para casar os eventos de
+    # status do webhook com este destinatário.
+    mensagem_id_externo: str = ""
+    # Última atualização de status (envio ou webhook). Base para a verificação reativa
+    # de não-entrega (quanto tempo se passou desde o envio sem confirmação).
+    atualizado_em: datetime | None = None
     id: UUID = field(default_factory=_new_id)
 
 

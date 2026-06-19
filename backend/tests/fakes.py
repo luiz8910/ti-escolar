@@ -155,7 +155,7 @@ class FakeChannel:
         if contato in self._falhar_em:
             raise RuntimeError("falha simulada")
         self.enviados.append((contato, "template"))
-        return "x"
+        return f"wamid:{contato}"
 
     async def enviar_documento(self, *, contato, documento) -> str:
         self.enviados.append((contato, "documento"))
@@ -202,6 +202,21 @@ class FakeBroadcastRepo:
 
     async def obter(self, broadcast_id) -> Broadcast | None:
         return self.salvos.get(broadcast_id)
+
+    async def listar(self, *, tenant_id):
+        return [b for b in self.salvos.values() if b.tenant_id == tenant_id]
+
+    async def registrar_status(self, *, mensagem_id_externo, status) -> bool:
+        from app.domain.entities import _now
+
+        atualizou = False
+        for b in self.salvos.values():
+            for d in b.destinatarios:
+                if d.mensagem_id_externo == mensagem_id_externo:
+                    d.status = status
+                    d.atualizado_em = _now()
+                    atualizou = True
+        return atualizou
 
 
 class FakeTemplateRepo:

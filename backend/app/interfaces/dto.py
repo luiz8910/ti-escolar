@@ -188,6 +188,16 @@ class BroadcastResumoSaida(BaseModel):
     por_status: dict[str, int] = {}
 
 
+class NaoEntregaSaida(BaseModel):
+    """Um responsável que (provavelmente) não recebeu o aviso de um broadcast."""
+
+    contato: str
+    nome: str
+    status: str
+    motivo: str  # "falha_envio" | "sem_confirmacao"
+    atualizado_em: datetime | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Pais/responsáveis (CRUD) e salas/turmas
 # --------------------------------------------------------------------------- #

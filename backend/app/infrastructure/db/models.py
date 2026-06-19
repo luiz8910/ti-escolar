@@ -159,6 +159,10 @@ class DestinatarioORM(Base):
     contato: Mapped[str] = mapped_column(String(50))
     parametros: Mapped[str] = mapped_column(Text, default="")  # separados por "|"
     status: Mapped[str] = mapped_column(String(20))
+    # Id externo da mensagem na Meta (``wamid``), para casar eventos de status do webhook.
+    mensagem_id_externo: Mapped[str] = mapped_column(String(128), default="", index=True)
+    # Última atualização de status (envio ou webhook).
+    atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
 
     broadcast: Mapped[BroadcastORM] = relationship(back_populates="destinatarios")
 

@@ -27,6 +27,7 @@ from app.domain.entities import (
     ResumoConversa,
     ResumoEscola,
     Sala,
+    StatusEntrega,
     Tenant,
     TrechoConhecimento,
     TurnoConversa,
@@ -189,6 +190,15 @@ class BroadcastRepository(Protocol):
 
     async def listar(self, *, tenant_id: UUID) -> list[Broadcast]:
         """Broadcasts (mensagens em massa) do tenant, mais recentes primeiro."""
+        ...
+
+    async def registrar_status(
+        self, *, mensagem_id_externo: str, status: StatusEntrega
+    ) -> bool:
+        """Atualiza o status de um destinatário pelo id externo da mensagem (webhook Meta).
+
+        Retorna ``True`` se algum destinatário foi atualizado.
+        """
         ...
 
 
