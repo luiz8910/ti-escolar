@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.application.use_cases import EnviarBroadcast
 from app.domain.entities import Broadcast, DestinatarioBroadcast
+from app.infrastructure.db.repositories_admin import SqlTenantRepository
 from app.infrastructure.messaging.quota import SqlQuotaPolicy
-from app.interfaces.deps import get_enviar_broadcast, get_quota_policy
+from app.interfaces.deps import get_enviar_broadcast, get_quota_policy, get_tenant_repo
 from app.interfaces.dto import BroadcastEntrada, BroadcastSaida, QuotaSaida
 
 router = APIRouter(prefix="/api/broadcasts", tags=["broadcasts"])
@@ -19,7 +20,15 @@ router = APIRouter(prefix="/api/broadcasts", tags=["broadcasts"])
 async def disparar_broadcast(
     payload: BroadcastEntrada,
     uc: EnviarBroadcast = Depends(get_enviar_broadcast),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
 ) -> BroadcastSaida:
+    # Escola bloqueada (ex.: inadimplência) não dispara mensagens.
+    escola = await tenants.obter(payload.tenant_id)
+    if escola is not None and escola.bloqueado:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Escola bloqueada: {escola.motivo_bloqueio}",
+        )
     broadcast = Broadcast(
         tenant_id=payload.tenant_id,
         template_id=payload.template_id,

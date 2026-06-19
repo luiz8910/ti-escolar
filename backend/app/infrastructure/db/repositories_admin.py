@@ -10,7 +10,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities import Aluno, Contato, Grupo, Papel, ResumoEscola, Sala, Tenant, Usuario
+from app.domain.entities import (
+    Aluno,
+    Contato,
+    Grupo,
+    Papel,
+    PlanoTenant,
+    ResumoEscola,
+    Sala,
+    StatusTenant,
+    Tenant,
+    Usuario,
+)
 from app.infrastructure.db.models import (
     AlunoORM,
     BroadcastORM,
@@ -37,7 +48,17 @@ def _now() -> datetime:
 
 
 def _to_tenant(row: TenantORM) -> Tenant:
-    return Tenant(id=row.id, nome=row.nome, slug=row.slug, criado_em=row.criado_em)
+    return Tenant(
+        id=row.id,
+        nome=row.nome,
+        slug=row.slug,
+        criado_em=row.criado_em,
+        status=StatusTenant(row.status),
+        motivo_bloqueio=row.motivo_bloqueio,
+        bloqueado_em=row.bloqueado_em,
+        plano=PlanoTenant(row.plano),
+        licenca_expira_em=row.licenca_expira_em,
+    )
 
 
 def _to_usuario(row: UsuarioORM) -> Usuario:
@@ -80,6 +101,11 @@ class SqlTenantRepository:
                 nome=tenant.nome,
                 slug=tenant.slug,
                 criado_em=tenant.criado_em,
+                status=tenant.status.value,
+                motivo_bloqueio=tenant.motivo_bloqueio,
+                bloqueado_em=tenant.bloqueado_em,
+                plano=tenant.plano.value,
+                licenca_expira_em=tenant.licenca_expira_em,
             )
         )
         try:
@@ -129,6 +155,11 @@ class SqlTenantRepository:
             raise ValueError("Escola não encontrada.")
         row.nome = tenant.nome
         row.slug = tenant.slug
+        row.status = tenant.status.value
+        row.motivo_bloqueio = tenant.motivo_bloqueio
+        row.bloqueado_em = tenant.bloqueado_em
+        row.plano = tenant.plano.value
+        row.licenca_expira_em = tenant.licenca_expira_em
         try:
             await self._s.flush()
         except IntegrityError as e:

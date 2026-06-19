@@ -134,11 +134,24 @@ class EscolaEntrada(BaseModel):
     slug: str = ""
 
 
+class LicencaSaida(BaseModel):
+    """Estado de licenciamento/cobrança/bloqueio de uma escola."""
+
+    status: str  # "ativo" | "bloqueado"
+    motivo_bloqueio: str = ""
+    bloqueado_em: datetime | None = None
+    plano: str  # "mensal" | "anual"
+    licenca_expira_em: datetime | None = None
+    dias_para_expirar: int | None = None
+    licenca_expirada: bool = False
+
+
 class EscolaSaida(BaseModel):
     id: UUID
     nome: str
     slug: str
     criado_em: datetime
+    licenca: LicencaSaida
 
 
 class EscolaResumoSaida(BaseModel):
@@ -149,6 +162,23 @@ class EscolaResumoSaida(BaseModel):
     total_conversas: int
     total_contatos: int
     total_broadcasts: int
+    licenca: LicencaSaida
+
+
+class BloqueioEntrada(BaseModel):
+    motivo: str = Field(..., examples=["Inadimplência: mensalidade de junho/2026 em aberto."])
+
+
+class LicencaEntrada(BaseModel):
+    plano: str = Field("mensal", examples=["mensal", "anual"])
+    licenca_expira_em: datetime | None = None
+
+
+class AvisoLicencaSaida(BaseModel):
+    tenant_id: UUID
+    nome: str
+    dias_para_expirar: int
+    destinatarios: list[str] = []
 
 
 # --------------------------------------------------------------------------- #
