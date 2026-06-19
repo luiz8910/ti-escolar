@@ -218,6 +218,25 @@ ti-escolar/
 - A remoção de tenant (`SqlTenantRepository.remover`) apaga `aluno_responsaveis` → `alunos` na
   cascata explícita.
 
+### 6c-ter. Cobertura de contatos da turma (alerta + aviso ao professor)
+
+- **Cobertura:** uma turma (`Sala`) informa quantos **alunos ativos** estão **sem nenhum
+  responsável (`Contato`) com telefone** vinculado — `Aluno.tem_contato` é falso quando nenhum
+  responsável tem telefone preenchido. Ex-alunos (`ativo=False`) são ignorados. O value object
+  `CoberturaContatosSala` (`total_alunos`, `alunos_sem_contato`, `total_sem_contato`) consolida o
+  alerta "X alunos na turma, Y sem contato de responsável".
+- **Casos de uso** em `app/application/cadastro_use_cases.py`: `CoberturaDeContatosDaSala` (uma
+  turma, com a lista de alunos descobertos), `ResumoCoberturaDasSalas` (todas as turmas do tenant,
+  carregando os alunos uma vez para evitar N+1) e `NotificarProfessorContatosFaltantes`, que envia
+  um **texto livre pelo `MessageChannel`** ao WhatsApp do professor listando os faltantes (falha se
+  não há nenhum). **Dor de campo:** hoje pedem ao professor para coletar os contatos e ele esquece.
+- **Rotas** em `app/interfaces/api/cadastro.py`: `GET /salas/tenant/{tenant_id}/cobertura`
+  (resumo de todas), `GET /salas/{id}/cobertura?tenant_id=` (detalhe) e
+  `POST /salas/{id}/notificar-professor` (corpo: `telefone`, `mensagem` opcional).
+- **Painel:** `web/app/admin/salas/` — badge ⚠ na lista de turmas e, no detalhe da turma, um alerta
+  com os alunos sem contato e o botão **"Notificar professor"** (modal pedindo o WhatsApp do
+  professor + mensagem opcional). O seed cria um "Aluno Sem Contato" na primeira turma demo.
+
 ### 6d. Gestão de escolas (super admin)
 
 - **CRUD de escolas (`Tenant`):** apenas o **super admin** cria/edita/remove escolas
@@ -365,12 +384,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   dados e normalizar a formatação da planilha/PDF antes de persistir.
 
 **Engajamento / cobertura de contatos** _(feedback de diretora — campo)_
-- [ ] **Alerta de aluno sem responsável com telefone vinculado** — ao criar/gerenciar uma
-  **turma (`Sala`)**, sinalizar quantos alunos estão **sem nenhum responsável (`Contato`) com
-  telefone vinculado** (ex.: "30 alunos na sala, 2 sem contato de responsável"). Permitir
-  **disparar uma notificação ao professor** (ex.: na reunião de pais) para **solicitar o contato
-  faltante** na hora. **Dor real:** hoje pedem ao professor para coletar os contatos e ele
-  esquece. Conecta com `Aluno` (§6c-bis, responsáveis N:N) e o cadastro de salas.
+- [x] **Alerta de aluno sem responsável com telefone vinculado** — a turma (`Sala`) sinaliza
+  quantos alunos **ativos** estão **sem nenhum responsável (`Contato`) com telefone vinculado**
+  e permite **disparar uma notificação ao professor** para solicitar os contatos faltantes.
+  Ver §6c-ter (`app/interfaces/api/cadastro.py`, `web/app/admin/salas/`).
 - [ ] **Confirmação de recebimento de avisos (não-entrega reativa)** — análogo à "confirmação de
   recebimento" de e-mail: após um broadcast, se algum número **não recebeu** a mensagem (celular
   desligado, sem sinal, etc.), depois de um intervalo o sistema **notifica o admin de que o

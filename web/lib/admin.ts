@@ -491,6 +491,59 @@ export async function relatorioPaisDaSala(salaId: string): Promise<Pai[]> {
   return jsonOuErro(resp, "obter relatório de pais da sala");
 }
 
+// ----- cobertura de contatos (alunos sem responsável com telefone) ----- //
+export interface AlunoResumo {
+  id: string;
+  nome: string;
+  matricula: string;
+}
+
+export interface CoberturaSala {
+  sala_id: string;
+  sala_nome: string;
+  total_alunos: number;
+  total_sem_contato: number;
+  alunos_sem_contato: AlunoResumo[];
+}
+
+export interface ResultadoNotificacaoProfessor {
+  enviado: boolean;
+  id_externo: string;
+  telefone: string;
+  total_sem_contato: number;
+  cobertura: CoberturaSala;
+}
+
+export async function coberturaDasSalas(): Promise<CoberturaSala[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/salas/tenant/${tenantEmFoco()}/cobertura`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar cobertura de contatos das salas");
+}
+
+export async function coberturaDaSala(salaId: string): Promise<CoberturaSala> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/salas/${salaId}/cobertura?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar cobertura de contatos da sala");
+}
+
+// Dispara ao professor um aviso pedindo os contatos de responsáveis faltantes.
+export async function notificarProfessor(
+  salaId: string,
+  telefone: string,
+  mensagem = ""
+): Promise<ResultadoNotificacaoProfessor> {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}/notificar-professor`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), telefone, mensagem }),
+  });
+  return jsonOuErro(resp, "notificar professor");
+}
+
 // --------------------------------- alunos --------------------------------- //
 export interface Aluno {
   id: string;

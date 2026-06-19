@@ -138,6 +138,31 @@ class Aluno:
     responsaveis: list[Contato] = field(default_factory=list)
     sala_nome: str = ""
 
+    @property
+    def tem_contato(self) -> bool:
+        """Verdadeiro se ao menos um responsável tem telefone (WhatsApp) cadastrado."""
+        return any(c.telefone.strip() for c in self.responsaveis)
+
+
+@dataclass
+class CoberturaContatosSala:
+    """Cobertura de contatos de uma turma: alunos **ativos** sem nenhum responsável
+    com telefone (WhatsApp) cadastrado.
+
+    Base do alerta "X alunos na sala, Y sem contato de responsável" e do disparo de
+    notificação ao professor para coletar os contatos faltantes (dor de campo: hoje
+    pedem ao professor e ele esquece).
+    """
+
+    sala_id: UUID
+    sala_nome: str
+    total_alunos: int = 0
+    alunos_sem_contato: list[Aluno] = field(default_factory=list)
+
+    @property
+    def total_sem_contato(self) -> int:
+        return len(self.alunos_sem_contato)
+
 
 # --------------------------------------------------------------------------- #
 # Conversa / mensagens (inbound)
