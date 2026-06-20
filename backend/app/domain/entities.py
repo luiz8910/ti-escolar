@@ -212,6 +212,73 @@ class CoberturaContatosSala:
 
 
 # --------------------------------------------------------------------------- #
+# Importação de alunos em massa (planilha/PDF normalizados pela LLM)
+# --------------------------------------------------------------------------- #
+@dataclass
+class ResponsavelImportado:
+    """Responsável extraído de uma linha da planilha/PDF, já normalizado.
+
+    ``telefone`` é o WhatsApp em E.164 (vazio se não veio ou não pôde ser
+    normalizado). ``aviso`` registra observações que não impedem a importação
+    (ex.: telefone ausente/suspeito).
+    """
+
+    nome: str
+    telefone: str = ""
+    aviso: str = ""
+
+
+@dataclass
+class LinhaImportacaoAluno:
+    """Uma linha de aluno normalizada pela LLM, pronta para revisão antes de persistir.
+
+    ``serie`` é o nome da turma/série como interpretado (resolvido depois contra as
+    ``Sala``s do tenant). ``erros`` impedem a persistência da linha; ``avisos`` apenas
+    sinalizam. ``serie_nova`` marca que a série citada ainda não existe no tenant.
+    """
+
+    nome: str
+    serie: str
+    matricula: str = ""
+    responsaveis: list[ResponsavelImportado] = field(default_factory=list)
+    erros: list[str] = field(default_factory=list)
+    avisos: list[str] = field(default_factory=list)
+    serie_nova: bool = False
+
+    @property
+    def valido(self) -> bool:
+        return not self.erros
+
+
+@dataclass
+class PreviaImportacaoAlunos:
+    """Resultado da etapa de **prévia**: linhas normalizadas + contexto de séries.
+
+    Nada é persistido aqui — o admin revisa as linhas e confirma depois. ``series_novas``
+    são os nomes de séries citados que ainda não existem no tenant (precisam ser criados
+    na confirmação para que os alunos correspondentes sejam importados).
+    """
+
+    linhas: list[LinhaImportacaoAluno] = field(default_factory=list)
+    series_existentes: list[str] = field(default_factory=list)
+    series_novas: list[str] = field(default_factory=list)
+
+    @property
+    def total_validos(self) -> int:
+        return sum(1 for linha in self.linhas if linha.valido)
+
+
+@dataclass
+class ResultadoImportacaoAlunos:
+    """Resultado da etapa de **confirmação**: o que foi efetivamente persistido."""
+
+    criados: int = 0
+    ignorados: int = 0
+    series_criadas: list[str] = field(default_factory=list)
+    erros: list[str] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Conversa / mensagens (inbound)
 # --------------------------------------------------------------------------- #
 class Autor(str, enum.Enum):

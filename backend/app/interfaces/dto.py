@@ -314,6 +314,53 @@ class AlunoSaida(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Importação de alunos em massa (planilha/PDF normalizados pela LLM)
+# --------------------------------------------------------------------------- #
+class ResponsavelImportadoDTO(BaseModel):
+    nome: str
+    telefone: str = ""
+    aviso: str = ""
+
+
+class LinhaImportacaoAlunoDTO(BaseModel):
+    nome: str
+    serie: str
+    matricula: str = ""
+    responsaveis: list[ResponsavelImportadoDTO] = []
+    erros: list[str] = []
+    avisos: list[str] = []
+    serie_nova: bool = False
+    valido: bool = True
+
+
+class ImportacaoPreviaEntrada(BaseModel):
+    tenant_id: UUID
+    # Texto bruto da planilha/PDF (CSV, colado, etc.). A LLM normaliza.
+    conteudo: str
+
+
+class ImportacaoPreviaSaida(BaseModel):
+    linhas: list[LinhaImportacaoAlunoDTO] = []
+    series_existentes: list[str] = []
+    series_novas: list[str] = []
+    total_validos: int = 0
+
+
+class ImportacaoConfirmarEntrada(BaseModel):
+    tenant_id: UUID
+    linhas: list[LinhaImportacaoAlunoDTO] = []
+    # Cria as séries citadas que ainda não existem (senão, alunos delas são ignorados).
+    criar_series_ausentes: bool = False
+
+
+class ImportacaoResultadoSaida(BaseModel):
+    criados: int = 0
+    ignorados: int = 0
+    series_criadas: list[str] = []
+    erros: list[str] = []
+
+
+# --------------------------------------------------------------------------- #
 # Cobertura de contatos da turma e notificação ao professor
 # --------------------------------------------------------------------------- #
 class AlunoResumoSaida(BaseModel):

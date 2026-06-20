@@ -8,7 +8,10 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
+import json
 import math
 import re
 import uuid
@@ -25,12 +28,86 @@ _GATILHOS_DOC = (
     "boletim", "declaraç", "documento", "comprovante", "histórico", "historico", "2ª via",
 )
 
+# Marcador do prompt de importação de alunos (ver app.application.importacao_use_cases).
+_MARCADOR_IMPORTACAO = "IMPORTACAO_ALUNOS_JSON_V1"
+
+
+def _csv_para_alunos_json(conteudo: str) -> str:
+    """Converte texto tabular (CSV/TSV) em JSON de alunos, para o demo sem chaves.
+
+    Não é "inteligente": detecta o delimitador, mapeia colunas por palavras-chave no
+    cabeçalho (ou assume a ordem nome, série, matrícula, responsável, telefone) e
+    devolve o mesmo JSON que o adaptador real produziria. A normalização "de verdade"
+    (texto bagunçado, PDF) é papel do adaptador Anthropic.
+    """
+    linhas = [ln for ln in conteudo.splitlines() if ln.strip()]
+    if not linhas:
+        return json.dumps({"alunos": []}, ensure_ascii=False)
+
+    amostra = linhas[0]
+    delim = max([",", ";", "\t", "|"], key=amostra.count)
+    if amostra.count(delim) == 0:
+        delim = ","
+    registros = [
+        [c.strip() for c in r]
+        for r in csv.reader(io.StringIO(conteudo), delimiter=delim)
+        if any(c.strip() for c in r)
+    ]
+    if not registros:
+        return json.dumps({"alunos": []}, ensure_ascii=False)
+
+    cabecalho = registros[0]
+    palavras = ("nome", "aluno", "serie", "série", "turma", "matr", "respons", "tel", "fone")
+    tem_cabecalho = any(any(p in c.lower() for p in palavras) for c in cabecalho)
+
+    col = {"nome": 0, "serie": 1, "matricula": 2, "resp": 3, "tel": 4}
+    inicio = 0
+    if tem_cabecalho:
+        inicio = 1
+        col = {"nome": 0, "serie": -1, "matricula": -1, "resp": -1, "tel": -1}
+        for i, c in enumerate(cabecalho):
+            cl = c.lower()
+            if "alun" in cl or cl == "nome":
+                col["nome"] = i
+            elif "matr" in cl:
+                col["matricula"] = i
+            elif "serie" in cl or "série" in cl or "turma" in cl:
+                col["serie"] = i
+            elif "respons" in cl or "pai" in cl or "mãe" in cl or "mae" in cl:
+                col["resp"] = i
+            elif "tel" in cl or "fone" in cl or "whats" in cl or "celular" in cl:
+                col["tel"] = i
+
+    def _get(linha: list[str], i: int) -> str:
+        return linha[i].strip() if 0 <= i < len(linha) else ""
+
+    alunos = []
+    for r in registros[inicio:]:
+        nome = _get(r, col["nome"])
+        if not nome:
+            continue
+        responsaveis = []
+        rnome, tel = _get(r, col["resp"]), _get(r, col["tel"])
+        if rnome or tel:
+            responsaveis.append({"nome": rnome, "telefone": tel})
+        alunos.append(
+            {
+                "nome": nome,
+                "matricula": _get(r, col["matricula"]),
+                "serie": _get(r, col["serie"]),
+                "responsaveis": responsaveis,
+            }
+        )
+    return json.dumps({"alunos": alunos}, ensure_ascii=False)
+
 
 class FakeLLMProvider:
     async def gerar(self, *, sistema: str, mensagens: list[dict[str, str]]) -> str:
         pergunta = next(
             (m["content"] for m in reversed(mensagens) if m["role"] == "user"), ""
         )
+        if _MARCADOR_IMPORTACAO in sistema:
+            return _csv_para_alunos_json(pergunta)
         contexto = ""
         if "CONTEXTO:" in sistema:
             contexto = sistema.split("CONTEXTO:", 1)[1].strip()
