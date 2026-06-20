@@ -137,12 +137,10 @@ ti-escolar/
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
   `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
-  `0006_destinatario_entrega` → `0007_auditoria`. **Cadeia linear obrigatória:** ao criar uma
-  migration, encadeie no head atual (`down_revision` = último head) para evitar **multiple heads**
-  no `alembic upgrade head` do deploy.
-  `0006_destinatario_entrega` → `0007_ficha_financeira_tenant`. **Cadeia linear obrigatória:**
-  ao criar uma migration, encadeie no head atual (`down_revision` = último head) para evitar
-  **multiple heads** no `alembic upgrade head` do deploy.
+  `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant`.
+  **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
+  (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
+  do deploy.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
