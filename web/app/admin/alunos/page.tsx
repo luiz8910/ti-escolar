@@ -6,13 +6,18 @@ import {
   Aluno,
   atualizarAluno,
   cadastrarAluno,
+  confirmarImportacaoAlunos,
   desvincularResponsavelDoAluno,
   getSessao,
+  ImportacaoPrevia,
+  ImportacaoResultado,
+  LinhaImportacaoAluno,
   listarAlunos,
   listarPais,
   listarSalas,
   logout,
   Pai,
+  previaImportacaoAlunos,
   removerAluno,
   Sala,
   Usuario,
@@ -78,6 +83,7 @@ export default function Alunos() {
       onLogout={sair}
     >
       <div className="flex flex-col gap-[18px]">
+        <ImportarAlunos onMudou={recarregar} />
         <AlunoForm salas={salas} onMudou={recarregar} />
         <ListaAlunos
           alunos={visiveis}
@@ -168,6 +174,254 @@ function AlunoForm({ salas, onMudou }: { salas: Sala[]; onMudou: () => Promise<v
         Vincule responsáveis depois, em “Responsáveis”. Cada aluno pertence a uma série.
       </p>
     </Card>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+function ImportarAlunos({ onMudou }: { onMudou: () => Promise<void> }) {
+  const toast = useToast();
+  const [aberto, setAberto] = useState(false);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Importar alunos em massa"
+        action={
+          <Button size="sm" variant="secondary" onClick={() => setAberto(true)}>
+            Importar planilha/PDF
+          </Button>
+        }
+      />
+      <p className="text-sm text-n-500">
+        Cole o conteúdo de uma planilha (CSV) ou de um PDF, ou envie um arquivo de texto. A IA
+        normaliza nomes, telefones e séries; você revisa antes de gravar.
+      </p>
+      {aberto && (
+        <ImportarAlunosModal
+          onClose={() => setAberto(false)}
+          onConcluir={async () => {
+            await onMudou();
+            toast({ tone: "success", title: "Importação concluída." });
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+function ImportarAlunosModal({
+  onClose,
+  onConcluir,
+}: {
+  onClose: () => void;
+  onConcluir: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [etapa, setEtapa] = useState<"entrada" | "previa" | "resultado">("entrada");
+  const [conteudo, setConteudo] = useState("");
+  const [arquivo, setArquivo] = useState("");
+  const [carregando, setCarregando] = useState(false);
+  const [previa, setPrevia] = useState<ImportacaoPrevia | null>(null);
+  const [linhas, setLinhas] = useState<LinhaImportacaoAluno[]>([]);
+  const [criarSeries, setCriarSeries] = useState(true);
+  const [resultado, setResultado] = useState<ImportacaoResultado | null>(null);
+
+  async function aoSelecionarArquivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const texto = await file.text();
+    setConteudo(texto);
+    setArquivo(file.name);
+  }
+
+  async function analisar() {
+    if (!conteudo.trim()) return;
+    setCarregando(true);
+    try {
+      const p = await previaImportacaoAlunos(conteudo);
+      setPrevia(p);
+      setLinhas(p.linhas);
+      setCriarSeries(p.series_novas.length > 0);
+      setEtapa("previa");
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao analisar." });
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function confirmar() {
+    setCarregando(true);
+    try {
+      const r = await confirmarImportacaoAlunos(linhas, criarSeries);
+      setResultado(r);
+      setEtapa("resultado");
+      await onConcluir();
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao importar." });
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  const titulo =
+    etapa === "entrada"
+      ? "Importar alunos — enviar dados"
+      : etapa === "previa"
+        ? "Importar alunos — revisar"
+        : "Importar alunos — resultado";
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={titulo}
+      className="max-w-3xl"
+      footer={
+        etapa === "entrada" ? (
+          <>
+            <Button variant="secondary" size="sm" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={analisar} disabled={!conteudo.trim() || carregando}>
+              {carregando ? "Analisando…" : "Analisar com IA"}
+            </Button>
+          </>
+        ) : etapa === "previa" ? (
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setEtapa("entrada")}>
+              Voltar
+            </Button>
+            <Button size="sm" onClick={confirmar} disabled={carregando}>
+              {carregando ? "Importando…" : "Confirmar importação"}
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" onClick={onClose}>
+            Concluir
+          </Button>
+        )
+      }
+    >
+      {etapa === "entrada" && (
+        <div className="flex flex-col gap-3">
+          <Field label="Arquivo (CSV, TSV ou texto)">
+            <input
+              type="file"
+              accept=".csv,.tsv,.txt,.md,text/csv,text/plain"
+              onChange={aoSelecionarArquivo}
+              className="text-sm text-n-600 file:mr-3 file:rounded-md file:border-0 file:bg-n-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold"
+            />
+          </Field>
+          <Field label="Ou cole os dados (planilha ou PDF)">
+            <textarea
+              value={conteudo}
+              onChange={(e) => {
+                setConteudo(e.target.value);
+                setArquivo("");
+              }}
+              rows={8}
+              placeholder={"nome, série, matrícula, responsável, telefone\nMaria Silva, 5º A, 2026-1, João Silva, (11) 99999-0001"}
+              className="w-full rounded-md border border-n-200 p-2 font-mono text-xs text-n-800 focus:border-brand-500 focus:outline-none"
+            />
+          </Field>
+          {arquivo && <p className="text-xs text-n-500">Arquivo carregado: {arquivo}</p>}
+        </div>
+      )}
+
+      {etapa === "previa" && previa && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-n-600">
+            <span>
+              <strong>{previa.total_validos}</strong> de {linhas.length} aluno(s) prontos para
+              importar
+            </span>
+            {previa.series_novas.length > 0 && (
+              <label className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={criarSeries}
+                  onChange={(e) => setCriarSeries(e.target.checked)}
+                />
+                Criar séries novas: {previa.series_novas.join(", ")}
+              </label>
+            )}
+          </div>
+          <TableWrap>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Aluno</Th>
+                  <Th>Série</Th>
+                  <Th>Matrícula</Th>
+                  <Th>Responsáveis</Th>
+                  <Th>Situação</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {linhas.map((l, i) => (
+                  <Tr key={i}>
+                    <Td className="font-medium">{l.nome || <span className="text-danger">—</span>}</Td>
+                    <Td className="text-n-600">
+                      {l.serie || "—"}
+                      {l.serie_nova && (
+                        <span className="ml-1 rounded-full bg-[#fff4e5] px-1.5 py-0.5 text-[10px] font-bold text-[#b25e00]">
+                          nova
+                        </span>
+                      )}
+                    </Td>
+                    <Td className="font-mono text-xs text-n-500">{l.matricula || "—"}</Td>
+                    <Td className="text-xs text-n-600">
+                      {l.responsaveis.length === 0
+                        ? "—"
+                        : l.responsaveis
+                            .map((r) => `${r.nome}${r.telefone ? ` (${r.telefone})` : ""}`)
+                            .join(", ")}
+                    </Td>
+                    <Td>
+                      {l.valido ? (
+                        <span className="rounded-full bg-[#e8f7f1] px-2 py-0.5 text-[11px] font-bold text-[#0d8a78]">
+                          OK
+                        </span>
+                      ) : (
+                        <span
+                          className="rounded-full bg-[#fde8e8] px-2 py-0.5 text-[11px] font-bold text-danger"
+                          title={l.erros.join(" ")}
+                        >
+                          {l.erros.join(" ") || "Inválido"}
+                        </span>
+                      )}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableWrap>
+          <p className="text-xs text-n-400">
+            Linhas inválidas e séries não criadas são ignoradas na importação.
+          </p>
+        </div>
+      )}
+
+      {etapa === "resultado" && resultado && (
+        <div className="flex flex-col gap-2 text-sm text-n-700">
+          <p>
+            <strong>{resultado.criados}</strong> aluno(s) importado(s).
+          </p>
+          {resultado.ignorados > 0 && <p>{resultado.ignorados} linha(s) ignorada(s).</p>}
+          {resultado.series_criadas.length > 0 && (
+            <p>Séries criadas: {resultado.series_criadas.join(", ")}.</p>
+          )}
+          {resultado.erros.length > 0 && (
+            <div className="rounded-md bg-[#fde8e8] p-2 text-xs text-danger">
+              {resultado.erros.map((e, i) => (
+                <p key={i}>{e}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }
 

@@ -1,8 +1,15 @@
 import { Badge } from "@/components/ui/Badge";
 import type { Licenca } from "@/lib/admin";
 
-// Badge de licenciamento: bloqueio (prioritário), expiração e plano.
+// Badge de licenciamento: cancelamento/bloqueio (prioritários), expiração e plano.
 export function LicencaBadge({ licenca }: { licenca: Licenca }) {
+  if (licenca.status === "cancelado") {
+    return (
+      <span title={licenca.motivo_cancelamento}>
+        <Badge tone="neutral">Cancelada</Badge>
+      </span>
+    );
+  }
   if (licenca.status === "bloqueado") {
     return (
       <span title={licenca.motivo_bloqueio}>

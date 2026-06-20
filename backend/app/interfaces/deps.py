@@ -17,7 +17,7 @@ from app.application.use_cases import (
     ResponderDuvida,
 )
 from app.config import Settings, get_settings
-from app.domain.ports import MessageChannel
+from app.domain.ports import LLMProvider, MessageChannel
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
     SqlBroadcastRepository,
@@ -175,6 +175,11 @@ def get_aluno_repo(session: AsyncSession = Depends(get_session)) -> SqlAlunoRepo
 def get_canal(settings: Settings = Depends(get_settings_dep)) -> MessageChannel:
     """Canal de mensagens (demo ou Meta) para envios avulsos de texto."""
     return criar_canal(settings)
+
+
+def get_llm(settings: Settings = Depends(get_settings_dep)) -> LLMProvider:
+    """Provedor de LLM (fake/Anthropic/OpenAI) para tarefas de normalização/extração."""
+    return criar_llm(settings)
 
 
 def get_enviar_para_grupo(

@@ -28,7 +28,11 @@ class StatusTenant(str, enum.Enum):
 
     ATIVO = "ativo"
     # Suspenso (falta de pagamento ou outro motivo): sem acesso ao painel e a disparos.
+    # É reversível (``DesbloquearEscola``).
     BLOQUEADO = "bloqueado"
+    # Cancelado (churn): a escola deixou a plataforma. Também sem acesso, mas marca o fim
+    # do ciclo de vida — registra ``cancelado_em`` e ``motivo_cancelamento`` para a ficha.
+    CANCELADO = "cancelado"
 
 
 class PlanoTenant(str, enum.Enum):
@@ -43,8 +47,10 @@ class Tenant:
     """Uma escola. Raiz de isolamento multi-tenant.
 
     Além da identidade (``nome``/``slug``), carrega o **licenciamento**: situação
-    (``status``/``motivo_bloqueio``) e a licença (``plano``/``licenca_expira_em``).
-    Uma escola ``BLOQUEADO`` perde acesso ao painel e aos disparos.
+    (``status``/``motivo_bloqueio``), a licença (``plano``/``licenca_expira_em``) e a
+    **cobrança** (preços ``valor_*_centavos`` por ciclo). ``criado_em`` é a data de início
+    (quando a escola entrou); ``cancelado_em``/``motivo_cancelamento`` registram a saída
+    (churn). Uma escola ``BLOQUEADO`` ou ``CANCELADO`` perde acesso ao painel e aos disparos.
     """
 
     nome: str
@@ -57,10 +63,32 @@ class Tenant:
     plano: PlanoTenant = PlanoTenant.MENSAL
     # Data de expiração da licença (relevante sobretudo no plano anual).
     licenca_expira_em: datetime | None = None
+    # Cobrança: preços por ciclo, em centavos (evita imprecisão de ponto flutuante).
+    valor_mensal_centavos: int = 0
+    valor_anual_centavos: int = 0
+    # Cancelamento (churn): quando a escola deixou a plataforma e por quê.
+    cancelado_em: datetime | None = None
+    motivo_cancelamento: str = ""
 
     @property
     def bloqueado(self) -> bool:
         return self.status == StatusTenant.BLOQUEADO
+
+    @property
+    def cancelado(self) -> bool:
+        return self.status == StatusTenant.CANCELADO
+
+    @property
+    def acesso_suspenso(self) -> bool:
+        """Sem acesso ao painel/disparos: bloqueada (reversível) ou cancelada (churn)."""
+        return self.bloqueado or self.cancelado
+
+    @property
+    def motivo_suspensao(self) -> str:
+        """Mensagem do impedimento de acesso (bloqueio ou cancelamento)."""
+        if self.cancelado:
+            return self.motivo_cancelamento
+        return self.motivo_bloqueio
 
     @property
     def dias_para_expirar(self) -> int | None:
@@ -79,6 +107,18 @@ class Tenant:
         d = self.dias_para_expirar
         return d is not None and 0 <= d <= dias_aviso
 
+    @property
+    def mrr_centavos(self) -> int:
+        """Receita recorrente mensal (MRR) normalizada pelo ciclo do plano."""
+        if self.plano == PlanoTenant.ANUAL:
+            return self.valor_anual_centavos // 12
+        return self.valor_mensal_centavos
+
+    @property
+    def arr_centavos(self) -> int:
+        """Receita recorrente anual (ARR) = MRR × 12."""
+        return self.mrr_centavos * 12
+
 
 @dataclass
 class ResumoEscola:
@@ -88,6 +128,94 @@ class ResumoEscola:
     total_conversas: int = 0
     total_contatos: int = 0
     total_broadcasts: int = 0
+
+
+@dataclass
+class MetricasUsoEscola:
+    """Contadores de uso de uma escola, para a ficha do super admin."""
+
+    total_usuarios_ativos: int = 0
+    total_contatos: int = 0
+    total_alunos: int = 0
+    total_conversas: int = 0
+    total_broadcasts: int = 0
+
+
+class StatusPagamento(str, enum.Enum):
+    """Situação de cobrança derivada do licenciamento (não há ledger de faturas)."""
+
+    EM_DIA = "em_dia"
+    A_VENCER = "a_vencer"
+    VENCIDO = "vencido"
+    INADIMPLENTE = "inadimplente"  # bloqueada por pagamento
+    CANCELADO = "cancelado"
+
+
+@dataclass
+class FichaFinanceiraEscola:
+    """Ficha financeira/histórico de uma escola para o super admin.
+
+    Consolida ciclo de vida (início/cancelamento), cobrança (preços, MRR/ARR, receita
+    acumulada estimada/LTV), uso agregado e um *health score* heurístico. É **derivada**:
+    não há tabela de faturas — a receita acumulada é uma estimativa por meses ativos × MRR.
+    """
+
+    tenant: Tenant
+    uso: MetricasUsoEscola = field(default_factory=MetricasUsoEscola)
+    # Cota diária de destinatários (tier Meta) — insumo do health score.
+    limite_diario_meta: int = 0
+
+    @property
+    def meses_ativos(self) -> int:
+        """Meses (aprox., 30 dias) entre o início e o cancelamento (ou hoje)."""
+        fim = self.tenant.cancelado_em or _now()
+        dias = (fim.date() - self.tenant.criado_em.date()).days
+        return max(0, dias // 30)
+
+    @property
+    def receita_acumulada_centavos(self) -> int:
+        """Receita acumulada estimada (LTV) = meses ativos × MRR."""
+        return self.meses_ativos * self.tenant.mrr_centavos
+
+    @property
+    def dias_de_casa(self) -> int:
+        """Dias corridos desde o início (referência para a 'data de entrada')."""
+        return max(0, (_now().date() - self.tenant.criado_em.date()).days)
+
+    @property
+    def status_pagamento(self) -> StatusPagamento:
+        t = self.tenant
+        if t.cancelado:
+            return StatusPagamento.CANCELADO
+        if t.bloqueado:
+            return StatusPagamento.INADIMPLENTE
+        if t.licenca_expirada:
+            return StatusPagamento.VENCIDO
+        if t.licenca_a_vencer(15):
+            return StatusPagamento.A_VENCER
+        return StatusPagamento.EM_DIA
+
+    @property
+    def health_score(self) -> int:
+        """Saúde da conta (0–100): heurística sobre licença, bloqueio e tier de envio.
+
+        Sem dados de qualidade do número Meta, aproxima a saúde pelo tier de envio
+        (cota diária) e pela situação de licenciamento/cobrança.
+        """
+        t = self.tenant
+        if t.cancelado:
+            return 0
+        score = 100
+        if t.bloqueado:
+            score -= 50
+        if t.licenca_expirada:
+            score -= 30
+        elif t.licenca_a_vencer(15):
+            score -= 10
+        # Tier de envio: número mais "saudável" alcança tiers maiores (-1 = ilimitado).
+        if 0 <= self.limite_diario_meta < 1000:
+            score -= 10
+        return max(0, min(100, score))
 
 
 # --------------------------------------------------------------------------- #
@@ -209,6 +337,73 @@ class CoberturaContatosSala:
     @property
     def total_sem_contato(self) -> int:
         return len(self.alunos_sem_contato)
+
+
+# --------------------------------------------------------------------------- #
+# Importação de alunos em massa (planilha/PDF normalizados pela LLM)
+# --------------------------------------------------------------------------- #
+@dataclass
+class ResponsavelImportado:
+    """Responsável extraído de uma linha da planilha/PDF, já normalizado.
+
+    ``telefone`` é o WhatsApp em E.164 (vazio se não veio ou não pôde ser
+    normalizado). ``aviso`` registra observações que não impedem a importação
+    (ex.: telefone ausente/suspeito).
+    """
+
+    nome: str
+    telefone: str = ""
+    aviso: str = ""
+
+
+@dataclass
+class LinhaImportacaoAluno:
+    """Uma linha de aluno normalizada pela LLM, pronta para revisão antes de persistir.
+
+    ``serie`` é o nome da turma/série como interpretado (resolvido depois contra as
+    ``Sala``s do tenant). ``erros`` impedem a persistência da linha; ``avisos`` apenas
+    sinalizam. ``serie_nova`` marca que a série citada ainda não existe no tenant.
+    """
+
+    nome: str
+    serie: str
+    matricula: str = ""
+    responsaveis: list[ResponsavelImportado] = field(default_factory=list)
+    erros: list[str] = field(default_factory=list)
+    avisos: list[str] = field(default_factory=list)
+    serie_nova: bool = False
+
+    @property
+    def valido(self) -> bool:
+        return not self.erros
+
+
+@dataclass
+class PreviaImportacaoAlunos:
+    """Resultado da etapa de **prévia**: linhas normalizadas + contexto de séries.
+
+    Nada é persistido aqui — o admin revisa as linhas e confirma depois. ``series_novas``
+    são os nomes de séries citados que ainda não existem no tenant (precisam ser criados
+    na confirmação para que os alunos correspondentes sejam importados).
+    """
+
+    linhas: list[LinhaImportacaoAluno] = field(default_factory=list)
+    series_existentes: list[str] = field(default_factory=list)
+    series_novas: list[str] = field(default_factory=list)
+
+    @property
+    def total_validos(self) -> int:
+        return sum(1 for linha in self.linhas if linha.valido)
+
+
+@dataclass
+class ResultadoImportacaoAlunos:
+    """Resultado da etapa de **confirmação**: o que foi efetivamente persistido."""
+
+    criados: int = 0
+    ignorados: int = 0
+    series_criadas: list[str] = field(default_factory=list)
+    erros: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

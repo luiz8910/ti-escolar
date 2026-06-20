@@ -140,6 +140,9 @@ ti-escolar/
   `0006_destinatario_entrega` → `0007_auditoria`. **Cadeia linear obrigatória:** ao criar uma
   migration, encadeie no head atual (`down_revision` = último head) para evitar **multiple heads**
   no `alembic upgrade head` do deploy.
+  `0006_destinatario_entrega` → `0007_ficha_financeira_tenant`. **Cadeia linear obrigatória:**
+  ao criar uma migration, encadeie no head atual (`down_revision` = último head) para evitar
+  **multiple heads** no `alembic upgrade head` do deploy.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -240,6 +243,33 @@ ti-escolar/
   com os alunos sem contato e o botão **"Notificar professor"** (modal pedindo o WhatsApp do
   professor + mensagem opcional). O seed cria um "Aluno Sem Contato" na primeira turma demo.
 
+### 6c-quater. Importação de alunos em massa (planilha/PDF + LLM)
+
+- **Fluxo em duas etapas** (revisar antes de gravar), em
+  `app/application/importacao_use_cases.py`:
+  1. **Prévia** (`PrevisualizarImportacaoAlunos`): o texto bruto da planilha/PDF vai à
+     `LLMProvider`, que **normaliza e estrutura** os alunos (nomes, telefones em E.164, série).
+     O resultado é **validado em código** (a LLM não é fonte de verdade) e devolvido para
+     revisão — **nada é persistido**. Telefones via `normalizar_telefone` (E.164 BR);
+     séries citadas inexistentes no tenant são marcadas `serie_nova`.
+  2. **Confirmação** (`ConfirmarImportacaoAlunos`): recebe as linhas revisadas e persiste de
+     forma **determinística e sem LLM** — resolve/cria `Sala` (se `criar_series_ausentes`),
+     reaproveita/cria `Contato` por telefone (dedupe) e cadastra os `Aluno`s com responsáveis.
+     Linhas inválidas e séries ausentes (sem permissão de criar) são **ignoradas**.
+- **Value objects** (`entities.py`): `ResponsavelImportado`, `LinhaImportacaoAluno`
+  (`erros`/`avisos`/`serie_nova`/`valido`), `PreviaImportacaoAlunos`,
+  `ResultadoImportacaoAlunos`. Tudo **escopado por tenant**.
+- **LLM:** usa a porta `LLMProvider` existente (sem novo SDK). O prompt leva o marcador
+  `IMPORTACAO_ALUNOS_JSON_V1`; o `FakeLLMProvider` (demo sem chaves) reconhece o marcador e
+  converte CSV/TSV em JSON, mantendo o fluxo demonstrável.
+- **Rotas** em `app/interfaces/api/cadastro.py`: `POST /alunos/importar/previa`
+  (corpo: `tenant_id`, `conteudo`) e `POST /alunos/importar/confirmar`
+  (corpo: `tenant_id`, `linhas`, `criar_series_ausentes`). A confirmação **revalida no
+  servidor** (não confia no cliente).
+- **Painel:** `web/app/admin/alunos/` — card "Importar alunos em massa" → modal com upload
+  (`.csv/.tsv/.txt`) ou colar texto → tabela de prévia (badge "nova" para séries, status por
+  linha, criar séries ausentes) → resultado.
+
 ### 6d. Gestão de escolas (super admin)
 
 - **CRUD de escolas (`Tenant`):** apenas o **super admin** cria/edita/remove escolas
@@ -258,27 +288,49 @@ ti-escolar/
 
 ### 6e. Licenciamento, cobrança e bloqueio (super admin)
 
-- **Estado no `Tenant`:** `status` ∈ {`ativo`, `bloqueado`} + `motivo_bloqueio` e `bloqueado_em`;
-  e a licença `plano` ∈ {`mensal`, `anual`} + `licenca_expira_em`. Propriedades de domínio:
-  `bloqueado`, `dias_para_expirar`, `licenca_expirada`, `licenca_a_vencer(dias_aviso)`.
-  Migration `0006_licenciamento_tenant`.
-- **Bloqueio:** `BloquearEscola`/`DesbloquearEscola` (`app/application/tenant_use_cases.py`, só
-  super admin). Uma escola **bloqueada** perde acesso ao painel (`POST /login` recusa o
+- **Estado no `Tenant`:** `status` ∈ {`ativo`, `bloqueado`, `cancelado`} + `motivo_bloqueio`/
+  `bloqueado_em` e `motivo_cancelamento`/`cancelado_em`; a licença `plano` ∈ {`mensal`, `anual`}
+  + `licenca_expira_em`; e a cobrança `valor_mensal_centavos`/`valor_anual_centavos`. Propriedades
+  de domínio: `bloqueado`, `cancelado`, `acesso_suspenso`, `motivo_suspensao`, `mrr_centavos`,
+  `arr_centavos`, `dias_para_expirar`, `licenca_expirada`, `licenca_a_vencer(dias_aviso)`.
+  Migrations `0006_licenciamento_tenant` e `0007_ficha_financeira_tenant`.
+- **Bloqueio e cancelamento:** `BloquearEscola`/`DesbloquearEscola` (suspensão reversível) e
+  `CancelarEscola`/`ReativarEscola` (churn, com `motivo_cancelamento`/`cancelado_em`), em
+  `app/application/tenant_use_cases.py`, só super admin. Tanto a escola **bloqueada** quanto a
+  **cancelada** (`acesso_suspenso`) perdem acesso ao painel (`POST /login` recusa o
   `tenant_admin` com 403 + motivo) **e aos disparos** (guard `_exige_tenant_ativo` em
   `/grupos/{id}/enviar` e em `POST /api/broadcasts`). O super admin segue entrando.
-- **Licença:** `DefinirLicenca` ajusta plano e data de expiração. O contador "quanto falta para
-  expirar" é `dias_para_expirar` (exposto em `LicencaSaida`).
+- **Licença e preços:** `DefinirLicenca` ajusta plano, data de expiração e (opcionalmente) os
+  preços por ciclo (`valor_*_centavos`; só altera quando informados). O contador "quanto falta
+  para expirar" é `dias_para_expirar` (exposto em `LicencaSaida`).
 - **Aviso por e-mail:** `NotificarLicencasAVencer` avisa os `tenant_admin` das escolas com
   **plano anual** dentro da janela `LICENSE_WARNING_DAYS` (default 30) do vencimento. Porta
   `EmailSender` no domínio; adaptador atual `LogEmailSender` (mock/log,
   `app/infrastructure/messaging/email.py`). Disparável pelo super admin via
   `POST /api/admin/licencas/notificar-vencimento` (ou por um job agendado).
 - **Rotas** (super admin, `app/interfaces/api/admin.py`): `/escolas/{tenant_id}/bloquear`,
-  `/escolas/{tenant_id}/desbloquear`, `PUT /escolas/{tenant_id}/licenca` e
+  `/escolas/{tenant_id}/desbloquear`, `/escolas/{tenant_id}/cancelar`,
+  `/escolas/{tenant_id}/reativar`, `PUT /escolas/{tenant_id}/licenca` e
   `/licencas/notificar-vencimento`.
-- **Painel:** `web/app/admin/escolas/` (badge de status/expiração, modais de bloqueio e licença,
-  botão "Avisar vencimentos") e o detalhe `[tenantId]` (faixa de licença). Badge reutilizável em
-  `web/components/admin/LicencaBadge.tsx`. Login bloqueado mostra o motivo.
+- **Painel:** `web/app/admin/escolas/` (badge de status/expiração, modais de bloqueio, cancelamento
+  e licença — esta com os preços por ciclo —, botão "Avisar vencimentos") e o detalhe `[tenantId]`
+  (faixa de licença). Badge reutilizável em `web/components/admin/LicencaBadge.tsx`. Login
+  bloqueado/cancelado mostra o motivo.
+
+### 6f. Ficha financeira / histórico da escola (super admin)
+
+- **Visão derivada (sem ledger de faturas):** `ObterFichaFinanceira`
+  (`app/application/tenant_use_cases.py`, só super admin) monta o value object
+  `FichaFinanceiraEscola` a partir do `Tenant` + `MetricasUsoEscola` (contadores via
+  `TenantRepository.metricas_uso`) + a cota diária Meta (`META_DAILY_TIER_LIMIT`). Consolida:
+  **ciclo de vida** (`criado_em` = data de início, `dias_de_casa`, `cancelado_em`/motivo),
+  **cobrança** (preços, `mrr_centavos`/`arr_centavos`, `receita_acumulada_centavos` = LTV estimado
+  por `meses_ativos × MRR`, `status_pagamento` derivado da licença), **próxima renovação**
+  (`licenca_expira_em`), **uso** (usuários ativos, contatos, alunos, conversas, broadcasts) e um
+  **`health_score`** heurístico (licença + bloqueio + tier de envio).
+- **Endpoint:** `GET /api/admin/escolas/{tenant_id}/ficha-financeira` (`FichaFinanceiraSaida`).
+- **Painel:** card "Ficha financeira" no detalhe `web/app/admin/escolas/[tenantId]/` (métricas de
+  cobrança, uso e saúde); preços editáveis no modal de licença da lista `web/app/admin/escolas/`.
 
 ## 7. Camada de LLM
 
@@ -434,8 +486,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   (`NotificarLicencasAVencer` + porta `EmailSender`; adaptador atual é mock/log).
 
 **Cadastro em massa**
-- [ ] **Importação de alunos em massa** por **planilha ou PDF**, usando **LLM** para validar os
-  dados e normalizar a formatação da planilha/PDF antes de persistir.
+- [x] **Importação de alunos em massa** por **planilha ou PDF**, usando **LLM** para validar os
+  dados e normalizar a formatação da planilha/PDF antes de persistir. Fluxo prévia→confirmação,
+  escopado por tenant. Ver §6c-quater (`app/application/importacao_use_cases.py`,
+  `app/interfaces/api/cadastro.py`, `web/app/admin/alunos/`).
 
 **Engajamento / cobertura de contatos** _(feedback de diretora — campo)_
 - [x] **Alerta de aluno sem responsável com telefone vinculado** — a turma (`Sala`) sinaliza

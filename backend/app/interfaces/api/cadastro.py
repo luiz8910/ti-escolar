@@ -35,26 +35,52 @@ from app.application.cadastro_use_cases import (
     VincularPaiASala,
     VincularResponsavelAoAluno,
 )
-from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Sala, Usuario
-from app.domain.ports import MessageChannel
+from app.application.importacao_use_cases import (
+    ConfirmarImportacaoAlunos,
+    PrevisualizarImportacaoAlunos,
+)
+from app.domain.entities import (
+    Aluno,
+    CoberturaContatosSala,
+    Contato,
+    LinhaImportacaoAluno,
+    PreviaImportacaoAlunos,
+    ResponsavelImportado,
+    ResultadoImportacaoAlunos,
+    Sala,
+    Usuario,
+)
+from app.domain.ports import LLMProvider, MessageChannel
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
     SqlContatoRepository,
     SqlSalaRepository,
 )
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
-from app.interfaces.deps import get_aluno_repo, get_canal, get_contato_repo, get_sala_repo
+from app.interfaces.deps import (
+    get_aluno_repo,
+    get_canal,
+    get_contato_repo,
+    get_llm,
+    get_sala_repo,
+)
 from app.interfaces.dto import (
     AlunoAtualizar,
     AlunoEntrada,
     AlunoResumoSaida,
     AlunoSaida,
     CoberturaSalaSaida,
+    ImportacaoConfirmarEntrada,
+    ImportacaoPreviaEntrada,
+    ImportacaoPreviaSaida,
+    ImportacaoResultadoSaida,
+    LinhaImportacaoAlunoDTO,
     NotificarProfessorEntrada,
     NotificarProfessorSaida,
     PaiAtualizar,
     PaiEntrada,
     PaiSaida,
+    ResponsavelImportadoDTO,
     SalaAtualizar,
     SalaEntrada,
     SalaSaida,
@@ -100,6 +126,60 @@ def _aluno_saida(a: Aluno) -> AlunoSaida:
         sala_id=a.sala_id,
         sala_nome=a.sala_nome,
         responsaveis=[_pai_saida(c) for c in a.responsaveis],
+    )
+
+
+def _linha_importacao_saida(linha: LinhaImportacaoAluno) -> LinhaImportacaoAlunoDTO:
+    return LinhaImportacaoAlunoDTO(
+        nome=linha.nome,
+        serie=linha.serie,
+        matricula=linha.matricula,
+        responsaveis=[
+            ResponsavelImportadoDTO(nome=r.nome, telefone=r.telefone, aviso=r.aviso)
+            for r in linha.responsaveis
+        ],
+        erros=linha.erros,
+        avisos=linha.avisos,
+        serie_nova=linha.serie_nova,
+        valido=linha.valido,
+    )
+
+
+def _previa_importacao_saida(previa: PreviaImportacaoAlunos) -> ImportacaoPreviaSaida:
+    return ImportacaoPreviaSaida(
+        linhas=[_linha_importacao_saida(linha) for linha in previa.linhas],
+        series_existentes=previa.series_existentes,
+        series_novas=previa.series_novas,
+        total_validos=previa.total_validos,
+    )
+
+
+def _linha_importacao_entrada(dto: LinhaImportacaoAlunoDTO) -> LinhaImportacaoAluno:
+    """Reconstrói a linha revisada e **revalida no servidor** (não confia no cliente)."""
+    linha = LinhaImportacaoAluno(
+        nome=dto.nome.strip(),
+        serie=dto.serie.strip(),
+        matricula=dto.matricula.strip(),
+        responsaveis=[
+            ResponsavelImportado(nome=r.nome.strip(), telefone=r.telefone.strip(), aviso=r.aviso)
+            for r in dto.responsaveis
+        ],
+        avisos=list(dto.avisos),
+        serie_nova=dto.serie_nova,
+    )
+    if not linha.nome:
+        linha.erros.append("Nome do aluno ausente.")
+    if not linha.serie:
+        linha.erros.append("Série/turma ausente.")
+    return linha
+
+
+def _resultado_importacao_saida(r: ResultadoImportacaoAlunos) -> ImportacaoResultadoSaida:
+    return ImportacaoResultadoSaida(
+        criados=r.criados,
+        ignorados=r.ignorados,
+        series_criadas=r.series_criadas,
+        erros=r.erros,
     )
 
 
@@ -495,3 +575,45 @@ async def desvincular_responsavel(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+
+# --------------------------------------------------------------------------- #
+# Importação de alunos em massa (planilha/PDF normalizados pela LLM)
+# --------------------------------------------------------------------------- #
+@router.post("/alunos/importar/previa", response_model=ImportacaoPreviaSaida)
+async def previa_importacao_alunos(
+    payload: ImportacaoPreviaEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    llm: LLMProvider = Depends(get_llm),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+) -> ImportacaoPreviaSaida:
+    """Etapa 1: a LLM normaliza o conteúdo e devolvemos as linhas para revisão."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        previa = await PrevisualizarImportacaoAlunos(llm=llm, salas=salas).executar(
+            tenant_id=payload.tenant_id, conteudo=payload.conteudo
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _previa_importacao_saida(previa)
+
+
+@router.post("/alunos/importar/confirmar", response_model=ImportacaoResultadoSaida)
+async def confirmar_importacao_alunos(
+    payload: ImportacaoConfirmarEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
+) -> ImportacaoResultadoSaida:
+    """Etapa 2: persiste as linhas revisadas (séries, responsáveis e alunos)."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    linhas = [_linha_importacao_entrada(linha) for linha in payload.linhas]
+    resultado = await ConfirmarImportacaoAlunos(
+        alunos=alunos, salas=salas, contatos=contatos
+    ).executar(
+        tenant_id=payload.tenant_id,
+        linhas=linhas,
+        criar_series_ausentes=payload.criar_series_ausentes,
+    )
+    return _resultado_importacao_saida(resultado)
