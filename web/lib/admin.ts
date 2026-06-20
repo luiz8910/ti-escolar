@@ -713,6 +713,63 @@ export async function desvincularResponsavelDoAluno(
   }
 }
 
+// --------------------- importação de alunos em massa ---------------------- //
+export interface ResponsavelImportado {
+  nome: string;
+  telefone: string;
+  aviso?: string;
+}
+
+export interface LinhaImportacaoAluno {
+  nome: string;
+  serie: string;
+  matricula: string;
+  responsaveis: ResponsavelImportado[];
+  erros: string[];
+  avisos: string[];
+  serie_nova: boolean;
+  valido: boolean;
+}
+
+export interface ImportacaoPrevia {
+  linhas: LinhaImportacaoAluno[];
+  series_existentes: string[];
+  series_novas: string[];
+  total_validos: number;
+}
+
+export interface ImportacaoResultado {
+  criados: number;
+  ignorados: number;
+  series_criadas: string[];
+  erros: string[];
+}
+
+export async function previaImportacaoAlunos(conteudo: string): Promise<ImportacaoPrevia> {
+  const resp = await apiFetch(`${API_URL}/api/admin/alunos/importar/previa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), conteudo }),
+  });
+  return jsonOuErro(resp, "pré-visualizar importação");
+}
+
+export async function confirmarImportacaoAlunos(
+  linhas: LinhaImportacaoAluno[],
+  criarSeriesAusentes: boolean
+): Promise<ImportacaoResultado> {
+  const resp = await apiFetch(`${API_URL}/api/admin/alunos/importar/confirmar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      linhas,
+      criar_series_ausentes: criarSeriesAusentes,
+    }),
+  });
+  return jsonOuErro(resp, "confirmar importação");
+}
+
 // --------------------- base de conhecimento (RAG) ------------------------- //
 export interface FonteConhecimento {
   id: string;
