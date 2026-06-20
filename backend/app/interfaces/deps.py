@@ -27,6 +27,7 @@ from app.infrastructure.db.repositories import (
 from app.application.conhecimento_use_cases import IngerirDocumento
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
+    SqlAuditLogRepository,
     SqlContatoRepository,
     SqlGrupoRepository,
     SqlSalaRepository,
@@ -95,6 +96,7 @@ def get_atender_conversa(
         llm=llm,
         documentos=documentos,
         prompts=SqlPromptTenantRepository(session),
+        auditoria=SqlAuditLogRepository(session),
     )
 
 
@@ -152,6 +154,10 @@ def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConver
 
 def get_broadcast_repo(session: AsyncSession = Depends(get_session)) -> SqlBroadcastRepository:
     return SqlBroadcastRepository(session)
+
+
+def get_audit_repo(session: AsyncSession = Depends(get_session)) -> SqlAuditLogRepository:
+    return SqlAuditLogRepository(session)
 
 
 def get_contato_repo(session: AsyncSession = Depends(get_session)) -> SqlContatoRepository:

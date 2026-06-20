@@ -7,6 +7,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     ForeignKey,
@@ -342,6 +343,26 @@ class AlunoORM(Base):
     responsaveis: Mapped[list[ContatoORM]] = relationship(
         secondary=aluno_responsaveis, back_populates="alunos"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Auditoria de ações (usuários logados + LLM)
+# --------------------------------------------------------------------------- #
+class AuditoriaORM(Base):
+    __tablename__ = "auditoria"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    # NULL para ações cross-tenant do super admin; index para a consulta por escola.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True
+    )
+    ator: Mapped[str] = mapped_column(String(20))  # "usuario" | "llm" | "sistema"
+    ator_id: Mapped[str] = mapped_column(String(128), default="")
+    ator_nome: Mapped[str] = mapped_column(String(200), default="")
+    acao: Mapped[str] = mapped_column(String(80), index=True)
+    descricao: Mapped[str] = mapped_column(Text, default="")
+    metadados: Mapped[dict] = mapped_column(JSON, default=dict)
+    criado_em: Mapped[datetime] = mapped_column(index=True)
 
 
 # --------------------------------------------------------------------------- #

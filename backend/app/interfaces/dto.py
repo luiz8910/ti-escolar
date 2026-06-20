@@ -261,10 +261,30 @@ class BroadcastResumoSaida(BaseModel):
     id: UUID
     titulo: str
     status: str
+    template_nome: str = ""
     criado_em: datetime
     agendado_para: datetime | None = None
     total_destinatarios: int
     por_status: dict[str, int] = {}
+
+
+class DestinatarioBroadcastSaida(BaseModel):
+    contato: str
+    nome: str = ""  # nome do responsável, se cadastrado
+    status: str
+    atualizado_em: datetime | None = None
+
+
+class BroadcastDetalheSaida(BaseModel):
+    id: UUID
+    titulo: str
+    status: str
+    template_nome: str = ""
+    criado_em: datetime
+    agendado_para: datetime | None = None
+    total_destinatarios: int
+    por_status: dict[str, int] = {}
+    destinatarios: list[DestinatarioBroadcastSaida] = []
 
 
 class NaoEntregaSaida(BaseModel):
@@ -275,6 +295,21 @@ class NaoEntregaSaida(BaseModel):
     status: str
     motivo: str  # "falha_envio" | "sem_confirmacao"
     atualizado_em: datetime | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Auditoria de ações (usuários logados + LLM)
+# --------------------------------------------------------------------------- #
+class RegistroAuditoriaSaida(BaseModel):
+    id: UUID
+    tenant_id: UUID | None = None
+    ator: str  # "usuario" | "llm" | "sistema"
+    ator_id: str = ""
+    ator_nome: str = ""
+    acao: str
+    descricao: str = ""
+    metadados: dict = {}
+    criado_em: datetime
 
 
 # --------------------------------------------------------------------------- #

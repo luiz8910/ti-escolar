@@ -22,14 +22,17 @@ from app.domain.entities import (
     PlanoTenant,
     ResumoConversa,
     ResumoEscola,
+    StatusEntrega,
     StatusTenant,
     Tenant,
     Usuario,
 )
 from app.domain.ports import (
     BroadcastRepository,
+    ContatoRepository,
     ConversaRepository,
     EmailSender,
+    TemplateRepository,
     TenantRepository,
     UsuarioRepository,
 )
@@ -341,9 +344,104 @@ class ObterConversaDaEscola:
         return ConversaComMensagens(conversa=conversa, mensagens=mensagens)
 
 
-class ListarBroadcastsDaEscola:
-    def __init__(self, *, broadcasts: BroadcastRepository) -> None:
-        self._broadcasts = broadcasts
+@dataclass
+class BroadcastComTemplate:
+    """Broadcast acompanhado do nome do template usado (para o histórico de disparos)."""
 
-    async def executar(self, *, tenant_id: UUID) -> list[Broadcast]:
-        return await self._broadcasts.listar(tenant_id=tenant_id)
+    broadcast: Broadcast
+    template_nome: str
+
+
+class ListarBroadcastsDaEscola:
+    """Histórico de disparos (mensagens em massa) da escola, com o nome do template.
+
+    Resolve os nomes dos templates em lote (um lookup por template distinto), evitando
+    N+1 ao montar a listagem.
+    """
+
+    def __init__(
+        self,
+        *,
+        broadcasts: BroadcastRepository,
+        templates: TemplateRepository | None = None,
+    ) -> None:
+        self._broadcasts = broadcasts
+        self._templates = templates
+
+    async def executar(self, *, tenant_id: UUID) -> list[BroadcastComTemplate]:
+        bs = await self._broadcasts.listar(tenant_id=tenant_id)
+        nomes: dict[UUID, str] = {}
+        if self._templates is not None:
+            for template_id in {b.template_id for b in bs}:
+                template = await self._templates.obter(
+                    tenant_id=tenant_id, template_id=template_id
+                )
+                nomes[template_id] = template.nome if template else ""
+        return [
+            BroadcastComTemplate(broadcast=b, template_nome=nomes.get(b.template_id, ""))
+            for b in bs
+        ]
+
+
+@dataclass
+class DestinatarioComNome:
+    contato: str  # telefone E.164
+    nome: str  # nome do responsável, se cadastrado
+    status: StatusEntrega
+    atualizado_em: datetime | None
+
+
+@dataclass
+class BroadcastDetalhado:
+    broadcast: Broadcast
+    template_nome: str
+    destinatarios: list[DestinatarioComNome]
+
+
+class ObterBroadcastDaEscola:
+    """Detalhe de um disparo: template, destinatários (com o nome do responsável) e status.
+
+    Escopado por ``tenant_id``: um broadcast de outra escola devolve ``None``.
+    """
+
+    def __init__(
+        self,
+        *,
+        broadcasts: BroadcastRepository,
+        contatos: ContatoRepository,
+        templates: TemplateRepository | None = None,
+    ) -> None:
+        self._broadcasts = broadcasts
+        self._contatos = contatos
+        self._templates = templates
+
+    async def executar(
+        self, *, tenant_id: UUID, broadcast_id: UUID
+    ) -> BroadcastDetalhado | None:
+        broadcast = await self._broadcasts.obter(broadcast_id)
+        if broadcast is None or broadcast.tenant_id != tenant_id:
+            return None
+
+        template_nome = ""
+        if self._templates is not None:
+            template = await self._templates.obter(
+                tenant_id=tenant_id, template_id=broadcast.template_id
+            )
+            template_nome = template.nome if template else ""
+
+        destinatarios: list[DestinatarioComNome] = []
+        for dest in broadcast.destinatarios:
+            contato = await self._contatos.por_telefone(
+                tenant_id=tenant_id, telefone=dest.contato
+            )
+            destinatarios.append(
+                DestinatarioComNome(
+                    contato=dest.contato,
+                    nome=contato.nome if contato else "",
+                    status=dest.status,
+                    atualizado_em=dest.atualizado_em,
+                )
+            )
+        return BroadcastDetalhado(
+            broadcast=broadcast, template_nome=template_nome, destinatarios=destinatarios
+        )

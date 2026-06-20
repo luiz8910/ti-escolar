@@ -12,11 +12,13 @@ from sqlalchemy.orm import selectinload
 
 from app.domain.entities import (
     Aluno,
+    AtorAuditoria,
     Contato,
     Grupo,
     MetricasUsoEscola,
     Papel,
     PlanoTenant,
+    RegistroAuditoria,
     ResumoEscola,
     Sala,
     StatusTenant,
@@ -25,6 +27,7 @@ from app.domain.entities import (
 )
 from app.infrastructure.db.models import (
     AlunoORM,
+    AuditoriaORM,
     BroadcastORM,
     ConhecimentoORM,
     ContatoORM,
@@ -250,6 +253,7 @@ class SqlTenantRepository:
         )
         await self._s.execute(delete(GrupoORM).where(GrupoORM.tenant_id == tenant_id))
         await self._s.execute(delete(ContatoORM).where(ContatoORM.tenant_id == tenant_id))
+        await self._s.execute(delete(AuditoriaORM).where(AuditoriaORM.tenant_id == tenant_id))
         await self._s.execute(delete(UsuarioORM).where(UsuarioORM.tenant_id == tenant_id))
         await self._s.delete(row)
         await self._s.flush()
@@ -287,6 +291,56 @@ class SqlUsuarioRepository:
             stmt = stmt.where(UsuarioORM.tenant_id == tenant_id)
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_usuario(r) for r in rows]
+
+
+def _to_auditoria(row: AuditoriaORM) -> RegistroAuditoria:
+    return RegistroAuditoria(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        ator=AtorAuditoria(row.ator),
+        ator_id=row.ator_id,
+        ator_nome=row.ator_nome,
+        acao=row.acao,
+        descricao=row.descricao,
+        metadados=row.metadados or {},
+        criado_em=row.criado_em,
+    )
+
+
+class SqlAuditLogRepository:
+    """Persistência do log de auditoria (ações de usuários e da LLM)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def registrar(self, registro: RegistroAuditoria) -> RegistroAuditoria:
+        self._s.add(
+            AuditoriaORM(
+                id=registro.id,
+                tenant_id=registro.tenant_id,
+                ator=registro.ator.value,
+                ator_id=registro.ator_id,
+                ator_nome=registro.ator_nome,
+                acao=registro.acao,
+                descricao=registro.descricao,
+                metadados=registro.metadados,
+                criado_em=registro.criado_em,
+            )
+        )
+        await self._s.flush()
+        return registro
+
+    async def listar(
+        self, *, tenant_id: uuid.UUID, limite: int = 200
+    ) -> list[RegistroAuditoria]:
+        stmt = (
+            select(AuditoriaORM)
+            .where(AuditoriaORM.tenant_id == tenant_id)
+            .order_by(AuditoriaORM.criado_em.desc())
+            .limit(limite)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_auditoria(r) for r in rows]
 
 
 class SqlGrupoRepository:

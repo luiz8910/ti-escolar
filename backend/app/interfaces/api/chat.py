@@ -13,6 +13,8 @@ from app.application.use_cases import (
 from app.config import get_settings
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import SqlConversaRepository
+from app.infrastructure.db.repositories_admin import SqlAuditLogRepository
+from app.infrastructure.db.repositories_conhecimento import SqlPromptTenantRepository
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
@@ -51,6 +53,8 @@ def _montar_uc(session) -> AtenderConversa:
         store=PgVectorStore(session),
         llm=criar_llm(settings),
         documentos=documentos,
+        prompts=SqlPromptTenantRepository(session),
+        auditoria=SqlAuditLogRepository(session),
     )
 
 

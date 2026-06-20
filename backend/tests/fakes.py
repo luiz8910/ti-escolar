@@ -235,6 +235,20 @@ class FakeTemplateRepo:
         return None
 
 
+class FakeAuditLogRepo:
+    def __init__(self) -> None:
+        self.registros: list = []
+
+    async def registrar(self, registro):
+        self.registros.append(registro)
+        return registro
+
+    async def listar(self, *, tenant_id, limite: int = 200):
+        registros = [r for r in self.registros if r.tenant_id == tenant_id]
+        registros.sort(key=lambda r: r.criado_em, reverse=True)
+        return registros[:limite]
+
+
 def fake_embedder() -> FakeEmbedder:
     # Dimensão pequena nos testes para velocidade.
     return FakeEmbedder(dimensao=64)

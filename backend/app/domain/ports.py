@@ -23,6 +23,7 @@ from app.domain.entities import (
     MessageQuota,
     MessageTemplate,
     PromptTenant,
+    RegistroAuditoria,
     RespostaLLM,
     ResultadoBusca,
     ResumoConversa,
@@ -214,6 +215,19 @@ class BroadcastRepository(Protocol):
 
         Retorna ``True`` se algum destinatário foi atualizado.
         """
+        ...
+
+
+@runtime_checkable
+class AuditLogRepository(Protocol):
+    """Registro e consulta do log de auditoria (ações de usuários e da LLM)."""
+
+    async def registrar(self, registro: RegistroAuditoria) -> RegistroAuditoria: ...
+
+    async def listar(
+        self, *, tenant_id: UUID, limite: int = 200
+    ) -> list[RegistroAuditoria]:
+        """Registros da escola, mais recentes primeiro."""
         ...
 
 

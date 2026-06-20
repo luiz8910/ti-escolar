@@ -20,6 +20,7 @@ from app.application.admin_use_cases import (
     CriarUsuario,
     EnviarBroadcastParaGrupo,
 )
+from app.application.auditoria_use_cases import ListarAuditoria, RegistrarAuditoria
 from app.application.use_cases import VerificarRecebimentoBroadcast
 from app.application.tenant_use_cases import (
     AtualizarEscola,
@@ -32,6 +33,7 @@ from app.application.tenant_use_cases import (
     ListarConversasDaEscola,
     ListarEscolas,
     NotificarLicencasAVencer,
+    ObterBroadcastDaEscola,
     ObterConversaDaEscola,
     ObterEscola,
     ObterFichaFinanceira,
@@ -39,22 +41,29 @@ from app.application.tenant_use_cases import (
     RemoverEscola,
 )
 from app.config import Settings
-from app.domain.entities import Papel, PlanoTenant, Tenant, Usuario
-from app.infrastructure.db.repositories import SqlBroadcastRepository, SqlConversaRepository
+from app.domain.entities import AtorAuditoria, Papel, PlanoTenant, Tenant, Usuario
+from app.infrastructure.db.repositories import (
+    SqlBroadcastRepository,
+    SqlConversaRepository,
+    SqlTemplateRepository,
+)
 from app.infrastructure.security import criar_token, decodificar_token
 from app.infrastructure.db.repositories_admin import (
+    SqlAuditLogRepository,
     SqlContatoRepository,
     SqlGrupoRepository,
     SqlTenantRepository,
     SqlUsuarioRepository,
 )
 from app.interfaces.deps import (
+    get_audit_repo,
     get_broadcast_repo,
     get_contato_repo,
     get_conversa_repo,
     get_enviar_para_grupo,
     get_grupo_repo,
     get_notificar_licencas,
+    get_session,
     get_settings_dep,
     get_tenant_repo,
     get_usuario_repo,
@@ -62,6 +71,7 @@ from app.interfaces.deps import (
 from app.interfaces.dto import (
     AvisoLicencaSaida,
     BloqueioEntrada,
+    BroadcastDetalheSaida,
     BroadcastResumoSaida,
     CancelamentoEntrada,
     ContatoEntrada,
@@ -69,6 +79,7 @@ from app.interfaces.dto import (
     ConversaDetalheSaida,
     ConversaResumoSaida,
     CriarUsuarioEntrada,
+    DestinatarioBroadcastSaida,
     EnvioGrupoEntrada,
     EnvioGrupoSaida,
     EscolaEntrada,
@@ -83,9 +94,11 @@ from app.interfaces.dto import (
     MensagemConversaSaida,
     MetricasUsoSaida,
     NaoEntregaSaida,
+    RegistroAuditoriaSaida,
     TokenSaida,
     UsuarioSaida,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -153,6 +166,27 @@ async def _exige_tenant_ativo(tenant_id: UUID, tenants: SqlTenantRepository) -> 
         )
 
 
+async def _auditar_usuario(
+    auditoria: SqlAuditLogRepository,
+    *,
+    usuario: Usuario,
+    acao: str,
+    tenant_id: UUID | None = None,
+    descricao: str = "",
+    metadados: dict | None = None,
+) -> None:
+    """Registra, na auditoria, uma ação feita por um usuário logado no painel."""
+    await RegistrarAuditoria(auditoria=auditoria).executar(
+        ator=AtorAuditoria.USUARIO,
+        acao=acao,
+        tenant_id=tenant_id if tenant_id is not None else usuario.tenant_id,
+        ator_id=str(usuario.id),
+        ator_nome=usuario.nome,
+        descricao=descricao,
+        metadados=metadados or {},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Autenticação e usuários
 # --------------------------------------------------------------------------- #
@@ -161,6 +195,7 @@ async def login(
     payload: LoginEntrada,
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
     tenants: SqlTenantRepository = Depends(get_tenant_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
     settings: Settings = Depends(get_settings_dep),
 ) -> TokenSaida:
     usuario = await AutenticarUsuario(usuarios=usuarios).executar(
@@ -178,6 +213,10 @@ async def login(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"{rotulo}: {escola.motivo_suspensao}",
             )
+
+    await _auditar_usuario(
+        auditoria, usuario=usuario, acao="login", descricao="Entrou no painel"
+    )
 
     expira_em = settings.jwt_expira_minutos * 60
     token = criar_token(
@@ -198,6 +237,7 @@ async def criar_usuario(
     payload: CriarUsuarioEntrada,
     criador: Usuario = Depends(usuario_autenticado),
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> UsuarioSaida:
     try:
         usuario = await CriarUsuario(usuarios=usuarios).executar(
@@ -212,6 +252,14 @@ async def criar_usuario(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=criador,
+        acao="usuario.criar",
+        tenant_id=usuario.tenant_id,
+        descricao=f"Criou o usuário {usuario.email} ({usuario.papel.value})",
+        metadados={"usuario_id": str(usuario.id), "papel": usuario.papel.value},
+    )
     return _usuario_saida(usuario)
 
 
@@ -243,10 +291,19 @@ async def criar_grupo(
     payload: GrupoEntrada,
     usuario: Usuario = Depends(usuario_autenticado),
     grupos: SqlGrupoRepository = Depends(get_grupo_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> GrupoSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
     grupo = await CriarGrupo(grupos=grupos).executar(
         tenant_id=payload.tenant_id, nome=payload.nome, descricao=payload.descricao
+    )
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="grupo.criar",
+        tenant_id=payload.tenant_id,
+        descricao=f"Criou o grupo '{grupo.nome}'",
+        metadados={"grupo_id": str(grupo.id)},
     )
     return _grupo_saida(grupo)
 
@@ -292,6 +349,7 @@ async def enviar_para_grupo(
     usuario: Usuario = Depends(usuario_autenticado),
     uc: EnviarBroadcastParaGrupo = Depends(get_enviar_para_grupo),
     tenants: SqlTenantRepository = Depends(get_tenant_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> EnvioGrupoSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
     await _exige_tenant_ativo(payload.tenant_id, tenants)
@@ -307,6 +365,20 @@ async def enviar_para_grupo(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
     b = resultado.broadcast
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="broadcast.grupo.enviar",
+        tenant_id=payload.tenant_id,
+        descricao=f"Disparou '{payload.titulo}' para um grupo ({resultado.total_contatos} contato(s))",
+        metadados={
+            "grupo_id": str(grupo_id),
+            "broadcast_id": str(b.broadcast_id),
+            "enviados": b.enviados,
+            "falhas": b.falhas,
+            "bloqueados_por_limite": b.bloqueados_por_limite,
+        },
+    )
     from app.interfaces.dto import BroadcastSaida
 
     return EnvioGrupoSaida(
@@ -694,21 +766,67 @@ async def listar_broadcasts(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
+    session: AsyncSession = Depends(get_session),
 ) -> list[BroadcastResumoSaida]:
     _exige_acesso_tenant(usuario, tenant_id)
-    bs = await ListarBroadcastsDaEscola(broadcasts=broadcasts).executar(tenant_id=tenant_id)
+    itens = await ListarBroadcastsDaEscola(
+        broadcasts=broadcasts, templates=SqlTemplateRepository(session)
+    ).executar(tenant_id=tenant_id)
     return [
         BroadcastResumoSaida(
-            id=b.id,
-            titulo=b.titulo,
-            status=b.status.value,
-            criado_em=b.criado_em,
-            agendado_para=b.agendado_para,
-            total_destinatarios=len(b.destinatarios),
-            por_status=dict(Counter(d.status.value for d in b.destinatarios)),
+            id=item.broadcast.id,
+            titulo=item.broadcast.titulo,
+            status=item.broadcast.status.value,
+            template_nome=item.template_nome,
+            criado_em=item.broadcast.criado_em,
+            agendado_para=item.broadcast.agendado_para,
+            total_destinatarios=len(item.broadcast.destinatarios),
+            por_status=dict(Counter(d.status.value for d in item.broadcast.destinatarios)),
         )
-        for b in bs
+        for item in itens
     ]
+
+
+@router.get(
+    "/escolas/{tenant_id}/broadcasts/{broadcast_id}", response_model=BroadcastDetalheSaida
+)
+async def obter_broadcast(
+    tenant_id: UUID,
+    broadcast_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
+    session: AsyncSession = Depends(get_session),
+) -> BroadcastDetalheSaida:
+    """Detalhe de um disparo: template, destinatários (com o nome do responsável) e status."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    detalhe = await ObterBroadcastDaEscola(
+        broadcasts=broadcasts, contatos=contatos, templates=SqlTemplateRepository(session)
+    ).executar(tenant_id=tenant_id, broadcast_id=broadcast_id)
+    if detalhe is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Disparo não encontrado"
+        )
+    b = detalhe.broadcast
+    return BroadcastDetalheSaida(
+        id=b.id,
+        titulo=b.titulo,
+        status=b.status.value,
+        template_nome=detalhe.template_nome,
+        criado_em=b.criado_em,
+        agendado_para=b.agendado_para,
+        total_destinatarios=len(detalhe.destinatarios),
+        por_status=dict(Counter(d.status.value for d in detalhe.destinatarios)),
+        destinatarios=[
+            DestinatarioBroadcastSaida(
+                contato=d.contato,
+                nome=d.nome,
+                status=d.status.value,
+                atualizado_em=d.atualizado_em,
+            )
+            for d in detalhe.destinatarios
+        ],
+    )
 
 
 @router.get(
@@ -741,4 +859,38 @@ async def listar_nao_entregues(
             atualizado_em=a.atualizado_em,
         )
         for a in avisos
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Auditoria de ações (usuários logados + LLM) da escola
+# --------------------------------------------------------------------------- #
+@router.get(
+    "/escolas/{tenant_id}/auditoria", response_model=list[RegistroAuditoriaSaida]
+)
+async def listar_auditoria(
+    tenant_id: UUID,
+    limite: int = 200,
+    usuario: Usuario = Depends(usuario_autenticado),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> list[RegistroAuditoriaSaida]:
+    """Log de auditoria da escola: ações de usuários logados e da LLM (mais recentes primeiro)."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    limite = max(1, min(limite, 500))
+    registros = await ListarAuditoria(auditoria=auditoria).executar(
+        tenant_id=tenant_id, limite=limite
+    )
+    return [
+        RegistroAuditoriaSaida(
+            id=r.id,
+            tenant_id=r.tenant_id,
+            ator=r.ator.value,
+            ator_id=r.ator_id,
+            ator_nome=r.ator_nome,
+            acao=r.acao,
+            descricao=r.descricao,
+            metadados=r.metadados,
+            criado_em=r.criado_em,
+        )
+        for r in registros
     ]

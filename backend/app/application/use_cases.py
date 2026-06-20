@@ -12,9 +12,11 @@ from uuid import UUID
 
 from app.application.prompts import montar_sistema, montar_sistema_agente
 from app.domain.entities import (
+    AtorAuditoria,
     Broadcast,
     Documento,
     FerramentaSpec,
+    RegistroAuditoria,
     ResultadoFerramenta,
     StatusBroadcast,
     StatusEntrega,
@@ -24,6 +26,7 @@ from app.domain.entities import (
     TurnoConversa,
 )
 from app.domain.ports import (
+    AuditLogRepository,
     BroadcastRepository,
     ContatoRepository,
     ConversaRepository,
@@ -267,6 +270,7 @@ class AtenderConversa:
         llm: LLMProvider,
         documentos: RecuperarEEnviarDocumento,
         prompts: PromptTenantRepository | None = None,
+        auditoria: AuditLogRepository | None = None,
         k: int = 4,
         max_iteracoes: int = 4,
     ) -> None:
@@ -276,6 +280,7 @@ class AtenderConversa:
         self._llm = llm
         self._documentos = documentos
         self._prompts = prompts
+        self._auditoria = auditoria
         self._k = k
         self._max_iteracoes = max_iteracoes
 
@@ -327,7 +332,48 @@ class AtenderConversa:
         await self._conversas.adicionar_mensagem(
             conversa_id=conversa.id, autor="bot", texto=texto_final, fontes=fontes
         )
+        await self._auditar_resposta(
+            tenant_id=tenant_id, contato=contato, pergunta=texto, resposta=texto_final,
+            fontes=fontes, docs=docs,
+        )
         return RespostaMensagem(texto=texto_final, fontes=fontes, documentos=docs)
+
+    async def _auditar_resposta(
+        self,
+        *,
+        tenant_id: UUID,
+        contato: str,
+        pergunta: str,
+        resposta: str,
+        fontes: list[str],
+        docs: list[Documento],
+    ) -> None:
+        """Registra na auditoria que a LLM atendeu uma conversa (rastreabilidade)."""
+        if self._auditoria is None:
+            return
+
+        def _resumir(texto: str, limite: int = 280) -> str:
+            texto = " ".join(texto.split())
+            return texto if len(texto) <= limite else texto[: limite - 1] + "…"
+
+        registro = RegistroAuditoria(
+            ator=AtorAuditoria.LLM,
+            acao="llm.resposta",
+            tenant_id=tenant_id,
+            ator_id=contato,
+            ator_nome="Assistente",
+            descricao=f"Atendeu a conversa de {contato}",
+            metadados={
+                "pergunta": _resumir(pergunta),
+                "resposta": _resumir(resposta),
+                "fontes": fontes,
+                "documentos": [d.nome for d in docs],
+            },
+        )
+        try:
+            await self._auditoria.registrar(registro)
+        except Exception:  # noqa: BLE001 — auditar não pode quebrar o atendimento
+            pass
 
     async def _executar_ferramenta(
         self,
