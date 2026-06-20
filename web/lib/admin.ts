@@ -47,13 +47,49 @@ export interface Quota {
 }
 
 export interface Licenca {
-  status: "ativo" | "bloqueado";
+  status: "ativo" | "bloqueado" | "cancelado";
   motivo_bloqueio: string;
   bloqueado_em: string | null;
   plano: "mensal" | "anual";
   licenca_expira_em: string | null;
   dias_para_expirar: number | null;
   licenca_expirada: boolean;
+  valor_mensal_centavos: number;
+  valor_anual_centavos: number;
+  cancelado_em: string | null;
+  motivo_cancelamento: string;
+}
+
+export interface MetricasUso {
+  total_usuarios_ativos: number;
+  total_contatos: number;
+  total_alunos: number;
+  total_conversas: number;
+  total_broadcasts: number;
+}
+
+export interface FichaFinanceira {
+  tenant_id: string;
+  nome: string;
+  slug: string;
+  criado_em: string;
+  dias_de_casa: number;
+  cancelado_em: string | null;
+  motivo_cancelamento: string;
+  status: "ativo" | "bloqueado" | "cancelado";
+  plano: "mensal" | "anual";
+  licenca_expira_em: string | null;
+  dias_para_expirar: number | null;
+  status_pagamento: "em_dia" | "a_vencer" | "vencido" | "inadimplente" | "cancelado";
+  valor_mensal_centavos: number;
+  valor_anual_centavos: number;
+  mrr_centavos: number;
+  arr_centavos: number;
+  receita_acumulada_centavos: number;
+  meses_ativos: number;
+  uso: MetricasUso;
+  limite_diario_meta: number;
+  health_score: number;
 }
 
 export interface Escola {
@@ -362,17 +398,51 @@ export async function desbloquearEscola(id: string): Promise<Escola> {
   return resp.json();
 }
 
+export async function cancelarEscola(id: string, motivo: string): Promise<Escola> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/cancelar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ motivo }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao cancelar escola`);
+  return resp.json();
+}
+
+export async function reativarEscola(id: string): Promise<Escola> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/reativar`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao reativar escola`);
+  return resp.json();
+}
+
 export async function definirLicenca(
   id: string,
   plano: "mensal" | "anual",
-  licencaExpiraEm: string | null
+  licencaExpiraEm: string | null,
+  valorMensalCentavos?: number | null,
+  valorAnualCentavos?: number | null
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/licenca`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ plano, licenca_expira_em: licencaExpiraEm }),
+    body: JSON.stringify({
+      plano,
+      licenca_expira_em: licencaExpiraEm,
+      valor_mensal_centavos: valorMensalCentavos ?? null,
+      valor_anual_centavos: valorAnualCentavos ?? null,
+    }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao definir licença`);
+  return resp.json();
+}
+
+export async function obterFichaFinanceira(id: string): Promise<FichaFinanceira> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}/ficha-financeira`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar ficha financeira`);
   return resp.json();
 }
 

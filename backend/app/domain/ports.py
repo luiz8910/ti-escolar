@@ -19,6 +19,7 @@ from app.domain.entities import (
     FonteConhecimento,
     Grupo,
     Mensagem,
+    MetricasUsoEscola,
     MessageQuota,
     MessageTemplate,
     PromptTenant,
@@ -162,6 +163,10 @@ class TenantRepository(Protocol):
     async def listar(self) -> list[Tenant]: ...
 
     async def listar_resumos(self) -> list[ResumoEscola]: ...
+
+    async def metricas_uso(self, tenant_id: UUID) -> MetricasUsoEscola:
+        """Contadores de uso da escola (usuários ativos, contatos, alunos, etc.)."""
+        ...
 
     async def atualizar(self, tenant: Tenant) -> Tenant: ...
 

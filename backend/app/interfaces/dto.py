@@ -137,13 +137,18 @@ class EscolaEntrada(BaseModel):
 class LicencaSaida(BaseModel):
     """Estado de licenciamento/cobrança/bloqueio de uma escola."""
 
-    status: str  # "ativo" | "bloqueado"
+    status: str  # "ativo" | "bloqueado" | "cancelado"
     motivo_bloqueio: str = ""
     bloqueado_em: datetime | None = None
     plano: str  # "mensal" | "anual"
     licenca_expira_em: datetime | None = None
     dias_para_expirar: int | None = None
     licenca_expirada: bool = False
+    # Cobrança e cancelamento (churn).
+    valor_mensal_centavos: int = 0
+    valor_anual_centavos: int = 0
+    cancelado_em: datetime | None = None
+    motivo_cancelamento: str = ""
 
 
 class EscolaSaida(BaseModel):
@@ -169,9 +174,16 @@ class BloqueioEntrada(BaseModel):
     motivo: str = Field(..., examples=["Inadimplência: mensalidade de junho/2026 em aberto."])
 
 
+class CancelamentoEntrada(BaseModel):
+    motivo: str = Field(..., examples=["Escola encerrou o contrato em junho/2026."])
+
+
 class LicencaEntrada(BaseModel):
     plano: str = Field("mensal", examples=["mensal", "anual"])
     licenca_expira_em: datetime | None = None
+    # Preços por ciclo (centavos). None preserva o valor já cadastrado.
+    valor_mensal_centavos: int | None = None
+    valor_anual_centavos: int | None = None
 
 
 class AvisoLicencaSaida(BaseModel):
@@ -179,6 +191,43 @@ class AvisoLicencaSaida(BaseModel):
     nome: str
     dias_para_expirar: int
     destinatarios: list[str] = []
+
+
+class MetricasUsoSaida(BaseModel):
+    total_usuarios_ativos: int = 0
+    total_contatos: int = 0
+    total_alunos: int = 0
+    total_conversas: int = 0
+    total_broadcasts: int = 0
+
+
+class FichaFinanceiraSaida(BaseModel):
+    """Ficha financeira/histórico de uma escola (super admin)."""
+
+    tenant_id: UUID
+    nome: str
+    slug: str
+    # Ciclo de vida.
+    criado_em: datetime  # data de início (quando entrou)
+    dias_de_casa: int
+    cancelado_em: datetime | None = None
+    motivo_cancelamento: str = ""
+    # Licenciamento/cobrança.
+    status: str
+    plano: str
+    licenca_expira_em: datetime | None = None  # próxima renovação
+    dias_para_expirar: int | None = None
+    status_pagamento: str
+    valor_mensal_centavos: int
+    valor_anual_centavos: int
+    mrr_centavos: int
+    arr_centavos: int
+    receita_acumulada_centavos: int  # LTV estimado
+    meses_ativos: int
+    # Uso e saúde.
+    uso: MetricasUsoSaida
+    limite_diario_meta: int
+    health_score: int
 
 
 # --------------------------------------------------------------------------- #

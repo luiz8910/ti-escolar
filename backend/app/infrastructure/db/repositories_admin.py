@@ -14,6 +14,7 @@ from app.domain.entities import (
     Aluno,
     Contato,
     Grupo,
+    MetricasUsoEscola,
     Papel,
     PlanoTenant,
     ResumoEscola,
@@ -58,6 +59,10 @@ def _to_tenant(row: TenantORM) -> Tenant:
         bloqueado_em=row.bloqueado_em,
         plano=PlanoTenant(row.plano),
         licenca_expira_em=row.licenca_expira_em,
+        valor_mensal_centavos=row.valor_mensal_centavos,
+        valor_anual_centavos=row.valor_anual_centavos,
+        cancelado_em=row.cancelado_em,
+        motivo_cancelamento=row.motivo_cancelamento,
     )
 
 
@@ -106,6 +111,10 @@ class SqlTenantRepository:
                 bloqueado_em=tenant.bloqueado_em,
                 plano=tenant.plano.value,
                 licenca_expira_em=tenant.licenca_expira_em,
+                valor_mensal_centavos=tenant.valor_mensal_centavos,
+                valor_anual_centavos=tenant.valor_anual_centavos,
+                cancelado_em=tenant.cancelado_em,
+                motivo_cancelamento=tenant.motivo_cancelamento,
             )
         )
         try:
@@ -149,6 +158,37 @@ class SqlTenantRepository:
             for t in tenants
         ]
 
+    async def metricas_uso(self, tenant_id: uuid.UUID) -> MetricasUsoEscola:
+        async def _contar(stmt) -> int:
+            return (await self._s.execute(stmt)).scalar_one() or 0
+
+        usuarios_ativos = await _contar(
+            select(func.count())
+            .select_from(UsuarioORM)
+            .where(UsuarioORM.tenant_id == tenant_id, UsuarioORM.ativo.is_(True))
+        )
+        contatos = await _contar(
+            select(func.count()).select_from(ContatoORM).where(ContatoORM.tenant_id == tenant_id)
+        )
+        alunos = await _contar(
+            select(func.count()).select_from(AlunoORM).where(AlunoORM.tenant_id == tenant_id)
+        )
+        conversas = await _contar(
+            select(func.count()).select_from(ConversaORM).where(ConversaORM.tenant_id == tenant_id)
+        )
+        broadcasts = await _contar(
+            select(func.count())
+            .select_from(BroadcastORM)
+            .where(BroadcastORM.tenant_id == tenant_id)
+        )
+        return MetricasUsoEscola(
+            total_usuarios_ativos=usuarios_ativos,
+            total_contatos=contatos,
+            total_alunos=alunos,
+            total_conversas=conversas,
+            total_broadcasts=broadcasts,
+        )
+
     async def atualizar(self, tenant: Tenant) -> Tenant:
         row = await self._s.get(TenantORM, tenant.id)
         if row is None:
@@ -160,6 +200,10 @@ class SqlTenantRepository:
         row.bloqueado_em = tenant.bloqueado_em
         row.plano = tenant.plano.value
         row.licenca_expira_em = tenant.licenca_expira_em
+        row.valor_mensal_centavos = tenant.valor_mensal_centavos
+        row.valor_anual_centavos = tenant.valor_anual_centavos
+        row.cancelado_em = tenant.cancelado_em
+        row.motivo_cancelamento = tenant.motivo_cancelamento
         try:
             await self._s.flush()
         except IntegrityError as e:

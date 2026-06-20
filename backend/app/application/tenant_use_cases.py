@@ -17,6 +17,7 @@ from uuid import UUID
 from app.domain.entities import (
     Broadcast,
     Conversa,
+    FichaFinanceiraEscola,
     Mensagem,
     PlanoTenant,
     ResumoConversa,
@@ -164,8 +165,49 @@ class DesbloquearEscola:
         return await self._tenants.atualizar(escola)
 
 
+class CancelarEscola:
+    """Cancela (churn) a escola: ela deixa a plataforma e perde acesso. Só super admin.
+
+    Diferente do bloqueio (suspensão reversível), o cancelamento marca o fim do ciclo de
+    vida e registra ``cancelado_em``/``motivo_cancelamento`` para a ficha/histórico.
+    """
+
+    def __init__(self, *, tenants: TenantRepository) -> None:
+        self._tenants = tenants
+
+    async def executar(self, *, criador: Usuario, tenant_id: UUID, motivo: str) -> Tenant:
+        _exige_super_admin(criador)
+        motivo = motivo.strip()
+        if not motivo:
+            raise ValueError("O motivo do cancelamento é obrigatório.")
+        escola = await _obter_existente(self._tenants, tenant_id)
+        escola.status = StatusTenant.CANCELADO
+        escola.motivo_cancelamento = motivo
+        escola.cancelado_em = _now()
+        return await self._tenants.atualizar(escola)
+
+
+class ReativarEscola:
+    """Reverte um cancelamento, reativando a escola. Só super admin."""
+
+    def __init__(self, *, tenants: TenantRepository) -> None:
+        self._tenants = tenants
+
+    async def executar(self, *, criador: Usuario, tenant_id: UUID) -> Tenant:
+        _exige_super_admin(criador)
+        escola = await _obter_existente(self._tenants, tenant_id)
+        escola.status = StatusTenant.ATIVO
+        escola.motivo_cancelamento = ""
+        escola.cancelado_em = None
+        return await self._tenants.atualizar(escola)
+
+
 class DefinirLicenca:
-    """Define o plano de cobrança e a data de expiração da licença. Só super admin."""
+    """Define plano, expiração e (opcionalmente) os preços de cobrança. Só super admin.
+
+    Os preços (``valor_*_centavos``) só são alterados quando informados, de modo que ajustar
+    apenas o plano/expiração preserva a tabela de preços já cadastrada.
+    """
 
     def __init__(self, *, tenants: TenantRepository) -> None:
         self._tenants = tenants
@@ -177,12 +219,41 @@ class DefinirLicenca:
         tenant_id: UUID,
         plano: PlanoTenant,
         licenca_expira_em: datetime | None,
+        valor_mensal_centavos: int | None = None,
+        valor_anual_centavos: int | None = None,
     ) -> Tenant:
         _exige_super_admin(criador)
         escola = await _obter_existente(self._tenants, tenant_id)
         escola.plano = plano
         escola.licenca_expira_em = licenca_expira_em
+        if valor_mensal_centavos is not None:
+            if valor_mensal_centavos < 0:
+                raise ValueError("O valor mensal não pode ser negativo.")
+            escola.valor_mensal_centavos = valor_mensal_centavos
+        if valor_anual_centavos is not None:
+            if valor_anual_centavos < 0:
+                raise ValueError("O valor anual não pode ser negativo.")
+            escola.valor_anual_centavos = valor_anual_centavos
         return await self._tenants.atualizar(escola)
+
+
+class ObterFichaFinanceira:
+    """Monta a ficha financeira/histórico de uma escola (cobrança + uso). Só super admin."""
+
+    def __init__(self, *, tenants: TenantRepository) -> None:
+        self._tenants = tenants
+
+    async def executar(
+        self, *, solicitante: Usuario, tenant_id: UUID, limite_diario_meta: int
+    ) -> FichaFinanceiraEscola | None:
+        _exige_super_admin(solicitante)
+        escola = await self._tenants.obter(tenant_id)
+        if escola is None:
+            return None
+        uso = await self._tenants.metricas_uso(tenant_id)
+        return FichaFinanceiraEscola(
+            tenant=escola, uso=uso, limite_diario_meta=limite_diario_meta
+        )
 
 
 @dataclass

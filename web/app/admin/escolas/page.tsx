@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   atualizarEscola,
   bloquearEscola,
+  cancelarEscola,
   criarEscola,
   definirLicenca,
   desbloquearEscola,
@@ -14,6 +15,7 @@ import {
   listarEscolas,
   logout,
   notificarVencimento,
+  reativarEscola,
   removerEscola,
   Usuario,
 } from "@/lib/admin";
@@ -200,10 +202,12 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
   const [editando, setEditando] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
   const [bloqueando, setBloqueando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
   const [editandoLicenca, setEditandoLicenca] = useState(false);
   const [nome, setNome] = useState(escola.nome);
   const [slug, setSlug] = useState(escola.slug);
   const bloqueada = escola.licenca.status === "bloqueado";
+  const cancelada = escola.licenca.status === "cancelado";
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
@@ -235,6 +239,16 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
       toast({ tone: "success", title: "Escola desbloqueada." });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao desbloquear." });
+    }
+  }
+
+  async function reativar() {
+    try {
+      await reativarEscola(escola.id);
+      await onMudou();
+      toast({ tone: "success", title: "Escola reativada." });
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao reativar." });
     }
   }
 
@@ -283,14 +297,23 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
         <Button variant="secondary" size="sm" onClick={() => setEditandoLicenca(true)}>
           Licença
         </Button>
-        {bloqueada ? (
+        {cancelada ? (
+          <Button variant="secondary" size="sm" onClick={reativar}>
+            Reativar
+          </Button>
+        ) : bloqueada ? (
           <Button variant="secondary" size="sm" onClick={desbloquear}>
             Desbloquear
           </Button>
         ) : (
-          <Button variant="secondary" size="sm" onClick={() => setBloqueando(true)}>
-            Bloquear
-          </Button>
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setBloqueando(true)}>
+              Bloquear
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setCancelando(true)}>
+              Cancelar
+            </Button>
+          </>
         )}
         <Button variant="danger" size="sm" onClick={() => setExcluindo(true)}>
           Excluir
@@ -345,6 +368,13 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
         onMudou={onMudou}
       />
 
+      <CancelarModal
+        escola={escola}
+        open={cancelando}
+        onClose={() => setCancelando(false)}
+        onMudou={onMudou}
+      />
+
       <LicencaModal
         escola={escola}
         open={editandoLicenca}
@@ -358,6 +388,18 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
 // Converte ISO (com hora) -> "YYYY-MM-DD" para o input[type=date]; "" se vazio.
 function paraInputData(iso: string | null): string {
   return iso ? iso.slice(0, 10) : "";
+}
+
+// Centavos -> string em reais para o input (ex.: 29900 -> "299.00"); "" se zero.
+function centavosParaInput(centavos: number): string {
+  return centavos > 0 ? (centavos / 100).toFixed(2) : "";
+}
+
+// String em reais do input -> centavos inteiros (ex.: "299,90" -> 29990).
+function inputParaCentavos(valor: string): number {
+  const limpo = valor.replace(",", ".").trim();
+  if (!limpo) return 0;
+  return Math.round(parseFloat(limpo) * 100) || 0;
 }
 
 function BloquearModal({
@@ -427,6 +469,74 @@ function BloquearModal({
   );
 }
 
+function CancelarModal({
+  escola,
+  open,
+  onClose,
+  onMudou,
+}: {
+  escola: Escola;
+  open: boolean;
+  onClose: () => void;
+  onMudou: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [motivo, setMotivo] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  async function confirmar() {
+    if (!motivo.trim()) {
+      toast({ tone: "danger", title: "Informe o motivo do cancelamento." });
+      return;
+    }
+    setSalvando(true);
+    try {
+      await cancelarEscola(escola.id, motivo.trim());
+      setMotivo("");
+      onClose();
+      await onMudou();
+      toast({ tone: "success", title: "Escola cancelada." });
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao cancelar." });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Cancelar "${escola.nome}"`}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Voltar
+          </Button>
+          <Button variant="danger" size="sm" loading={salvando} onClick={confirmar}>
+            Cancelar escola
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-n-500">
+        O cancelamento registra a <strong>saída</strong> da escola da plataforma (churn): ela
+        perde acesso ao painel e aos disparos, e a data/motivo ficam na ficha financeira. É
+        reversível por &quot;Reativar&quot;.
+      </p>
+      <Field label="Motivo do cancelamento">
+        <Textarea
+          autoFocus
+          rows={3}
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value)}
+          placeholder="Ex.: Escola encerrou o contrato em junho/2026."
+        />
+      </Field>
+    </Modal>
+  );
+}
+
 function LicencaModal({
   escola,
   open,
@@ -441,13 +551,25 @@ function LicencaModal({
   const toast = useToast();
   const [plano, setPlano] = useState<"mensal" | "anual">(escola.licenca.plano);
   const [expira, setExpira] = useState(paraInputData(escola.licenca.licenca_expira_em));
+  const [valorMensal, setValorMensal] = useState(
+    centavosParaInput(escola.licenca.valor_mensal_centavos)
+  );
+  const [valorAnual, setValorAnual] = useState(
+    centavosParaInput(escola.licenca.valor_anual_centavos)
+  );
   const [salvando, setSalvando] = useState(false);
 
   async function salvar() {
     setSalvando(true);
     try {
       // input[type=date] devolve "YYYY-MM-DD"; envia null se vazio.
-      await definirLicenca(escola.id, plano, expira ? `${expira}T00:00:00Z` : null);
+      await definirLicenca(
+        escola.id,
+        plano,
+        expira ? `${expira}T00:00:00Z` : null,
+        inputParaCentavos(valorMensal),
+        inputParaCentavos(valorAnual)
+      );
       onClose();
       await onMudou();
       toast({ tone: "success", title: "Licença atualizada." });
@@ -484,9 +606,31 @@ function LicencaModal({
         <Field label="Expira em">
           <Input type="date" value={expira} onChange={(e) => setExpira(e.target.value)} />
         </Field>
+        <div className="flex flex-wrap gap-3">
+          <div className="min-w-[140px] flex-1">
+            <Field label="Valor mensal (R$)">
+              <Input
+                inputMode="decimal"
+                value={valorMensal}
+                onChange={(e) => setValorMensal(e.target.value)}
+                placeholder="Ex.: 299.00"
+              />
+            </Field>
+          </div>
+          <div className="min-w-[140px] flex-1">
+            <Field label="Valor anual (R$)">
+              <Input
+                inputMode="decimal"
+                value={valorAnual}
+                onChange={(e) => setValorAnual(e.target.value)}
+                placeholder="Ex.: 2990.00"
+              />
+            </Field>
+          </div>
+        </div>
         <p className="text-xs text-n-400">
-          No plano anual, a plataforma avisa os admins por e-mail quando a licença está perto de
-          vencer.
+          Os valores alimentam a ficha financeira (MRR/ARR e receita acumulada). No plano anual, a
+          plataforma avisa os admins por e-mail quando a licença está perto de vencer.
         </p>
       </div>
     </Modal>

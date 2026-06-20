@@ -7,12 +7,14 @@ import {
   ConversaDetalhe,
   ConversaResumo,
   Escola,
+  FichaFinanceira,
   getSessao,
   listarBroadcasts,
   listarConversas,
   logout,
   obterConversa,
   obterEscola,
+  obterFichaFinanceira,
   Usuario,
 } from "@/lib/admin";
 
@@ -24,6 +26,11 @@ import { useToast } from "@/components/ui/Toast";
 import { cn } from "@/components/ui/cn";
 import { LicencaBadge } from "@/components/admin/LicencaBadge";
 import { ChatBubbleIcon, BellIcon } from "@/components/ui/icons";
+
+// Centavos -> "R$ 1.234,56".
+function formatarMoeda(centavos: number): string {
+  return (centavos / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 
 type Aba = "conversas" | "broadcasts";
 
@@ -46,18 +53,21 @@ export default function EscolaDetalhePage() {
 
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [escola, setEscola] = useState<Escola | null>(null);
+  const [ficha, setFicha] = useState<FichaFinanceira | null>(null);
   const [aba, setAba] = useState<Aba>("conversas");
   const [conversas, setConversas] = useState<ConversaResumo[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastResumo[]>([]);
   const [carregando, setCarregando] = useState(true);
 
   const recarregar = useCallback(async () => {
-    const [e, cs, bs] = await Promise.all([
+    const [e, f, cs, bs] = await Promise.all([
       obterEscola(tenantId),
+      obterFichaFinanceira(tenantId),
       listarConversas(tenantId),
       listarBroadcasts(tenantId),
     ]);
     setEscola(e);
+    setFicha(f);
     setConversas(cs);
     setBroadcasts(bs);
   }, [tenantId]);
@@ -96,6 +106,8 @@ export default function EscolaDetalhePage() {
     >
       <div className="flex flex-col gap-[18px]">
         {escola && <LicencaInfo escola={escola} />}
+
+        {ficha && <FichaFinanceiraCard ficha={ficha} />}
 
         {/* Abas segmentadas */}
         <div className="inline-flex w-fit gap-1 rounded-lg border border-n-200 bg-white p-1 shadow-sm">
@@ -137,6 +149,111 @@ function LicencaInfo({ escola }: { escola: Escola }) {
       {l.status === "bloqueado" && l.motivo_bloqueio && (
         <p className="text-xs text-danger">Motivo do bloqueio: {l.motivo_bloqueio}</p>
       )}
+      {l.status === "cancelado" && l.motivo_cancelamento && (
+        <p className="text-xs text-n-500">
+          Cancelada {l.cancelado_em ? `em ${formatar(l.cancelado_em)}` : ""} ·{" "}
+          {l.motivo_cancelamento}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+const ROTULO_PAGAMENTO: Record<string, string> = {
+  em_dia: "Em dia",
+  a_vencer: "A vencer",
+  vencido: "Vencido",
+  inadimplente: "Inadimplente",
+  cancelado: "Cancelado",
+};
+
+const TONE_PAGAMENTO: Record<string, "neutral" | "brand" | "success" | "warning" | "danger"> = {
+  em_dia: "success",
+  a_vencer: "warning",
+  vencido: "danger",
+  inadimplente: "danger",
+  cancelado: "neutral",
+};
+
+function Metrica({ rotulo, valor }: { rotulo: string; valor: string | number }) {
+  return (
+    <div className="rounded-[10px] border border-n-100 bg-n-50/60 px-3 py-2.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-n-400">{rotulo}</p>
+      <p className="mt-0.5 text-sm font-bold text-n-900">{valor}</p>
+    </div>
+  );
+}
+
+function FichaFinanceiraCard({ ficha }: { ficha: FichaFinanceira }) {
+  const corSaude =
+    ficha.health_score >= 70
+      ? "text-success"
+      : ficha.health_score >= 40
+        ? "text-warning"
+        : "text-danger";
+  const cota =
+    ficha.limite_diario_meta < 0
+      ? "ilimitada"
+      : `${ficha.limite_diario_meta.toLocaleString("pt-BR")}/dia`;
+
+  return (
+    <Card>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-bold text-n-900">Ficha financeira</h2>
+        <div className="flex items-center gap-2">
+          <Badge tone={TONE_PAGAMENTO[ficha.status_pagamento] ?? "neutral"}>
+            {ROTULO_PAGAMENTO[ficha.status_pagamento] ?? ficha.status_pagamento}
+          </Badge>
+          <span className={cn("text-xs font-bold", corSaude)} title="Health score (0–100)">
+            Saúde {ficha.health_score}
+          </span>
+        </div>
+      </div>
+
+      {/* Ciclo de vida e cobrança */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+        <Metrica
+          rotulo="Início"
+          valor={`${formatar(ficha.criado_em)} (${ficha.dias_de_casa}d)`}
+        />
+        <Metrica rotulo="Plano" valor={ficha.plano === "anual" ? "Anual" : "Mensal"} />
+        <Metrica
+          rotulo="Próxima renovação"
+          valor={ficha.licenca_expira_em ? formatar(ficha.licenca_expira_em) : "—"}
+        />
+        <Metrica rotulo="Meses ativos" valor={ficha.meses_ativos} />
+        <Metrica rotulo="Valor mensal" valor={formatarMoeda(ficha.valor_mensal_centavos)} />
+        <Metrica rotulo="Valor anual" valor={formatarMoeda(ficha.valor_anual_centavos)} />
+        <Metrica rotulo="MRR" valor={formatarMoeda(ficha.mrr_centavos)} />
+        <Metrica rotulo="ARR" valor={formatarMoeda(ficha.arr_centavos)} />
+        <Metrica
+          rotulo="Receita acumulada (LTV est.)"
+          valor={formatarMoeda(ficha.receita_acumulada_centavos)}
+        />
+        <Metrica rotulo="Cota de envio (Meta)" valor={cota} />
+      </div>
+
+      {ficha.cancelado_em && (
+        <p className="mt-3 text-xs text-n-500">
+          <span className="font-semibold text-n-700">Cancelada</span> em{" "}
+          {formatar(ficha.cancelado_em)}
+          {ficha.motivo_cancelamento ? ` · ${ficha.motivo_cancelamento}` : ""}
+        </p>
+      )}
+
+      {/* Uso */}
+      <div className="mt-4 border-t border-n-100 pt-3">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-n-400">
+          Uso da plataforma
+        </p>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+          <Metrica rotulo="Usuários ativos" valor={ficha.uso.total_usuarios_ativos} />
+          <Metrica rotulo="Contatos" valor={ficha.uso.total_contatos} />
+          <Metrica rotulo="Alunos" valor={ficha.uso.total_alunos} />
+          <Metrica rotulo="Conversas" valor={ficha.uso.total_conversas} />
+          <Metrica rotulo="Mensagens em massa" valor={ficha.uso.total_broadcasts} />
+        </div>
+      </div>
     </Card>
   );
 }

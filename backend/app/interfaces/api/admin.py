@@ -24,6 +24,7 @@ from app.application.use_cases import VerificarRecebimentoBroadcast
 from app.application.tenant_use_cases import (
     AtualizarEscola,
     BloquearEscola,
+    CancelarEscola,
     CriarEscola,
     DefinirLicenca,
     DesbloquearEscola,
@@ -33,6 +34,8 @@ from app.application.tenant_use_cases import (
     NotificarLicencasAVencer,
     ObterConversaDaEscola,
     ObterEscola,
+    ObterFichaFinanceira,
+    ReativarEscola,
     RemoverEscola,
 )
 from app.config import Settings
@@ -60,6 +63,7 @@ from app.interfaces.dto import (
     AvisoLicencaSaida,
     BloqueioEntrada,
     BroadcastResumoSaida,
+    CancelamentoEntrada,
     ContatoEntrada,
     ContatoSaida,
     ConversaDetalheSaida,
@@ -70,12 +74,14 @@ from app.interfaces.dto import (
     EscolaEntrada,
     EscolaResumoSaida,
     EscolaSaida,
+    FichaFinanceiraSaida,
     GrupoEntrada,
     GrupoSaida,
     LicencaEntrada,
     LicencaSaida,
     LoginEntrada,
     MensagemConversaSaida,
+    MetricasUsoSaida,
     NaoEntregaSaida,
     TokenSaida,
     UsuarioSaida,
@@ -137,12 +143,13 @@ def _exige_super_admin(usuario: Usuario) -> None:
 
 
 async def _exige_tenant_ativo(tenant_id: UUID, tenants: SqlTenantRepository) -> None:
-    """Recusa operações (disparos) de uma escola bloqueada."""
+    """Recusa operações (disparos) de uma escola bloqueada ou cancelada."""
     escola = await tenants.obter(tenant_id)
-    if escola is not None and escola.bloqueado:
+    if escola is not None and escola.acesso_suspenso:
+        rotulo = "Escola cancelada" if escola.cancelado else "Escola bloqueada"
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Escola bloqueada: {escola.motivo_bloqueio}",
+            detail=f"{rotulo}: {escola.motivo_suspensao}",
         )
 
 
@@ -162,13 +169,14 @@ async def login(
     if usuario is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
 
-    # Admin de escola bloqueada não acessa o painel (o super admin continua entrando).
+    # Admin de escola bloqueada/cancelada não acessa o painel (o super admin segue entrando).
     if not usuario.eh_super_admin and usuario.tenant_id is not None:
         escola = await tenants.obter(usuario.tenant_id)
-        if escola is not None and escola.bloqueado:
+        if escola is not None and escola.acesso_suspenso:
+            rotulo = "Escola cancelada" if escola.cancelado else "Escola bloqueada"
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Escola bloqueada: {escola.motivo_bloqueio}",
+                detail=f"{rotulo}: {escola.motivo_suspensao}",
             )
 
     expira_em = settings.jwt_expira_minutos * 60
@@ -327,6 +335,10 @@ def _licenca_saida(t: Tenant) -> LicencaSaida:
         licenca_expira_em=t.licenca_expira_em,
         dias_para_expirar=t.dias_para_expirar,
         licenca_expirada=t.licenca_expirada,
+        valor_mensal_centavos=t.valor_mensal_centavos,
+        valor_anual_centavos=t.valor_anual_centavos,
+        cancelado_em=t.cancelado_em,
+        motivo_cancelamento=t.motivo_cancelamento,
     )
 
 
@@ -476,6 +488,48 @@ async def desbloquear_escola(
     return _escola_saida(escola)
 
 
+@router.post("/escolas/{tenant_id}/cancelar", response_model=EscolaSaida)
+async def cancelar_escola(
+    tenant_id: UUID,
+    payload: CancelamentoEntrada,
+    criador: Usuario = Depends(usuario_autenticado),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+) -> EscolaSaida:
+    """Cancela (churn) a escola: registra a saída e suspende o acesso."""
+    try:
+        escola = await CancelarEscola(tenants=tenants).executar(
+            criador=criador, tenant_id=tenant_id, motivo=payload.motivo
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        codigo = (
+            status.HTTP_404_NOT_FOUND
+            if "não encontrada" in str(e)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=codigo, detail=str(e)) from e
+    return _escola_saida(escola)
+
+
+@router.post("/escolas/{tenant_id}/reativar", response_model=EscolaSaida)
+async def reativar_escola(
+    tenant_id: UUID,
+    criador: Usuario = Depends(usuario_autenticado),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+) -> EscolaSaida:
+    """Reverte um cancelamento, reativando a escola."""
+    try:
+        escola = await ReativarEscola(tenants=tenants).executar(
+            criador=criador, tenant_id=tenant_id
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _escola_saida(escola)
+
+
 @router.put("/escolas/{tenant_id}/licenca", response_model=EscolaSaida)
 async def definir_licenca(
     tenant_id: UUID,
@@ -495,11 +549,18 @@ async def definir_licenca(
             tenant_id=tenant_id,
             plano=plano,
             licenca_expira_em=payload.licenca_expira_em,
+            valor_mensal_centavos=payload.valor_mensal_centavos,
+            valor_anual_centavos=payload.valor_anual_centavos,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        codigo = (
+            status.HTTP_404_NOT_FOUND
+            if "não encontrada" in str(e)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=codigo, detail=str(e)) from e
     return _escola_saida(escola)
 
 
@@ -520,6 +581,56 @@ async def notificar_vencimento(
         )
         for a in avisos
     ]
+
+
+@router.get("/escolas/{tenant_id}/ficha-financeira", response_model=FichaFinanceiraSaida)
+async def obter_ficha_financeira(
+    tenant_id: UUID,
+    solicitante: Usuario = Depends(usuario_autenticado),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+    settings: Settings = Depends(get_settings_dep),
+) -> FichaFinanceiraSaida:
+    """Ficha financeira/histórico da escola: ciclo de vida, cobrança, uso e saúde."""
+    try:
+        ficha = await ObterFichaFinanceira(tenants=tenants).executar(
+            solicitante=solicitante,
+            tenant_id=tenant_id,
+            limite_diario_meta=settings.meta_daily_tier_limit,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    if ficha is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Escola não encontrada")
+    t = ficha.tenant
+    return FichaFinanceiraSaida(
+        tenant_id=t.id,
+        nome=t.nome,
+        slug=t.slug,
+        criado_em=t.criado_em,
+        dias_de_casa=ficha.dias_de_casa,
+        cancelado_em=t.cancelado_em,
+        motivo_cancelamento=t.motivo_cancelamento,
+        status=t.status.value,
+        plano=t.plano.value,
+        licenca_expira_em=t.licenca_expira_em,
+        dias_para_expirar=t.dias_para_expirar,
+        status_pagamento=ficha.status_pagamento.value,
+        valor_mensal_centavos=t.valor_mensal_centavos,
+        valor_anual_centavos=t.valor_anual_centavos,
+        mrr_centavos=t.mrr_centavos,
+        arr_centavos=t.arr_centavos,
+        receita_acumulada_centavos=ficha.receita_acumulada_centavos,
+        meses_ativos=ficha.meses_ativos,
+        uso=MetricasUsoSaida(
+            total_usuarios_ativos=ficha.uso.total_usuarios_ativos,
+            total_contatos=ficha.uso.total_contatos,
+            total_alunos=ficha.uso.total_alunos,
+            total_conversas=ficha.uso.total_conversas,
+            total_broadcasts=ficha.uso.total_broadcasts,
+        ),
+        limite_diario_meta=ficha.limite_diario_meta,
+        health_score=ficha.health_score,
+    )
 
 
 # --------------------------------------------------------------------------- #
