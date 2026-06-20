@@ -46,6 +46,7 @@ export function AppShell({
           title={title}
           user={user}
           tenantName={tenantName}
+          showTenant={isSuperAdmin}
           onLogout={onLogout}
           onMenu={() => setMenuAberto(true)}
         />

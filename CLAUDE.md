@@ -472,9 +472,9 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   (`web/app/admin/historico/auditoria/`).
 
 **Limpeza de UI (remoções)**
-- [ ] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"
+- [x] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"
   (não faz sentido manter).
-- [ ] **Remover** o dropdown de seleção de escola dentro do **admin da escola**
+- [x] **Remover** o dropdown de seleção de escola dentro do **admin da escola**
   (tenant admin é amarrado a uma única escola — não faz sentido).
 
 **Licenciamento / cobrança / bloqueio** _(ver §6e)_
