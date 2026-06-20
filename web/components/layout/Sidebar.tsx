@@ -12,6 +12,8 @@ import {
   InstructionsIcon,
   BuildingIcon,
   ChatBubbleIcon,
+  BellIcon,
+  FileIcon,
   ExternalIcon,
   CloseIcon,
 } from "../ui/icons";
@@ -29,6 +31,13 @@ const PRINCIPAL: NavItem[] = [
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
   { href: "/admin/conhecimento", label: "Base de conhecimento", icon: BookIcon },
   { href: "/admin/prompt", label: "Instruções da escola", icon: InstructionsIcon },
+];
+
+// Observabilidade / histórico da escola (conversas, disparos e auditoria).
+const HISTORICO: NavItem[] = [
+  { href: "/admin/historico/conversas", label: "Conversas", icon: ChatBubbleIcon },
+  { href: "/admin/historico/disparos", label: "Mensagens em massa", icon: BellIcon },
+  { href: "/admin/historico/auditoria", label: "Auditoria", icon: FileIcon },
 ];
 
 /** Marca TI-Escolar. */
@@ -145,6 +154,13 @@ export function Sidebar({
             PRINCIPAL
           </div>
           {PRINCIPAL.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={onClose} />
+          ))}
+
+          <div className="px-2.5 pb-2 pt-3.5 text-[10px] font-bold tracking-[0.12em] text-n-400">
+            HISTÓRICO
+          </div>
+          {HISTORICO.map((item) => (
             <NavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={onClose} />
           ))}
 

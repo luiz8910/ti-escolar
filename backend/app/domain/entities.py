@@ -250,6 +250,38 @@ class ResumoConversa:
 
 
 # --------------------------------------------------------------------------- #
+# Auditoria de ações (usuários logados + LLM)
+# --------------------------------------------------------------------------- #
+class AtorAuditoria(str, enum.Enum):
+    """Quem executou a ação registrada na auditoria."""
+
+    USUARIO = "usuario"  # admin logado (super admin ou tenant admin)
+    LLM = "llm"  # o assistente, ao atender uma conversa
+    SISTEMA = "sistema"  # rotinas automáticas (jobs, webhooks)
+
+
+@dataclass
+class RegistroAuditoria:
+    """Uma ação registrada para rastreabilidade/compliance.
+
+    Escopado por ``tenant_id`` (a escola onde a ação teve efeito) para que o admin da
+    escola consulte apenas as suas; ações cross-tenant do super admin podem ter
+    ``tenant_id`` nulo. ``acao`` é um código curto (ex.: ``broadcast.grupo.enviar``);
+    ``descricao`` é legível e ``metadados`` guarda o payload relevante (JSON).
+    """
+
+    ator: AtorAuditoria
+    acao: str
+    tenant_id: UUID | None = None
+    ator_id: str = ""  # id do usuário ou telefone do contato (LLM)
+    ator_nome: str = ""
+    descricao: str = ""
+    metadados: dict = field(default_factory=dict)
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+
+
+# --------------------------------------------------------------------------- #
 # Base de conhecimento (RAG)
 # --------------------------------------------------------------------------- #
 class TipoConhecimento(str, enum.Enum):

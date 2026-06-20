@@ -137,9 +137,9 @@ ti-escolar/
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
   `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
-  `0006_destinatario_entrega`. **Cadeia linear obrigatória:** ao criar uma migration, encadeie
-  no head atual (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade
-  head` do deploy.
+  `0006_destinatario_entrega` → `0007_auditoria`. **Cadeia linear obrigatória:** ao criar uma
+  migration, encadeie no head atual (`down_revision` = último head) para evitar **multiple heads**
+  no `alembic upgrade head` do deploy.
 - Toda consulta deve ser **escopada por tenant**; nunca vazar dados entre escolas.
 
 ### 6a. Administração e grupos
@@ -408,14 +408,16 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   **lint (ruff) + migrations (alembic upgrade head) + pytest** em PRs e na `main`, servindo de
   portão de qualidade antes do merge.
 
-**Observabilidade / histórico**
-- [ ] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —
-  listar disparos com template, grupo/destinatários, status de entrega e data.
-- [ ] **Histórico completo de conversas do WhatsApp** (mensagens recebidas e enviadas pela LLM),
-  consultável no admin da escola.
-- [ ] **Log de auditoria de ações** — gravar ações feitas por **usuários logados** no admin da
-  escola **e** ações da **LLM** (quem, o quê, quando, payload relevante). Base para
-  rastreabilidade/compliance.
+**Observabilidade / histórico** _(ver §13)_
+- [x] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —
+  lista os disparos com **template**, destinatários, **status de entrega** e data, e um detalhe
+  por responsável (`ObterBroadcastDaEscola`, `web/app/admin/historico/disparos/`).
+- [x] **Histórico completo de conversas do WhatsApp** (mensagens recebidas e respostas da LLM),
+  consultável no admin da escola (`web/app/admin/historico/conversas/`).
+- [x] **Log de auditoria de ações** — grava ações de **usuários logados** no painel (login,
+  criação de usuário/grupo, disparo a grupo) **e** ações da **LLM** (cada atendimento), com
+  quem/o quê/quando/payload. Base para rastreabilidade/compliance
+  (`web/app/admin/historico/auditoria/`).
 
 **Limpeza de UI (remoções)**
 - [ ] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"
@@ -462,3 +464,31 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     data da próxima renovação; churn e motivo; uso vs. cota (broadcasts/mensagens no
     período); nº de usuários ativos, contatos e alunos; data do último acesso/atividade;
     health score (qualidade do número Meta + tier de envio).
+
+---
+
+## 13. Observabilidade / histórico (admin da escola)
+
+Três visões consultáveis no painel da escola (e pelo super admin, via `_exige_acesso_tenant`),
+sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escopado por `tenant_id`.
+
+- **Histórico de conversas** (`/historico/conversas`): lista as conversas do WhatsApp e abre o
+  diálogo completo (mensagens **recebidas** dos responsáveis + **respostas da LLM**, com as fontes
+  RAG citadas). Reusa `ListarConversasDaEscola`/`ObterConversaDaEscola`
+  (`GET /api/admin/escolas/{tenant_id}/conversas[/{conversa_id}]`).
+- **Histórico de mensagens em massa** (`/historico/disparos`): lista os broadcasts com **template**,
+  total de destinatários, **status de entrega** agregado e data; o detalhe mostra a entrega **por
+  responsável** (nome, telefone, status `sent`/`delivered`/`read`/`failed`, atualizado em).
+  `ListarBroadcastsDaEscola` resolve o nome do template em lote; `ObterBroadcastDaEscola` monta o
+  detalhe (`GET /api/admin/escolas/{tenant_id}/broadcasts[/{broadcast_id}]`). Conecta-se à
+  confirmação de recebimento (§9b: `.../nao-entregues`).
+- **Auditoria de ações** (`/historico/auditoria`): log de **quem fez o quê e quando**, para
+  rastreabilidade/compliance. A entidade `RegistroAuditoria` (`ator` ∈ {`usuario`, `llm`,
+  `sistema`}, `acao`, `descricao`, `metadados` JSON) é persistida em `auditoria`
+  (migration `0007_auditoria`) via porta `AuditLogRepository`. **Instrumentado:** ações de
+  usuários logados no `app/interfaces/api/admin.py` (`login`, `usuario.criar`, `grupo.criar`,
+  `broadcast.grupo.enviar`) e **ações da LLM** — `AtenderConversa` registra `llm.resposta` a cada
+  atendimento (pergunta/resposta resumidas, fontes, documentos). Casos de uso
+  `RegistrarAuditoria`/`ListarAuditoria` (`app/application/auditoria_use_cases.py`); auditar é
+  **tolerante a falhas** (nunca derruba a ação auditada).
+  Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.

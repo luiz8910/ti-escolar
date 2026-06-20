@@ -102,10 +102,42 @@ export interface BroadcastResumo {
   id: string;
   titulo: string;
   status: string;
+  template_nome: string;
   criado_em: string;
   agendado_para: string | null;
   total_destinatarios: number;
   por_status: Record<string, number>;
+}
+
+export interface DestinatarioBroadcast {
+  contato: string;
+  nome: string;
+  status: string;
+  atualizado_em: string | null;
+}
+
+export interface BroadcastDetalhe {
+  id: string;
+  titulo: string;
+  status: string;
+  template_nome: string;
+  criado_em: string;
+  agendado_para: string | null;
+  total_destinatarios: number;
+  por_status: Record<string, number>;
+  destinatarios: DestinatarioBroadcast[];
+}
+
+export interface RegistroAuditoria {
+  id: string;
+  tenant_id: string | null;
+  ator: "usuario" | "llm" | "sistema";
+  ator_id: string;
+  ator_nome: string;
+  acao: string;
+  descricao: string;
+  metadados: Record<string, unknown>;
+  criado_em: string;
 }
 
 export interface ResultadoEnvioGrupo {
@@ -411,6 +443,27 @@ export async function listarBroadcasts(tenantId: string): Promise<BroadcastResum
     headers: authHeaders(),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar mensagens em massa`);
+  return resp.json();
+}
+
+export async function obterBroadcast(
+  tenantId: string,
+  broadcastId: string
+): Promise<BroadcastDetalhe> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/broadcasts/${broadcastId}`,
+    { headers: authHeaders() }
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao abrir o disparo`);
+  return resp.json();
+}
+
+// --------------------------- auditoria ------------------------------------ //
+export async function listarAuditoria(tenantId: string): Promise<RegistroAuditoria[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/auditoria`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar a auditoria`);
   return resp.json();
 }
 

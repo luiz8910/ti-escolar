@@ -204,4 +204,4 @@ async def test_listar_broadcasts_escopa_por_tenant():
         tenant_id=t1
     )
     assert len(out) == 1
-    assert out[0].titulo == "Reunião de pais"
+    assert out[0].broadcast.titulo == "Reunião de pais"
