@@ -34,7 +34,7 @@ import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
-import { UsersIcon, PlusIcon, PrintIcon } from "@/components/ui/icons";
+import { UsersIcon, PlusIcon } from "@/components/ui/icons";
 
 export default function SalasEPais() {
   const router = useRouter();
@@ -617,16 +617,6 @@ function SalaDetalhe({
             Relatório — {sala.nome}{" "}
             <span className="font-semibold text-n-400">· {relatorio.length} responsável(is)</span>
           </>
-        }
-        action={
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<PrintIcon size={15} />}
-            onClick={() => window.print()}
-          >
-            Imprimir / PDF
-          </Button>
         }
       />
 
