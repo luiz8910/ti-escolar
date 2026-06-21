@@ -15,6 +15,7 @@ from app.domain.entities import (
     Grupo,
     MessageQuota,
     MessageTemplate,
+    Professor,
     PromptTenant,
     RespostaLLM,
     ResultadoBusca,
@@ -319,11 +320,50 @@ class FakeContatoRepo:
         return True
 
 
+class FakeProfessorRepo:
+    def __init__(self) -> None:
+        self.professores: dict[uuid.UUID, "Professor"] = {}
+
+    async def criar(self, professor):
+        self.professores[professor.id] = professor
+        return professor
+
+    async def obter(self, *, tenant_id, professor_id):
+        p = self.professores.get(professor_id)
+        return p if p and p.tenant_id == tenant_id else None
+
+    async def por_telefone(self, *, tenant_id, telefone):
+        return next(
+            (
+                p
+                for p in self.professores.values()
+                if p.tenant_id == tenant_id and p.telefone == telefone
+            ),
+            None,
+        )
+
+    async def listar(self, *, tenant_id):
+        return [p for p in self.professores.values() if p.tenant_id == tenant_id]
+
+    async def atualizar(self, professor):
+        self.professores[professor.id] = professor
+        return professor
+
+    async def remover(self, *, tenant_id, professor_id):
+        p = self.professores.get(professor_id)
+        if p is None or p.tenant_id != tenant_id:
+            return False
+        del self.professores[professor_id]
+        return True
+
+
 class FakeSalaRepo:
     def __init__(self) -> None:
         self.salas: dict[uuid.UUID, "Sala"] = {}
         # Resolve pais pelo id para o vínculo (compartilhado com o FakeContatoRepo nos testes).
         self.contatos: FakeContatoRepo | None = None
+        # Resolve o nome do professor ao atribuí-lo a uma série (compartilhado nos testes).
+        self.professores: FakeProfessorRepo | None = None
 
     async def criar(self, sala):
         self.salas[sala.id] = sala
@@ -372,6 +412,21 @@ class FakeSalaRepo:
         if s is None:
             raise ValueError("Sala não encontrada para o tenant.")
         return list(s.pais)
+
+    async def definir_professor(self, *, tenant_id, sala_id, professor_id):
+        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if s is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        if professor_id is None:
+            s.professor_id = None
+            s.professor_nome = ""
+            return s
+        professor = self.professores.professores.get(professor_id) if self.professores else None
+        if professor is None or professor.tenant_id != tenant_id:
+            raise ValueError("Professor não encontrado para o tenant.")
+        s.professor_id = professor.id
+        s.professor_nome = professor.nome
+        return s
 
 
 class FakeAlunoRepo:

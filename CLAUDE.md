@@ -131,13 +131,15 @@ ti-escolar/
 - Entidades principais: `Tenant` (escola), `Usuario` (admin), `Conversa`, `Mensagem`,
   `Documento`, `Conhecimento` (FAQ/aviso/procedimento), `MessageTemplate`, `Broadcast`/Campanha,
   `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`,
-  `Sala` (turma) + associação `sala_contatos`, `FonteConhecimento` (documento da escola),
+  `Sala` (turma) + associação `sala_contatos`, `Professor` (vinculado à série por
+  `Sala.professor_id`), `FonteConhecimento` (documento da escola),
   `PromptTenant` (system prompt da escola) e `ResumoEscola` (visão agregada do super admin).
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
   `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
-  `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant`.
+  `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant` →
+  `0008_professores`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -240,6 +242,30 @@ ti-escolar/
 - **Painel:** `web/app/admin/salas/` — badge ⚠ na lista de turmas e, no detalhe da turma, um alerta
   com os alunos sem contato e o botão **"Notificar professor"** (modal pedindo o WhatsApp do
   professor + mensagem opcional). O seed cria um "Aluno Sem Contato" na primeira turma demo.
+
+### 6c-quinquies. Professores (CRUD + atribuição à série)
+
+- **`Professor`** por tenant, modelo **enxuto: apenas `nome` e `telefone`** (WhatsApp, E.164).
+  Único por `(tenant_id, telefone)` (migration `0008_professores`, tabela `professores`).
+- **Vínculo professor ↔ série:** o relacionamento mora na **série**, via
+  **`Sala.professor_id`** (FK `salas.professor_id` → `professores.id`, `ON DELETE SET NULL`).
+  Assim uma **série tem no máximo um professor**, e um **professor pode conduzir várias séries**
+  (1:N). Remover o professor apenas **desvincula** as séries (não as apaga). `Sala.professor_nome`
+  é denormalizado só para exibição.
+- **Casos de uso** em `app/application/cadastro_use_cases.py`: `CadastrarProfessor` (valida
+  telefone único), `ListarProfessores`, `ObterProfessor`, `AtualizarProfessor`,
+  `RemoverProfessor`; e a atribuição via `SalaRepository.definir_professor` —
+  `AtribuirProfessorASala` (define/troca; valida que o professor é do tenant),
+  `RemoverProfessorDaSala` (`professor_id` ← `NULL`) e `ListarSeriesDoProfessor`. Repositório
+  `SqlProfessorRepository`.
+- **Rotas** em `app/interfaces/api/cadastro.py`: `professores` (POST · GET `tenant/{tenant_id}`),
+  `professores/{id}` (GET/PUT/DELETE), `professores/{id}/series` (GET) e
+  `PUT /salas/{id}/professor` (corpo `professor_id`; `null` desvincula).
+- **Painel:** `web/app/admin/professores/` — cadastro/edição/exclusão de professores, atribuição do
+  professor responsável por série e a lista das séries de cada professor. O seed cria um professor
+  demo ("Prof. Carla Mendes") atribuído às séries de demonstração.
+- A remoção de tenant (`SqlTenantRepository.remover`) apaga, na cascata explícita, `sala_contatos`
+  → `salas` → `professores` (antes inexistente para `salas`; necessário pelas novas FKs).
 
 ### 6c-quater. Importação de alunos em massa (planilha/PDF + LLM)
 
@@ -449,6 +475,9 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] **CRUD de Alunos** Aluno por tenant com **série 1:1** (`sala_id`) e **responsáveis N:N**
   (`aluno_responsaveis`), com `ativo` para marcar ex-aluno. Ver §6c-bis
   (`app/interfaces/api/cadastro.py`, `web/app/admin/alunos/`).
+- [x] **CRUD de Professores** Professor por tenant (**nome + telefone**), vinculado à série por
+  **`Sala.professor_id`** (uma série → um professor; um professor → N séries). Ver §6c-quinquies
+  (`app/interfaces/api/cadastro.py`, `web/app/admin/professores/`).
 
 ### 12a. Backlog priorizado (novas tasks)
 

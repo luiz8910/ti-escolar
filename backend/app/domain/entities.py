@@ -277,12 +277,30 @@ class Grupo:
 
 
 @dataclass
+class Professor:
+    """Professor da escola, dentro de um tenant.
+
+    Modelo enxuto: **apenas nome e telefone** (WhatsApp). Um professor pode estar à
+    frente de **várias séries/turmas** (``Sala``), mas cada série tem **no máximo um**
+    professor responsável (o vínculo mora em ``Sala.professor_id``).
+    """
+
+    tenant_id: UUID
+    nome: str
+    telefone: str  # E.164, ex.: +5511999990000
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
 class Sala:
     """Sala/turma da escola (ex.: "4ª série B"), dentro de um tenant.
 
     Agrega os ``Contato``s (pais/responsáveis) vinculados àquela turma (N:N — um
     responsável pode ter filhos em salas diferentes). É a base do relatório de pais
-    por sala.
+    por sala. ``professor_id`` é o **professor responsável** pela série (1:1 — uma
+    série tem no máximo um professor; um professor pode ter várias séries);
+    ``professor_nome`` é denormalizado só para exibição.
     """
 
     tenant_id: UUID
@@ -291,6 +309,8 @@ class Sala:
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     pais: list[Contato] = field(default_factory=list)
+    professor_id: UUID | None = None
+    professor_nome: str = ""
 
 
 @dataclass

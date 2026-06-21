@@ -12,24 +12,32 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.application.cadastro_use_cases import (
+    AtribuirProfessorASala,
     AtualizarAluno,
     AtualizarPai,
+    AtualizarProfessor,
     AtualizarSala,
     CadastrarAluno,
     CadastrarPai,
+    CadastrarProfessor,
     CoberturaDeContatosDaSala,
     CriarSala,
     DesvincularPaiDaSala,
     DesvincularResponsavelDoAluno,
     ListarAlunos,
     ListarPais,
+    ListarProfessores,
     ListarSalas,
+    ListarSeriesDoProfessor,
     NotificarProfessorContatosFaltantes,
     ObterAluno,
+    ObterProfessor,
     ObterSala,
     RelatorioPaisDaSala,
     RemoverAluno,
     RemoverPai,
+    RemoverProfessor,
+    RemoverProfessorDaSala,
     RemoverSala,
     ResumoCoberturaDasSalas,
     VincularPaiASala,
@@ -45,6 +53,7 @@ from app.domain.entities import (
     Contato,
     LinhaImportacaoAluno,
     PreviaImportacaoAlunos,
+    Professor,
     ResponsavelImportado,
     ResultadoImportacaoAlunos,
     Sala,
@@ -54,6 +63,7 @@ from app.domain.ports import LLMProvider, MessageChannel
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
     SqlContatoRepository,
+    SqlProfessorRepository,
     SqlSalaRepository,
 )
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
@@ -62,6 +72,7 @@ from app.interfaces.deps import (
     get_canal,
     get_contato_repo,
     get_llm,
+    get_professor_repo,
     get_sala_repo,
 )
 from app.interfaces.dto import (
@@ -69,6 +80,7 @@ from app.interfaces.dto import (
     AlunoEntrada,
     AlunoResumoSaida,
     AlunoSaida,
+    AtribuirProfessorEntrada,
     CoberturaSalaSaida,
     ImportacaoConfirmarEntrada,
     ImportacaoPreviaEntrada,
@@ -80,6 +92,9 @@ from app.interfaces.dto import (
     PaiAtualizar,
     PaiEntrada,
     PaiSaida,
+    ProfessorAtualizar,
+    ProfessorEntrada,
+    ProfessorSaida,
     ResponsavelImportadoDTO,
     SalaAtualizar,
     SalaEntrada,
@@ -101,7 +116,13 @@ def _sala_saida(s: Sala) -> SalaSaida:
         descricao=s.descricao,
         total_pais=len(s.pais),
         pais=[_pai_saida(c) for c in s.pais],
+        professor_id=s.professor_id,
+        professor_nome=s.professor_nome,
     )
+
+
+def _professor_saida(p: Professor) -> ProfessorSaida:
+    return ProfessorSaida(id=p.id, nome=p.nome, telefone=p.telefone)
 
 
 def _cobertura_saida(c: CoberturaContatosSala) -> CoberturaSalaSaida:
@@ -575,6 +596,126 @@ async def desvincular_responsavel(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+
+# --------------------------------------------------------------------------- #
+# Professores (CRUD) e atribuição à série (Sala.professor_id)
+# --------------------------------------------------------------------------- #
+@router.post("/professores", response_model=ProfessorSaida, status_code=status.HTTP_201_CREATED)
+async def cadastrar_professor(
+    payload: ProfessorEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> ProfessorSaida:
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        professor = await CadastrarProfessor(professores=professores).executar(
+            tenant_id=payload.tenant_id, nome=payload.nome, telefone=payload.telefone
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _professor_saida(professor)
+
+
+@router.get("/professores/tenant/{tenant_id}", response_model=list[ProfessorSaida])
+async def listar_professores(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> list[ProfessorSaida]:
+    _exige_acesso_tenant(usuario, tenant_id)
+    encontrados = await ListarProfessores(professores=professores).executar(tenant_id=tenant_id)
+    return [_professor_saida(p) for p in encontrados]
+
+
+@router.get("/professores/{professor_id}", response_model=ProfessorSaida)
+async def obter_professor(
+    professor_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> ProfessorSaida:
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        professor = await ObterProfessor(professores=professores).executar(
+            tenant_id=tenant_id, professor_id=professor_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _professor_saida(professor)
+
+
+@router.get("/professores/{professor_id}/series", response_model=list[SalaSaida])
+async def series_do_professor(
+    professor_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+) -> list[SalaSaida]:
+    """Séries (turmas) sob responsabilidade de um professor (um professor → N séries)."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    encontradas = await ListarSeriesDoProfessor(salas=salas).executar(
+        tenant_id=tenant_id, professor_id=professor_id
+    )
+    return [_sala_saida(s) for s in encontradas]
+
+
+@router.put("/professores/{professor_id}", response_model=ProfessorSaida)
+async def atualizar_professor(
+    professor_id: UUID,
+    payload: ProfessorAtualizar,
+    usuario: Usuario = Depends(usuario_autenticado),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> ProfessorSaida:
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        professor = await AtualizarProfessor(professores=professores).executar(
+            tenant_id=payload.tenant_id,
+            professor_id=professor_id,
+            nome=payload.nome,
+            telefone=payload.telefone,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _professor_saida(professor)
+
+
+@router.delete("/professores/{professor_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remover_professor(
+    professor_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> None:
+    _exige_acesso_tenant(usuario, tenant_id)
+    removido = await RemoverProfessor(professores=professores).executar(
+        tenant_id=tenant_id, professor_id=professor_id
+    )
+    if not removido:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor não encontrado")
+
+
+@router.put("/salas/{sala_id}/professor", response_model=SalaSaida)
+async def definir_professor_da_sala(
+    sala_id: UUID,
+    payload: AtribuirProfessorEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    salas: SqlSalaRepository = Depends(get_sala_repo),
+) -> SalaSaida:
+    """Atribui (ou remove, com ``professor_id=null``) o professor responsável pela série."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        if payload.professor_id is None:
+            sala = await RemoverProfessorDaSala(salas=salas).executar(
+                tenant_id=payload.tenant_id, sala_id=sala_id
+            )
+        else:
+            sala = await AtribuirProfessorASala(salas=salas).executar(
+                tenant_id=payload.tenant_id, sala_id=sala_id, professor_id=payload.professor_id
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _sala_saida(sala)
 
 
 # --------------------------------------------------------------------------- #

@@ -304,6 +304,22 @@ class GrupoORM(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "nome", name="uq_grupo_tenant_nome"),)
 
 
+class ProfessorORM(Base):
+    __tablename__ = "professores"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    nome: Mapped[str] = mapped_column(String(200))
+    telefone: Mapped[str] = mapped_column(String(50))
+    criado_em: Mapped[datetime] = mapped_column()
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "telefone", name="uq_professor_tenant_telefone"),
+    )
+
+
 class SalaORM(Base):
     __tablename__ = "salas"
 
@@ -313,11 +329,20 @@ class SalaORM(Base):
     )
     nome: Mapped[str] = mapped_column(String(200))
     descricao: Mapped[str] = mapped_column(Text, default="")
+    # Professor responsável pela série (1:1; um professor pode ter várias séries).
+    # ON DELETE SET NULL: remover o professor apenas desvincula as séries.
+    professor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     criado_em: Mapped[datetime] = mapped_column()
 
     pais: Mapped[list[ContatoORM]] = relationship(
         secondary=sala_contatos, back_populates="salas"
     )
+    professor: Mapped["ProfessorORM | None"] = relationship()
 
     __table_args__ = (UniqueConstraint("tenant_id", "nome", name="uq_sala_tenant_nome"),)
 

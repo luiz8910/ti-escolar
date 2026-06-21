@@ -8,6 +8,7 @@ import {
   GridIcon,
   UsersIcon,
   CapIcon,
+  TeacherIcon,
   BookIcon,
   InstructionsIcon,
   BuildingIcon,
@@ -29,6 +30,7 @@ const PRINCIPAL: NavItem[] = [
   { href: "/admin", label: "Grupos & disparos", icon: GridIcon },
   { href: "/admin/salas", label: "Salas e pais", icon: UsersIcon },
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
+  { href: "/admin/professores", label: "Professores", icon: TeacherIcon },
   { href: "/admin/conhecimento", label: "Base de conhecimento", icon: BookIcon },
   { href: "/admin/prompt", label: "Instruções da escola", icon: InstructionsIcon },
 ];

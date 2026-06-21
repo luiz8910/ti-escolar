@@ -550,6 +550,8 @@ export interface Sala {
   descricao: string;
   total_pais: number;
   pais: Pai[];
+  professor_id: string | null;
+  professor_nome: string;
 }
 
 async function jsonOuErro<T>(resp: Response, contexto: string): Promise<T> {
@@ -834,6 +836,78 @@ export async function desvincularResponsavelDoAluno(
     const erro = await resp.json().catch(() => ({}));
     throw new Error(erro.detail ?? `Erro ${resp.status} ao desvincular responsável`);
   }
+}
+
+// ------------------------------ professores ------------------------------- //
+export interface Professor {
+  id: string;
+  nome: string;
+  telefone: string;
+}
+
+export async function listarProfessores(): Promise<Professor[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/professores/tenant/${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar professores");
+}
+
+export async function cadastrarProfessor(
+  nome: string,
+  telefone: string
+): Promise<Professor> {
+  const resp = await apiFetch(`${API_URL}/api/admin/professores`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
+  });
+  return jsonOuErro(resp, "cadastrar professor");
+}
+
+export async function atualizarProfessor(
+  professorId: string,
+  nome: string,
+  telefone: string
+): Promise<Professor> {
+  const resp = await apiFetch(`${API_URL}/api/admin/professores/${professorId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
+  });
+  return jsonOuErro(resp, "atualizar professor");
+}
+
+export async function removerProfessor(professorId: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/professores/${professorId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover professor`);
+  }
+}
+
+export async function seriesDoProfessor(professorId: string): Promise<Sala[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/professores/${professorId}/series?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar séries do professor");
+}
+
+// Define (professorId) ou remove (professorId = null) o professor responsável pela série.
+export async function definirProfessorDaSala(
+  salaId: string,
+  professorId: string | null
+): Promise<Sala> {
+  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}/professor`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), professor_id: professorId }),
+  });
+  return jsonOuErro(resp, "definir professor da série");
 }
 
 // --------------------- importação de alunos em massa ---------------------- //
