@@ -18,6 +18,7 @@ from app.domain.entities import (
     MetricasUsoEscola,
     Papel,
     PlanoTenant,
+    Professor,
     RegistroAuditoria,
     ResumoEscola,
     Sala,
@@ -36,6 +37,7 @@ from app.infrastructure.db.models import (
     DocumentoORM,
     GrupoORM,
     MensagemORM,
+    ProfessorORM,
     QuotaORM,
     SalaORM,
     TemplateORM,
@@ -236,6 +238,13 @@ class SqlTenantRepository:
             )
         )
         await self._s.execute(delete(AlunoORM).where(AlunoORM.tenant_id == tenant_id))
+        # Séries (salas) e seus vínculos com pais; depois os professores que elas referenciam.
+        salas_do_tenant = select(SalaORM.id).where(SalaORM.tenant_id == tenant_id)
+        await self._s.execute(
+            delete(sala_contatos).where(sala_contatos.c.sala_id.in_(salas_do_tenant))
+        )
+        await self._s.execute(delete(SalaORM).where(SalaORM.tenant_id == tenant_id))
+        await self._s.execute(delete(ProfessorORM).where(ProfessorORM.tenant_id == tenant_id))
         await self._s.execute(delete(ConversaORM).where(ConversaORM.tenant_id == tenant_id))
         await self._s.execute(delete(ConhecimentoORM).where(ConhecimentoORM.tenant_id == tenant_id))
         await self._s.execute(delete(DocumentoORM).where(DocumentoORM.tenant_id == tenant_id))
@@ -440,6 +449,16 @@ class SqlGrupoRepository:
         return [_to_contato(c) for c in row.membros]
 
 
+def _to_professor(row: ProfessorORM) -> Professor:
+    return Professor(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        nome=row.nome,
+        telefone=row.telefone,
+        criado_em=row.criado_em,
+    )
+
+
 def _to_sala(row: SalaORM) -> Sala:
     return Sala(
         id=row.id,
@@ -448,6 +467,8 @@ def _to_sala(row: SalaORM) -> Sala:
         descricao=row.descricao,
         criado_em=row.criado_em,
         pais=[_to_contato(c) for c in row.pais],
+        professor_id=row.professor_id,
+        professor_nome=row.professor.nome if row.professor else "",
     )
 
 
@@ -537,7 +558,7 @@ class SqlSalaRepository:
         stmt = (
             select(SalaORM)
             .where(SalaORM.id == sala_id, SalaORM.tenant_id == tenant_id)
-            .options(selectinload(SalaORM.pais))
+            .options(selectinload(SalaORM.pais), selectinload(SalaORM.professor))
         )
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
@@ -549,7 +570,7 @@ class SqlSalaRepository:
         stmt = (
             select(SalaORM)
             .where(SalaORM.tenant_id == tenant_id)
-            .options(selectinload(SalaORM.pais))
+            .options(selectinload(SalaORM.pais), selectinload(SalaORM.professor))
             .order_by(SalaORM.nome)
         )
         rows = (await self._s.execute(stmt)).scalars().all()
@@ -611,6 +632,88 @@ class SqlSalaRepository:
         if row is None:
             raise ValueError("Sala não encontrada para o tenant.")
         return [_to_contato(c) for c in row.pais]
+
+    async def definir_professor(
+        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID, professor_id: uuid.UUID | None
+    ) -> Sala:
+        sala = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
+        if sala is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        if professor_id is not None:
+            stmt = select(ProfessorORM).where(
+                ProfessorORM.id == professor_id, ProfessorORM.tenant_id == tenant_id
+            )
+            professor = (await self._s.execute(stmt)).scalar_one_or_none()
+            if professor is None:
+                raise ValueError("Professor não encontrado para o tenant.")
+        sala.professor_id = professor_id
+        await self._s.flush()
+        await self._s.refresh(sala, attribute_names=["professor"])
+        return _to_sala(sala)
+
+
+class SqlProfessorRepository:
+    """CRUD de professores (nome + telefone), escopado por tenant."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def criar(self, professor: Professor) -> Professor:
+        self._s.add(
+            ProfessorORM(
+                id=professor.id,
+                tenant_id=professor.tenant_id,
+                nome=professor.nome,
+                telefone=professor.telefone,
+                criado_em=professor.criado_em,
+            )
+        )
+        await self._s.flush()
+        return professor
+
+    async def _orm(self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID) -> ProfessorORM | None:
+        stmt = select(ProfessorORM).where(
+            ProfessorORM.id == professor_id, ProfessorORM.tenant_id == tenant_id
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def obter(self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID) -> Professor | None:
+        row = await self._orm(tenant_id=tenant_id, professor_id=professor_id)
+        return _to_professor(row) if row else None
+
+    async def por_telefone(self, *, tenant_id: uuid.UUID, telefone: str) -> Professor | None:
+        stmt = select(ProfessorORM).where(
+            ProfessorORM.tenant_id == tenant_id, ProfessorORM.telefone == telefone
+        )
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        return _to_professor(row) if row else None
+
+    async def listar(self, *, tenant_id: uuid.UUID) -> list[Professor]:
+        stmt = (
+            select(ProfessorORM)
+            .where(ProfessorORM.tenant_id == tenant_id)
+            .order_by(ProfessorORM.nome)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_professor(r) for r in rows]
+
+    async def atualizar(self, professor: Professor) -> Professor:
+        row = await self._orm(tenant_id=professor.tenant_id, professor_id=professor.id)
+        if row is None:
+            raise ValueError("Professor não encontrado para o tenant.")
+        row.nome = professor.nome
+        row.telefone = professor.telefone
+        await self._s.flush()
+        return _to_professor(row)
+
+    async def remover(self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID) -> bool:
+        row = await self._orm(tenant_id=tenant_id, professor_id=professor_id)
+        if row is None:
+            return False
+        # As séries que apontavam para este professor são desvinculadas (ON DELETE SET NULL).
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
 
 
 def _to_aluno(row: AlunoORM) -> Aluno:

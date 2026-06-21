@@ -52,6 +52,15 @@ export const CapIcon = (p: IconProps) => (
   </svg>
 );
 
+export const TeacherIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="3" y="4" width="11" height="8" rx="1.5" />
+    <path d="M6 8h5" />
+    <circle cx="17.5" cy="10.5" r="2.5" />
+    <path d="M13 20c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" />
+  </svg>
+);
+
 export const BookIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M6 4h10a2 2 0 0 1 2 2v14H8a2 2 0 0 0-2 2V4Z" />

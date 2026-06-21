@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.application.admin_use_cases import CriarGrupo
-from app.application.cadastro_use_cases import CadastrarAluno, CadastrarPai, CriarSala
+from app.application.cadastro_use_cases import (
+    AtribuirProfessorASala,
+    CadastrarAluno,
+    CadastrarPai,
+    CadastrarProfessor,
+    CriarSala,
+)
 from app.application.use_cases import IndexarConhecimento
 from app.config import get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
@@ -23,6 +29,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
     SqlContatoRepository,
     SqlGrupoRepository,
+    SqlProfessorRepository,
     SqlSalaRepository,
     SqlUsuarioRepository,
 )
@@ -244,6 +251,20 @@ async def _seed() -> None:
                     nome="Aluno Sem Contato",
                     sala_id=salas_demo[0].id,
                     matricula="2026-099",
+                )
+
+        # Professores de demonstração — um por série, reusando o mesmo professor em
+        # ambas para ilustrar "um professor conduz várias séries".
+        professores_repo = SqlProfessorRepository(session)
+        if not await professores_repo.listar(tenant_id=DEMO_TENANT_ID):
+            cadastrar_professor = CadastrarProfessor(professores=professores_repo)
+            atribuir = AtribuirProfessorASala(salas=salas_repo)
+            prof = await cadastrar_professor.executar(
+                tenant_id=DEMO_TENANT_ID, nome="Prof. Carla Mendes", telefone="+5511977770001"
+            )
+            for sala in await salas_repo.listar(tenant_id=DEMO_TENANT_ID):
+                await atribuir.executar(
+                    tenant_id=DEMO_TENANT_ID, sala_id=sala.id, professor_id=prof.id
                 )
 
         # System prompt do tenant demo — só define se ainda não houver um

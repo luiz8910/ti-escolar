@@ -22,6 +22,7 @@ from app.domain.entities import (
     MetricasUsoEscola,
     MessageQuota,
     MessageTemplate,
+    Professor,
     PromptTenant,
     RegistroAuditoria,
     RespostaLLM,
@@ -313,6 +314,27 @@ class SalaRepository(Protocol):
     async def desvincular_pai(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None: ...
 
     async def pais(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]: ...
+
+    async def definir_professor(
+        self, *, tenant_id: UUID, sala_id: UUID, professor_id: UUID | None
+    ) -> Sala: ...
+
+
+@runtime_checkable
+class ProfessorRepository(Protocol):
+    """CRUD de professores (nome + telefone), escopado por tenant."""
+
+    async def criar(self, professor: Professor) -> Professor: ...
+
+    async def obter(self, *, tenant_id: UUID, professor_id: UUID) -> Professor | None: ...
+
+    async def por_telefone(self, *, tenant_id: UUID, telefone: str) -> Professor | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[Professor]: ...
+
+    async def atualizar(self, professor: Professor) -> Professor: ...
+
+    async def remover(self, *, tenant_id: UUID, professor_id: UUID) -> bool: ...
 
 
 @runtime_checkable

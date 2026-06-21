@@ -353,6 +353,8 @@ class SalaSaida(BaseModel):
     descricao: str
     total_pais: int
     pais: list[PaiSaida] = []
+    professor_id: UUID | None = None
+    professor_nome: str = ""
 
 
 class TenantRef(BaseModel):
@@ -364,6 +366,33 @@ class TenantRef(BaseModel):
 class VinculoPaiEntrada(BaseModel):
     tenant_id: UUID
     contato_id: UUID
+
+
+# --------------------------------------------------------------------------- #
+# Professores (CRUD) e atribuição à série
+# --------------------------------------------------------------------------- #
+class ProfessorEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str
+    telefone: str = Field(..., examples=["+5511999990000"])
+
+
+class ProfessorAtualizar(BaseModel):
+    tenant_id: UUID
+    nome: str
+    telefone: str = Field(..., examples=["+5511999990000"])
+
+
+class ProfessorSaida(BaseModel):
+    id: UUID
+    nome: str
+    telefone: str
+
+
+class AtribuirProfessorEntrada(BaseModel):
+    tenant_id: UUID
+    # ``None`` desvincula o professor da série.
+    professor_id: UUID | None = None
 
 
 # --------------------------------------------------------------------------- #

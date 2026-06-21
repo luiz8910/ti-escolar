@@ -30,6 +30,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlAuditLogRepository,
     SqlContatoRepository,
     SqlGrupoRepository,
+    SqlProfessorRepository,
     SqlSalaRepository,
     SqlTenantRepository,
     SqlUsuarioRepository,
@@ -170,6 +171,10 @@ def get_sala_repo(session: AsyncSession = Depends(get_session)) -> SqlSalaReposi
 
 def get_aluno_repo(session: AsyncSession = Depends(get_session)) -> SqlAlunoRepository:
     return SqlAlunoRepository(session)
+
+
+def get_professor_repo(session: AsyncSession = Depends(get_session)) -> SqlProfessorRepository:
+    return SqlProfessorRepository(session)
 
 
 def get_canal(settings: Settings = Depends(get_settings_dep)) -> MessageChannel:

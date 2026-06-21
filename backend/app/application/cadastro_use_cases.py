@@ -10,11 +10,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Sala
+from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Professor, Sala
 from app.domain.ports import (
     AlunoRepository,
     ContatoRepository,
     MessageChannel,
+    ProfessorRepository,
     SalaRepository,
 )
 
@@ -424,3 +425,107 @@ class DesvincularResponsavelDoAluno:
         await self._alunos.desvincular_responsavel(
             tenant_id=tenant_id, aluno_id=aluno_id, contato_id=contato_id
         )
+
+
+# --------------------------------------------------------------------------- #
+# Professores (CRUD) e atribuição à série (Sala.professor_id)
+# --------------------------------------------------------------------------- #
+class CadastrarProfessor:
+    """Cadastra um professor (nome + telefone). Telefone único por tenant (E.164)."""
+
+    def __init__(self, *, professores: ProfessorRepository) -> None:
+        self._professores = professores
+
+    async def executar(self, *, tenant_id: UUID, nome: str, telefone: str) -> Professor:
+        if await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone):
+            raise ValueError("Já existe um professor com este telefone neste tenant.")
+        return await self._professores.criar(
+            Professor(tenant_id=tenant_id, nome=nome, telefone=telefone)
+        )
+
+
+class ListarProfessores:
+    def __init__(self, *, professores: ProfessorRepository) -> None:
+        self._professores = professores
+
+    async def executar(self, *, tenant_id: UUID) -> list[Professor]:
+        return await self._professores.listar(tenant_id=tenant_id)
+
+
+class ObterProfessor:
+    def __init__(self, *, professores: ProfessorRepository) -> None:
+        self._professores = professores
+
+    async def executar(self, *, tenant_id: UUID, professor_id: UUID) -> Professor:
+        professor = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
+        if professor is None:
+            raise ValueError("Professor não encontrado para o tenant.")
+        return professor
+
+
+class AtualizarProfessor:
+    def __init__(self, *, professores: ProfessorRepository) -> None:
+        self._professores = professores
+
+    async def executar(
+        self, *, tenant_id: UUID, professor_id: UUID, nome: str, telefone: str
+    ) -> Professor:
+        atual = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
+        if atual is None:
+            raise ValueError("Professor não encontrado para o tenant.")
+        if telefone != atual.telefone:
+            existente = await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone)
+            if existente is not None and existente.id != professor_id:
+                raise ValueError("Já existe um professor com este telefone neste tenant.")
+        atual.nome = nome
+        atual.telefone = telefone
+        return await self._professores.atualizar(atual)
+
+
+class RemoverProfessor:
+    """Remove um professor. As séries que ele conduzia ficam **sem professor**."""
+
+    def __init__(self, *, professores: ProfessorRepository) -> None:
+        self._professores = professores
+
+    async def executar(self, *, tenant_id: UUID, professor_id: UUID) -> bool:
+        return await self._professores.remover(tenant_id=tenant_id, professor_id=professor_id)
+
+
+class AtribuirProfessorASala:
+    """Define (ou troca) o professor responsável por uma série.
+
+    Uma série tem **no máximo um** professor; reatribuir substitui o anterior. O
+    professor precisa pertencer ao tenant (validado no repositório).
+    """
+
+    def __init__(self, *, salas: SalaRepository) -> None:
+        self._salas = salas
+
+    async def executar(self, *, tenant_id: UUID, sala_id: UUID, professor_id: UUID) -> Sala:
+        return await self._salas.definir_professor(
+            tenant_id=tenant_id, sala_id=sala_id, professor_id=professor_id
+        )
+
+
+class RemoverProfessorDaSala:
+    """Desvincula o professor de uma série (``Sala.professor_id`` volta a ser nulo)."""
+
+    def __init__(self, *, salas: SalaRepository) -> None:
+        self._salas = salas
+
+    async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> Sala:
+        return await self._salas.definir_professor(
+            tenant_id=tenant_id, sala_id=sala_id, professor_id=None
+        )
+
+
+class ListarSeriesDoProfessor:
+    """Lista as séries (salas) sob responsabilidade de um professor (um professor → N séries)."""
+
+    def __init__(self, *, salas: SalaRepository) -> None:
+        self._salas = salas
+
+    async def executar(self, *, tenant_id: UUID, professor_id: UUID) -> list[Sala]:
+        salas = await self._salas.listar(tenant_id=tenant_id)
+        return [s for s in salas if s.professor_id == professor_id]
