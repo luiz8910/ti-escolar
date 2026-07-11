@@ -59,6 +59,15 @@ def criar_canal(settings: Settings) -> MessageChannel:
             phone_number_id=settings.meta_phone_number_id or "",
             access_token=settings.meta_access_token,
         )
+    if settings.message_channel == "twilio" and settings.twilio_account_sid:
+        from app.infrastructure.channel.twilio_channel import TwilioMessageChannel
+
+        return TwilioMessageChannel(
+            account_sid=settings.twilio_account_sid,
+            auth_token=settings.twilio_auth_token or "",
+            from_number=settings.twilio_whatsapp_from or "",
+            status_callback_url=settings.twilio_status_callback_url,
+        )
     return _demo_channel
 
 

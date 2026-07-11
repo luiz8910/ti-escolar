@@ -54,3 +54,28 @@ async def test_pedido_de_boletim_envia_documento():
     assert len(resp.documentos) == 1
     assert canal.enviados == [("+551199", "documento")]
     assert "Boletim.pdf" in resp.texto
+
+
+class _CanalQueFalhaNoDoc(FakeChannel):
+    async def enviar_documento(self, *, contato, documento) -> str:
+        raise RuntimeError("canal rejeitou a mídia (ex.: URL inacessível)")
+
+
+async def test_falha_ao_enviar_documento_nao_derruba_atendimento():
+    # Uma falha de entrega de documento (canal real recusando a mídia mock) não pode
+    # abortar a resposta: o usuário ainda recebe o texto; documentos não entregues saem.
+    doc = Documento(tenant_id=TENANT, nome="Boletim.pdf", categoria="boletim", url="http://x")
+    responder = ResponderDuvida(
+        embedder=fake_embedder(), store=FakeVectorStore(), llm=FakeLLM()
+    )
+    docs = RecuperarEEnviarDocumento(
+        source=FakeDocumentSource([doc]), canal=_CanalQueFalhaNoDoc()
+    )
+    uc = ReceberMensagemRecebida(
+        conversas=FakeConversaRepo(), responder=responder, documentos=docs
+    )
+    resp = await uc.executar(
+        tenant_id=TENANT, contato="+551199", texto="Quero a segunda via do meu boletim"
+    )
+    assert resp.documentos == []  # nada entregue → não anuncia documento
+    assert resp.texto  # a resposta de texto foi preservada

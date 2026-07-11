@@ -422,6 +422,32 @@ crítico que passou despercebido).
   (`?apos_minutos=`), guardado por `_exige_acesso_tenant`. O **painel** depende do histórico de
   broadcasts no admin da escola — ver §12a (**[Roadmap]**).
 
+### 9c. Canal Twilio WhatsApp (inbound + outbound)
+
+Adaptador alternativo à Meta, selecionável por `MESSAGE_CHANNEL=twilio`. O **Sandbox de
+WhatsApp** do Twilio funciona **sem verificação de empresa**, útil para testar envio e
+recebimento de imediato (o usuário entra no Sandbox com `join <palavra>`).
+
+- **Outbound** (`app/infrastructure/channel/twilio_channel.py`): `TwilioMessageChannel`
+  implementa `MessageChannel` via a API REST (`/2010-04-01/Accounts/{sid}/Messages.json`,
+  auth básica `AccountSid:AuthToken`, `From=whatsapp:<numero>`). Retorna o `MessageSid`
+  como id externo (mesmo papel do `wamid` da Meta). O Sandbox **não usa templates HSM**:
+  dentro da janela de 24h o corpo do template é enviado como **texto livre** (templates reais
+  usam o Content API — `ContentSid`, roadmap). Cota/throttling continuam nos casos de uso.
+- **Webhook** (`app/interfaces/api/webhook_twilio.py`, `POST /api/webhook/twilio`): o Twilio
+  envia **form-urlencoded** (parseado com a stdlib, sem `python-multipart`) e espera **TwiML**
+  como resposta. Trata **status de entrega** (`MessageStatus` → `StatusEntrega` via
+  `broadcasts.registrar_status`, pelo `MessageSid`) **e mensagens recebidas** (`Body`/`From` →
+  `ReceberMensagemRecebida`, respondendo em TwiML) — **fechando o inbound real** (o webhook da
+  Meta ainda só trata status). Como o Sandbox tem um número único, o inbound cai em um único
+  tenant (`TWILIO_DEFAULT_TENANT_ID`; default = tenant demo). Valida `X-Twilio-Signature`
+  (HMAC-SHA1, só stdlib) quando `TWILIO_VALIDATE_SIGNATURE=true`.
+- **Config** (`.env`): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
+  (ex.: `whatsapp:+14155238886`), `TWILIO_STATUS_CALLBACK_URL` (opcional),
+  `TWILIO_DEFAULT_TENANT_ID` (opcional), `TWILIO_VALIDATE_SIGNATURE` (default `false`).
+  A fábrica `criar_canal` (`app/infrastructure/factories.py`) escolhe o adaptador pelo
+  `MESSAGE_CHANNEL` (`demo` | `meta` | `twilio`).
+
 ---
 
 ## 10. Desenvolvimento com Docker — **[Roadmap: compose]**
@@ -456,7 +482,11 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] Scaffold do demo Next.js (UI estilo WhatsApp + REST/WebSocket).
 - [ ] `docker-compose.yml` com `db` / `backend` / `web` + migrations + seed.
 - [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e fila.
-- [ ] Inbound real do WhatsApp (webhook da Meta).
+- [x] **Canal Twilio WhatsApp** (inbound + outbound), alternativa à Meta que funciona sem
+  verificação de empresa (Sandbox). Ver §9c (`app/infrastructure/channel/twilio_channel.py`,
+  `app/interfaces/api/webhook_twilio.py`).
+- [~] Inbound real do WhatsApp: **feito via Twilio** (`POST /api/webhook/twilio` roteia para
+  `ReceberMensagemRecebida`); via **webhook da Meta** ainda pendente (só trata status).
 - [ ] Integrações reais de `DocumentSource` (substituir mocks).
 - [x] **Base de conhecimento por tenant** (upload de documentos → RAG) e **system prompt
   personalizado por escola** (um "CLAUDE.md" do tenant), com painel em `web/app/admin/`.
