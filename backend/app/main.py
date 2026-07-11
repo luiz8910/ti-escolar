@@ -6,7 +6,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.interfaces.api import admin, broadcast, cadastro, chat, conhecimento, webhook
+from app.interfaces.api import (
+    admin,
+    broadcast,
+    cadastro,
+    chat,
+    conhecimento,
+    webhook,
+    webhook_twilio,
+)
 
 settings = get_settings()
 
@@ -42,6 +50,7 @@ app.include_router(admin.router)
 app.include_router(cadastro.router)
 app.include_router(conhecimento.router)
 app.include_router(webhook.router)
+app.include_router(webhook_twilio.router)
 
 
 @app.get("/health", tags=["infra"])

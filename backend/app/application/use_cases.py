@@ -6,6 +6,7 @@ coordenação. Tudo é escopado por ``tenant_id`` (multi-tenant).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -40,6 +41,8 @@ from app.domain.ports import (
     TemplateRepository,
     VectorStore,
 )
+
+_logger = logging.getLogger("app.use_cases")
 
 
 # --------------------------------------------------------------------------- #
@@ -146,9 +149,23 @@ class RecuperarEEnviarDocumento:
         documentos = await self._source.buscar_documentos(
             tenant_id=tenant_id, contato=contato, consulta=consulta
         )
+        # Enviar é tolerante a falhas: a indisponibilidade de um documento (ex.: o canal
+        # rejeita a mídia) não pode derrubar o atendimento inteiro. Só os documentos
+        # efetivamente entregues entram na resposta ao usuário.
+        entregues: list[Documento] = []
         for doc in documentos:
-            await self._canal.enviar_documento(contato=contato, documento=doc)
-        return documentos
+            try:
+                await self._canal.enviar_documento(contato=contato, documento=doc)
+                entregues.append(doc)
+            except Exception:  # noqa: BLE001
+                _logger.warning(
+                    "Falha ao enviar documento '%s' para %s (tenant %s)",
+                    doc.nome,
+                    contato,
+                    tenant_id,
+                    exc_info=True,
+                )
+        return entregues
 
 
 # --------------------------------------------------------------------------- #

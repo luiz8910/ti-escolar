@@ -72,6 +72,19 @@ class Settings(BaseSettings):
     meta_webhook_verify_token: str = "changeme"
     meta_daily_tier_limit: int = 1000
 
+    # Twilio WhatsApp (alternativa à Meta; Sandbox funciona sem verificação de empresa)
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    # Número remetente do WhatsApp no Twilio (ex.: "whatsapp:+14155238886" — o Sandbox).
+    twilio_whatsapp_from: str | None = None
+    # URL pública (opcional) para receber callbacks de status de entrega dos envios.
+    twilio_status_callback_url: str | None = None
+    # Tenant que recebe as mensagens inbound do número único do Twilio (Sandbox tem 1 número).
+    # Se vazio, cai no tenant demo (00000000-0000-0000-0000-000000000001).
+    twilio_default_tenant_id: str | None = None
+    # Valida a assinatura X-Twilio-Signature dos webhooks (recomendado em produção).
+    twilio_validate_signature: bool = False
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.backend_cors_origins.split(",") if o.strip()]
