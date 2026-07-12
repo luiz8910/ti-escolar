@@ -15,9 +15,13 @@ from fastapi.testclient import TestClient
 from app.application.use_cases import RespostaMensagem
 from app.domain.entities import (
     Broadcast,
+    CategoriaTemplate,
     DestinatarioBroadcast,
     Documento,
+    MessageTemplate,
     StatusEntrega,
+    StatusTemplate,
+    Tenant,
 )
 from app.infrastructure.channel.twilio_channel import (
     TwilioMessageChannel,
@@ -25,7 +29,7 @@ from app.infrastructure.channel.twilio_channel import (
 )
 from app.interfaces.api.webhook_twilio import _assinatura_valida, _sem_prefixo
 from app.main import app
-from app.interfaces.deps import get_broadcast_repo, get_receber_mensagem
+from app.interfaces.deps import get_broadcast_repo, get_receber_mensagem, get_tenant_repo
 from tests.fakes import FakeBroadcastRepo
 
 
@@ -92,6 +96,39 @@ async def test_enviar_texto_monta_payload_e_retorna_sid():
     assert data["StatusCallback"] == "https://exemplo.test/api/webhook/twilio"
 
 
+def _template(*, content_sid: str = "") -> MessageTemplate:
+    return MessageTemplate(
+        tenant_id=uuid.uuid4(),
+        nome="lembrete",
+        categoria=CategoriaTemplate.UTILITY,
+        idioma="pt_BR",
+        corpo="Olá, {{1}}! Lembrete: {{2}}.",
+        status=StatusTemplate.APROVADO,
+        content_sid=content_sid,
+    )
+
+
+async def test_enviar_template_com_content_sid_usa_content_api():
+    # Produção: com ContentSid, envia via Content API (sem Body).
+    await _canal().enviar_template(
+        contato="+5515997454531", template=_template(content_sid="HX123"), parametros=["João", "reunião"]
+    )
+    data = _FakeAsyncClient.ultimo["data"]
+    assert data["ContentSid"] == "HX123"
+    assert data["ContentVariables"] == '{"1": "João", "2": "reunião"}'
+    assert "Body" not in data
+
+
+async def test_enviar_template_sem_content_sid_cai_em_texto_livre():
+    # Sandbox / dentro da janela de 24h: sem ContentSid, renderiza o corpo como texto livre.
+    await _canal().enviar_template(
+        contato="+5515997454531", template=_template(), parametros=["João", "reunião"]
+    )
+    data = _FakeAsyncClient.ultimo["data"]
+    assert data["Body"] == "Olá, João! Lembrete: reunião."
+    assert "ContentSid" not in data
+
+
 async def test_enviar_documento_inclui_media_url():
     doc = Documento(
         tenant_id=uuid.uuid4(),
@@ -139,12 +176,24 @@ class _FakeReceber:
         return RespostaMensagem(texto=f"eco: {texto}", fontes=[], documentos=[])
 
 
+class _FakeTenants:
+    """Repositório de tenants em memória para o roteamento por número no webhook."""
+
+    def __init__(self, *, por_numero: dict[str, Tenant] | None = None) -> None:
+        self._por_numero = por_numero or {}
+
+    async def por_whatsapp(self, numero: str) -> Tenant | None:
+        return self._por_numero.get(numero)
+
+
 @pytest.fixture
 def client_e_fakes():
     repo = FakeBroadcastRepo()
     receber = _FakeReceber()
+    tenants = _FakeTenants()
     app.dependency_overrides[get_broadcast_repo] = lambda: repo
     app.dependency_overrides[get_receber_mensagem] = lambda: receber
+    app.dependency_overrides[get_tenant_repo] = lambda: tenants
     yield TestClient(app), repo, receber
     app.dependency_overrides.clear()
 
@@ -159,6 +208,27 @@ def test_webhook_inbound_roteia_e_responde_twiml(client_e_fakes):
     assert "<Message>eco: Oi</Message>" in resp.text
     assert receber.chamadas and receber.chamadas[0][1] == "+5515997454531"
     assert receber.chamadas[0][2] == "Oi"
+
+
+def test_webhook_inbound_roteia_pelo_numero_da_escola():
+    # Uma escola cadastrada com o número de destino (To) recebe o inbound no seu tenant.
+    escola = Tenant(nome="Colégio X", slug="colegio-x", whatsapp_numero="+14155238886")
+    repo = FakeBroadcastRepo()
+    receber = _FakeReceber()
+    tenants = _FakeTenants(por_numero={"+14155238886": escola})
+    app.dependency_overrides[get_broadcast_repo] = lambda: repo
+    app.dependency_overrides[get_receber_mensagem] = lambda: receber
+    app.dependency_overrides[get_tenant_repo] = lambda: tenants
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/api/webhook/twilio",
+            data={"From": "whatsapp:+5515997454531", "To": "whatsapp:+14155238886", "Body": "Oi"},
+        )
+        assert resp.status_code == 200
+        assert receber.chamadas and receber.chamadas[0][0] == escola.id
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_webhook_status_atualiza_destinatario(client_e_fakes):

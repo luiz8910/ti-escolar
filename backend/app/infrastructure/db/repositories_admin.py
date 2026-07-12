@@ -59,6 +59,7 @@ def _to_tenant(row: TenantORM) -> Tenant:
         nome=row.nome,
         slug=row.slug,
         criado_em=row.criado_em,
+        whatsapp_numero=row.whatsapp_numero,
         status=StatusTenant(row.status),
         motivo_bloqueio=row.motivo_bloqueio,
         bloqueado_em=row.bloqueado_em,
@@ -111,6 +112,7 @@ class SqlTenantRepository:
                 nome=tenant.nome,
                 slug=tenant.slug,
                 criado_em=tenant.criado_em,
+                whatsapp_numero=tenant.whatsapp_numero,
                 status=tenant.status.value,
                 motivo_bloqueio=tenant.motivo_bloqueio,
                 bloqueado_em=tenant.bloqueado_em,
@@ -136,6 +138,14 @@ class SqlTenantRepository:
     async def por_slug(self, slug: str) -> Tenant | None:
         stmt = select(TenantORM).where(TenantORM.slug == slug)
         row = (await self._s.execute(stmt)).scalar_one_or_none()
+        return _to_tenant(row) if row else None
+
+    async def por_whatsapp(self, numero: str) -> Tenant | None:
+        numero = (numero or "").strip()
+        if not numero:  # nunca casar pelo número vazio (padrão das escolas sem número)
+            return None
+        stmt = select(TenantORM).where(TenantORM.whatsapp_numero == numero)
+        row = (await self._s.execute(stmt)).scalars().first()
         return _to_tenant(row) if row else None
 
     async def listar(self) -> list[Tenant]:
@@ -200,6 +210,7 @@ class SqlTenantRepository:
             raise ValueError("Escola não encontrada.")
         row.nome = tenant.nome
         row.slug = tenant.slug
+        row.whatsapp_numero = tenant.whatsapp_numero
         row.status = tenant.status.value
         row.motivo_bloqueio = tenant.motivo_bloqueio
         row.bloqueado_em = tenant.bloqueado_em

@@ -111,6 +111,7 @@ def get_enviar_broadcast(
         canal=criar_canal(settings),
         quota=SqlQuotaPolicy(session, limite_diario=settings.meta_daily_tier_limit),
         rate_limiter=_rate_limiter,
+        tenants=SqlTenantRepository(session),
     )
 
 
@@ -197,6 +198,7 @@ def get_enviar_para_grupo(
         canal=criar_canal(settings),
         quota=SqlQuotaPolicy(session, limite_diario=settings.meta_daily_tier_limit),
         rate_limiter=_rate_limiter,
+        tenants=SqlTenantRepository(session),
     )
     return EnviarBroadcastParaGrupo(grupos=SqlGrupoRepository(session), enviar=enviar)
 

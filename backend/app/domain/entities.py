@@ -57,6 +57,10 @@ class Tenant:
     slug: str
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+    # Número de WhatsApp (E.164) da escola: por onde ela atende/dispara. Roteia o inbound
+    # (o ``To`` recebido) para o tenant certo e é o remetente (``From``) do outbound. Vazio
+    # = usa o número padrão do canal (ex.: número único do Sandbox Twilio).
+    whatsapp_numero: str = ""
     status: StatusTenant = StatusTenant.ATIVO
     motivo_bloqueio: str = ""
     bloqueado_em: datetime | None = None
@@ -658,6 +662,10 @@ class MessageTemplate:
     corpo: str  # com placeholders {{1}}, {{2}}...
     id: UUID = field(default_factory=_new_id)
     status: StatusTemplate = StatusTemplate.RASCUNHO
+    # Id do template aprovado no provedor (Twilio Content API: ``HX...``). Quando presente,
+    # o canal envia via template aprovado (obrigatório fora da janela de 24h); vazio =
+    # texto livre (Sandbox / dentro da janela de 24h).
+    content_sid: str = ""
 
 
 class StatusEntrega(str, enum.Enum):

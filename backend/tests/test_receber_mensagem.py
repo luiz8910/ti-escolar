@@ -57,7 +57,7 @@ async def test_pedido_de_boletim_envia_documento():
 
 
 class _CanalQueFalhaNoDoc(FakeChannel):
-    async def enviar_documento(self, *, contato, documento) -> str:
+    async def enviar_documento(self, *, contato, documento, remetente=None) -> str:
         raise RuntimeError("canal rejeitou a mídia (ex.: URL inacessível)")
 
 

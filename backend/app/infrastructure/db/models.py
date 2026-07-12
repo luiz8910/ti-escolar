@@ -36,6 +36,10 @@ class TenantORM(Base):
     nome: Mapped[str] = mapped_column(String(200))
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     criado_em: Mapped[datetime] = mapped_column()
+    # Número de WhatsApp (E.164) da escola; vazio = usa o número padrão do canal.
+    whatsapp_numero: Mapped[str] = mapped_column(
+        String(30), default="", server_default="", index=True
+    )
     # Licenciamento / cobrança / bloqueio.
     status: Mapped[str] = mapped_column(String(20), default="ativo", server_default="ativo")
     motivo_bloqueio: Mapped[str] = mapped_column(Text, default="", server_default="")
@@ -142,6 +146,10 @@ class TemplateORM(Base):
     idioma: Mapped[str] = mapped_column(String(10))
     corpo: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20))
+    # Id do template aprovado no provedor (Twilio Content API: HX...); vazio = texto livre.
+    content_sid: Mapped[str] = mapped_column(
+        String(64), default="", server_default=""
+    )
 
 
 class BroadcastORM(Base):

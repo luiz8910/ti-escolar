@@ -96,6 +96,7 @@ export interface Escola {
   id: string;
   nome: string;
   slug: string;
+  whatsapp_numero: string;
   criado_em: string;
   total_conversas: number;
   total_contatos: number;
@@ -376,11 +377,15 @@ export async function obterEscola(id: string): Promise<Escola> {
   return resp.json();
 }
 
-export async function criarEscola(nome: string, slug: string): Promise<Escola> {
+export async function criarEscola(
+  nome: string,
+  slug: string,
+  whatsappNumero = ""
+): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ nome, slug }),
+    body: JSON.stringify({ nome, slug, whatsapp_numero: whatsappNumero }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar escola`);
   return resp.json();
@@ -389,12 +394,13 @@ export async function criarEscola(nome: string, slug: string): Promise<Escola> {
 export async function atualizarEscola(
   id: string,
   nome: string,
-  slug: string
+  slug: string,
+  whatsappNumero = ""
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ nome, slug }),
+    body: JSON.stringify({ nome, slug, whatsapp_numero: whatsappNumero }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao atualizar escola`);
   return resp.json();

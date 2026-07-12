@@ -39,6 +39,7 @@ from app.domain.ports import (
     QuotaPolicy,
     RateLimiter,
     TemplateRepository,
+    TenantRepository,
     VectorStore,
 )
 
@@ -458,12 +459,16 @@ class EnviarBroadcast:
         canal: MessageChannel,
         quota: QuotaPolicy,
         rate_limiter: RateLimiter,
+        tenants: TenantRepository | None = None,
     ) -> None:
         self._broadcasts = broadcasts
         self._templates = templates
         self._canal = canal
         self._quota = quota
         self._rate_limiter = rate_limiter
+        # Opcional: resolve o número (From) da escola para o outbound sair do próprio
+        # número dela. Sem repositório, o canal usa seu número padrão.
+        self._tenants = tenants
 
     async def executar(self, *, broadcast: Broadcast) -> ResultadoBroadcast:
         template = await self._templates.obter(
@@ -471,6 +476,12 @@ class EnviarBroadcast:
         )
         if template is None:
             raise ValueError("Template não encontrado para o tenant.")
+
+        # Número de WhatsApp da própria escola como remetente (multi-tenant); vazio = padrão.
+        remetente: str | None = None
+        if self._tenants is not None:
+            escola = await self._tenants.obter(broadcast.tenant_id)
+            remetente = (escola.whatsapp_numero or None) if escola else None
         if template.status != StatusTemplate.APROVADO:
             raise ValueError(
                 "O template precisa estar APROVADO pela Meta para disparo fora da janela de 24h."
@@ -491,7 +502,10 @@ class EnviarBroadcast:
             await self._rate_limiter.aguardar_vaga()
             try:
                 mensagem_id = await self._canal.enviar_template(
-                    contato=dest.contato, template=template, parametros=dest.parametros
+                    contato=dest.contato,
+                    template=template,
+                    parametros=dest.parametros,
+                    remetente=remetente,
                 )
                 dest.status = StatusEntrega.ENVIADO
                 dest.mensagem_id_externo = mensagem_id

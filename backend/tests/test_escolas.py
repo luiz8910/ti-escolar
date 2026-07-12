@@ -16,6 +16,7 @@ from app.application.tenant_use_cases import (
     ListarConversasDaEscola,
     ObterConversaDaEscola,
     RemoverEscola,
+    normalizar_whatsapp,
     slugify,
 )
 from app.domain.entities import (
@@ -60,6 +61,11 @@ class FakeTenantRepo:
 
     async def por_slug(self, slug):
         return next((t for t in self.tenants.values() if t.slug == slug), None)
+
+    async def por_whatsapp(self, numero):
+        if not numero:
+            return None
+        return next((t for t in self.tenants.values() if t.whatsapp_numero == numero), None)
 
     async def listar(self):
         return list(self.tenants.values())
@@ -158,6 +164,53 @@ async def test_remover_escola():
     escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Some")
     assert await RemoverEscola(tenants=repo).executar(criador=_super(), tenant_id=escola.id) is True
     assert await RemoverEscola(tenants=repo).executar(criador=_super(), tenant_id=escola.id) is False
+
+
+# --------------------------------------------------------------------------- #
+# Número de WhatsApp por escola (multi-tenant)
+# --------------------------------------------------------------------------- #
+def test_normalizar_whatsapp():
+    assert normalizar_whatsapp("") == ""
+    assert normalizar_whatsapp("  ") == ""
+    assert normalizar_whatsapp("whatsapp:+1 (415) 523-8886") == "+14155238886"
+    assert normalizar_whatsapp("+55 11 98888-7777") == "+5511988887777"
+    with pytest.raises(ValueError, match="inválido"):
+        normalizar_whatsapp("123")
+
+
+async def test_cria_escola_com_whatsapp_normalizado():
+    repo = FakeTenantRepo()
+    escola = await CriarEscola(tenants=repo).executar(
+        criador=_super(), nome="Colégio A", whatsapp_numero="whatsapp:+14155238886"
+    )
+    assert escola.whatsapp_numero == "+14155238886"
+    assert await repo.por_whatsapp("+14155238886") is escola
+
+
+async def test_whatsapp_duplicado_entre_escolas_falha():
+    repo = FakeTenantRepo()
+    await CriarEscola(tenants=repo).executar(
+        criador=_super(), nome="Escola 1", whatsapp_numero="+14155238886"
+    )
+    with pytest.raises(ValueError, match="já está vinculado"):
+        await CriarEscola(tenants=repo).executar(
+            criador=_super(), nome="Escola 2", whatsapp_numero="+1 415 523 8886"
+        )
+
+
+async def test_atualizar_mantem_proprio_whatsapp():
+    repo = FakeTenantRepo()
+    escola = await CriarEscola(tenants=repo).executar(
+        criador=_super(), nome="Escola", whatsapp_numero="+14155238886"
+    )
+    # Reeditar a mesma escola com o mesmo número não deve conflitar consigo mesma.
+    atualizada = await AtualizarEscola(tenants=repo).executar(
+        criador=_super(),
+        tenant_id=escola.id,
+        nome="Escola Renomeada",
+        whatsapp_numero="+14155238886",
+    )
+    assert atualizada.whatsapp_numero == "+14155238886"
 
 
 # --------------------------------------------------------------------------- #
