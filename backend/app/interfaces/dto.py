@@ -132,8 +132,11 @@ class EscolaEntrada(BaseModel):
     nome: str
     # Opcional: se vazio, é derivado do nome.
     slug: str = ""
-    # Número de WhatsApp da escola (E.164). Vazio = usa o número padrão do canal.
+    # Número de WhatsApp da escola (E.164) operado pela plataforma. Vazio = usa o número
+    # padrão do canal.
     whatsapp_numero: str = ""
+    # Telefone de contato público (E.164) da escola — **obrigatório**, apenas informativo.
+    telefone_contato: str = ""
 
 
 class LicencaSaida(BaseModel):
@@ -158,6 +161,7 @@ class EscolaSaida(BaseModel):
     nome: str
     slug: str
     whatsapp_numero: str = ""
+    telefone_contato: str = ""
     criado_em: datetime
     licenca: LicencaSaida
 
@@ -167,6 +171,7 @@ class EscolaResumoSaida(BaseModel):
     nome: str
     slug: str
     whatsapp_numero: str = ""
+    telefone_contato: str = ""
     criado_em: datetime
     total_conversas: int
     total_contatos: int

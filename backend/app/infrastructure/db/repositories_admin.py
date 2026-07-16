@@ -60,6 +60,7 @@ def _to_tenant(row: TenantORM) -> Tenant:
         slug=row.slug,
         criado_em=row.criado_em,
         whatsapp_numero=row.whatsapp_numero,
+        telefone_contato=row.telefone_contato,
         status=StatusTenant(row.status),
         motivo_bloqueio=row.motivo_bloqueio,
         bloqueado_em=row.bloqueado_em,
@@ -113,6 +114,7 @@ class SqlTenantRepository:
                 slug=tenant.slug,
                 criado_em=tenant.criado_em,
                 whatsapp_numero=tenant.whatsapp_numero,
+                telefone_contato=tenant.telefone_contato,
                 status=tenant.status.value,
                 motivo_bloqueio=tenant.motivo_bloqueio,
                 bloqueado_em=tenant.bloqueado_em,
@@ -211,6 +213,7 @@ class SqlTenantRepository:
         row.nome = tenant.nome
         row.slug = tenant.slug
         row.whatsapp_numero = tenant.whatsapp_numero
+        row.telefone_contato = tenant.telefone_contato
         row.status = tenant.status.value
         row.motivo_bloqueio = tenant.motivo_bloqueio
         row.bloqueado_em = tenant.bloqueado_em

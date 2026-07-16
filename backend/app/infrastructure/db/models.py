@@ -40,6 +40,9 @@ class TenantORM(Base):
     whatsapp_numero: Mapped[str] = mapped_column(
         String(30), default="", server_default="", index=True
     )
+    # Telefone de contato (E.164) público da escola — informativo (secretaria). Sem índice
+    # nem unicidade: não roteia mensagens.
+    telefone_contato: Mapped[str] = mapped_column(String(30), default="", server_default="")
     # Licenciamento / cobrança / bloqueio.
     status: Mapped[str] = mapped_column(String(20), default="ativo", server_default="ativo")
     motivo_bloqueio: Mapped[str] = mapped_column(Text, default="", server_default="")

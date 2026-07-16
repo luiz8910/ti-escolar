@@ -420,6 +420,7 @@ def _escola_saida(t: Tenant) -> EscolaSaida:
         nome=t.nome,
         slug=t.slug,
         whatsapp_numero=t.whatsapp_numero,
+        telefone_contato=t.telefone_contato,
         criado_em=t.criado_em,
         licenca=_licenca_saida(t),
     )
@@ -437,6 +438,7 @@ async def criar_escola(
             nome=payload.nome,
             slug=payload.slug,
             whatsapp_numero=payload.whatsapp_numero,
+            telefone_contato=payload.telefone_contato,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
@@ -460,6 +462,7 @@ async def listar_escolas(
             nome=r.tenant.nome,
             slug=r.tenant.slug,
             whatsapp_numero=r.tenant.whatsapp_numero,
+            telefone_contato=r.tenant.telefone_contato,
             criado_em=r.tenant.criado_em,
             total_conversas=r.total_conversas,
             total_contatos=r.total_contatos,
@@ -501,6 +504,7 @@ async def atualizar_escola(
             nome=payload.nome,
             slug=payload.slug,
             whatsapp_numero=payload.whatsapp_numero,
+            telefone_contato=payload.telefone_contato,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e

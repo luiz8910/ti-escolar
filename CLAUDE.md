@@ -139,7 +139,8 @@ ti-escolar/
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
   `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
   `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant` →
-  `0008_professores` → `0009_tenant_whatsapp` → `0010_template_content_sid`.
+  `0008_professores` → `0009_tenant_whatsapp` → `0010_template_content_sid` →
+  `0011_tenant_telefone_contato`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -312,11 +313,18 @@ ti-escolar/
   dois tenants com o mesmo número tornariam o inbound ambíguo). Vazio = usa o número padrão do canal
   (`TWILIO_WHATSAPP_FROM`). Migration `0009_tenant_whatsapp`. **Roteamento:** o webhook Twilio
   resolve o tenant pelo número de destino (`To`) e o outbound (`EnviarBroadcast`) sai do número da
-  própria escola — ver §9c.
+  própria escola — ver §9c. **Modelo operacional:** cada escola **adquire um número dedicado** à
+  plataforma (o número antigo da secretaria segue livre para atendimento manual).
+- **Telefone de contato por escola (`Tenant.telefone_contato`, E.164):** o número **público** que
+  a secretaria já usa no dia a dia — apenas **informativo** (referência de contato). É
+  **obrigatório** no cadastro/edição (`CriarEscola`/`AtualizarEscola` via
+  `normalizar_telefone_contato`), mas **não roteia inbound**, **não é remetente do outbound** e
+  **não exige unicidade** entre escolas (duas escolas podem compartilhá-lo). Migration
+  `0011_tenant_telefone_contato`. Distinto de `whatsapp_numero` (o número operado pela plataforma).
 - **Rotas** em `app/interfaces/api/admin.py` (guard `_exige_super_admin`): `/api/admin/escolas`
   (POST/GET), `/escolas/{tenant_id}` (GET/PUT/DELETE), `/escolas/{tenant_id}/conversas`,
   `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`. `EscolaEntrada`
-  e `Escola(Resumo)Saida` carregam `whatsapp_numero`.
+  e `Escola(Resumo)Saida` carregam `whatsapp_numero` e `telefone_contato`.
 - **Painel:** `web/app/admin/escolas/` (lista com campo de WhatsApp no cadastro/edição + detalhe por
   `[tenantId]`).
 
