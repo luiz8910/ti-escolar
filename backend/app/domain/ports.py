@@ -107,17 +107,28 @@ class DocumentSource(Protocol):
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class MessageChannel(Protocol):
-    async def enviar_texto(self, *, contato: str, texto: str) -> str:
+    # ``remetente`` (E.164) permite enviar a partir do número da escola (multi-tenant).
+    # Quando None/vazio, o adaptador usa o número padrão configurado no canal.
+    async def enviar_texto(
+        self, *, contato: str, texto: str, remetente: str | None = None
+    ) -> str:
         """Envia uma mensagem de texto livre. Retorna o id externo da mensagem."""
         ...
 
     async def enviar_template(
-        self, *, contato: str, template: MessageTemplate, parametros: list[str]
+        self,
+        *,
+        contato: str,
+        template: MessageTemplate,
+        parametros: list[str],
+        remetente: str | None = None,
     ) -> str:
         """Envia uma mensagem de template (HSM). Retorna o id externo."""
         ...
 
-    async def enviar_documento(self, *, contato: str, documento: Documento) -> str: ...
+    async def enviar_documento(
+        self, *, contato: str, documento: Documento, remetente: str | None = None
+    ) -> str: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +172,10 @@ class TenantRepository(Protocol):
     async def obter(self, tenant_id: UUID) -> Tenant | None: ...
 
     async def por_slug(self, slug: str) -> Tenant | None: ...
+
+    async def por_whatsapp(self, numero: str) -> Tenant | None:
+        """Escola cujo ``whatsapp_numero`` casa com ``numero`` (E.164). Roteia o inbound."""
+        ...
 
     async def listar(self) -> list[Tenant]: ...
 

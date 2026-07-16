@@ -14,6 +14,8 @@ depois. A cota diária e o throttling continuam nos casos de uso (``QuotaPolicy`
 
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from app.domain.entities import Documento, MessageTemplate
@@ -45,8 +47,12 @@ class TwilioMessageChannel:
     def _url(self) -> str:
         return f"{_BASE}/Accounts/{self._account_sid}/Messages.json"
 
-    async def _post(self, data: dict[str, str]) -> str:
-        data = {"From": self._from, **data}
+    def _remetente(self, remetente: str | None) -> str:
+        """From efetivo: o número da escola (multi-tenant) ou o padrão do canal."""
+        return _com_prefixo_whatsapp(remetente) if remetente else self._from
+
+    async def _post(self, data: dict[str, str], *, remetente: str | None = None) -> str:
+        data = {"From": self._remetente(remetente), **data}
         if self._status_callback_url:
             data.setdefault("StatusCallback", self._status_callback_url)
         async with httpx.AsyncClient(timeout=30) as client:
@@ -55,22 +61,45 @@ class TwilioMessageChannel:
             payload = resp.json()
         return payload["sid"]
 
-    async def enviar_texto(self, *, contato: str, texto: str) -> str:
-        return await self._post({"To": _com_prefixo_whatsapp(contato), "Body": texto})
+    async def enviar_texto(
+        self, *, contato: str, texto: str, remetente: str | None = None
+    ) -> str:
+        return await self._post(
+            {"To": _com_prefixo_whatsapp(contato), "Body": texto}, remetente=remetente
+        )
 
     async def enviar_template(
-        self, *, contato: str, template: MessageTemplate, parametros: list[str]
+        self,
+        *,
+        contato: str,
+        template: MessageTemplate,
+        parametros: list[str],
+        remetente: str | None = None,
     ) -> str:
+        to = _com_prefixo_whatsapp(contato)
+        if template.content_sid:
+            # Produção: template aprovado via Content API. Obrigatório para mensagens
+            # iniciadas pela escola fora da janela de 24h. As variáveis {{1}},{{2}}... viram
+            # ContentVariables {"1": ..., "2": ...} (JSON).
+            variaveis = {str(i): p for i, p in enumerate(parametros, start=1)}
+            data = {"To": to, "ContentSid": template.content_sid}
+            if variaveis:
+                data["ContentVariables"] = json.dumps(variaveis, ensure_ascii=False)
+            return await self._post(data, remetente=remetente)
+        # Sem ContentSid: texto livre (Sandbox / dentro da janela de 24h).
         corpo = template.corpo
         for i, p in enumerate(parametros, start=1):
             corpo = corpo.replace(f"{{{{{i}}}}}", p)
-        return await self._post({"To": _com_prefixo_whatsapp(contato), "Body": corpo})
+        return await self._post({"To": to, "Body": corpo}, remetente=remetente)
 
-    async def enviar_documento(self, *, contato: str, documento: Documento) -> str:
+    async def enviar_documento(
+        self, *, contato: str, documento: Documento, remetente: str | None = None
+    ) -> str:
         return await self._post(
             {
                 "To": _com_prefixo_whatsapp(contato),
                 "Body": documento.nome,
                 "MediaUrl": documento.url,
-            }
+            },
+            remetente=remetente,
         )

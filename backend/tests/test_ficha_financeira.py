@@ -27,6 +27,9 @@ from app.domain.entities import (
     Usuario,
 )
 
+# Telefone de contato válido (o campo é obrigatório ao criar/atualizar escolas).
+_CONTATO = "+5511999990001"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -75,7 +78,7 @@ class FakeTenantRepo:
 # --------------------------------------------------------------------------- #
 async def test_cancelar_registra_data_e_motivo():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
 
     cancelada = await CancelarEscola(tenants=repo).executar(
         criador=_super(), tenant_id=escola.id, motivo="Encerrou o contrato"
@@ -90,7 +93,7 @@ async def test_cancelar_registra_data_e_motivo():
 
 async def test_cancelamento_exige_motivo():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     with pytest.raises(ValueError, match="motivo"):
         await CancelarEscola(tenants=repo).executar(
             criador=_super(), tenant_id=escola.id, motivo="  "
@@ -99,7 +102,7 @@ async def test_cancelamento_exige_motivo():
 
 async def test_admin_de_tenant_nao_cancela():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     with pytest.raises(PermissionError):
         await CancelarEscola(tenants=repo).executar(
             criador=_admin(escola.id), tenant_id=escola.id, motivo="hack"
@@ -108,7 +111,7 @@ async def test_admin_de_tenant_nao_cancela():
 
 async def test_reativar_limpa_cancelamento():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     await CancelarEscola(tenants=repo).executar(
         criador=_super(), tenant_id=escola.id, motivo="x"
     )
@@ -124,7 +127,7 @@ async def test_reativar_limpa_cancelamento():
 # --------------------------------------------------------------------------- #
 async def test_definir_precos_e_mrr_arr_mensal():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     out = await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=escola.id,
@@ -140,7 +143,7 @@ async def test_definir_precos_e_mrr_arr_mensal():
 
 async def test_mrr_no_plano_anual_normaliza_por_doze():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     out = await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=escola.id,
@@ -155,7 +158,7 @@ async def test_mrr_no_plano_anual_normaliza_por_doze():
 
 async def test_definir_licenca_preserva_precos_quando_omitidos():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=escola.id,
@@ -175,7 +178,7 @@ async def test_definir_licenca_preserva_precos_quando_omitidos():
 
 async def test_preco_negativo_recusado():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     with pytest.raises(ValueError, match="negativo"):
         await DefinirLicenca(tenants=repo).executar(
             criador=_super(),
@@ -191,7 +194,7 @@ async def test_preco_negativo_recusado():
 # --------------------------------------------------------------------------- #
 async def test_ficha_consolida_uso_e_financas():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     # Início há ~3 meses (90 dias).
     escola.criado_em = _now() - timedelta(days=90)
     await DefinirLicenca(tenants=repo).executar(
@@ -219,7 +222,7 @@ async def test_ficha_consolida_uso_e_financas():
 
 async def test_ficha_health_score_penaliza_bloqueio_e_tier_baixo():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     escola.status = StatusTenant.BLOQUEADO
     await repo.atualizar(escola)
 
@@ -234,7 +237,7 @@ async def test_ficha_health_score_penaliza_bloqueio_e_tier_baixo():
 
 async def test_ficha_cancelada_zera_health_score():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     await CancelarEscola(tenants=repo).executar(
         criador=_super(), tenant_id=escola.id, motivo="saiu"
     )
@@ -248,7 +251,7 @@ async def test_ficha_cancelada_zera_health_score():
 
 async def test_ficha_exige_super_admin():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     with pytest.raises(PermissionError):
         await ObterFichaFinanceira(tenants=repo).executar(
             solicitante=_admin(escola.id), tenant_id=escola.id, limite_diario_meta=1000

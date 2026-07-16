@@ -144,16 +144,24 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
   const toast = useToast();
   const [nome, setNome] = useState("");
   const [slug, setSlug] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [contato, setContato] = useState("");
   const [salvando, setSalvando] = useState(false);
 
   async function criar(e: React.FormEvent) {
     e.preventDefault();
     if (!nome.trim()) return;
+    if (!contato.trim()) {
+      toast({ tone: "danger", title: "Informe o telefone de contato da escola." });
+      return;
+    }
     setSalvando(true);
     try {
-      await criarEscola(nome.trim(), slug.trim());
+      await criarEscola(nome.trim(), slug.trim(), whatsapp.trim(), contato.trim());
       setNome("");
       setSlug("");
+      setWhatsapp("");
+      setContato("");
       await onCriada();
       toast({ tone: "success", title: "Escola cadastrada." });
     } catch (err) {
@@ -188,6 +196,28 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
             />
           </Field>
         </div>
+        <div className="min-w-[190px]">
+          <Field label="Contato (obrigatório)" htmlFor="esc-contato">
+            <Input
+              id="esc-contato"
+              mono
+              value={contato}
+              onChange={(e) => setContato(e.target.value)}
+              placeholder="+5511999998888"
+            />
+          </Field>
+        </div>
+        <div className="min-w-[190px]">
+          <Field label="WhatsApp da plataforma (opcional)" htmlFor="esc-whats">
+            <Input
+              id="esc-whats"
+              mono
+              value={whatsapp}
+              onChange={(e) => setWhatsapp(e.target.value)}
+              placeholder="+14155238886"
+            />
+          </Field>
+        </div>
         <Button type="submit" loading={salvando} leftIcon={<PlusIcon size={15} />}>
           {salvando ? "Salvando…" : "Cadastrar"}
         </Button>
@@ -206,13 +236,19 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
   const [editandoLicenca, setEditandoLicenca] = useState(false);
   const [nome, setNome] = useState(escola.nome);
   const [slug, setSlug] = useState(escola.slug);
+  const [whatsapp, setWhatsapp] = useState(escola.whatsapp_numero);
+  const [contato, setContato] = useState(escola.telefone_contato);
   const bloqueada = escola.licenca.status === "bloqueado";
   const cancelada = escola.licenca.status === "cancelado";
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
+    if (!contato.trim()) {
+      toast({ tone: "danger", title: "Informe o telefone de contato da escola." });
+      return;
+    }
     try {
-      await atualizarEscola(escola.id, nome.trim(), slug.trim());
+      await atualizarEscola(escola.id, nome.trim(), slug.trim(), whatsapp.trim(), contato.trim());
       setEditando(false);
       await onMudou();
       toast({ tone: "success", title: "Escola atualizada." });
@@ -267,7 +303,15 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
           </Link>
           <LicencaBadge licenca={escola.licenca} />
         </div>
-        <p className="font-mono text-[11.5px] text-n-400">{escola.slug}</p>
+        <p className="font-mono text-[11.5px] text-n-400">
+          {escola.slug}
+          {escola.whatsapp_numero && (
+            <span className="ml-2 text-n-500">· 📱 {escola.whatsapp_numero}</span>
+          )}
+          {escola.telefone_contato && (
+            <span className="ml-2 text-n-500">· ☎ {escola.telefone_contato}</span>
+          )}
+        </p>
       </div>
 
       <div className="flex items-center gap-4 text-[11.5px] font-semibold text-n-500">
@@ -333,6 +377,8 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
                 setEditando(false);
                 setNome(escola.nome);
                 setSlug(escola.slug);
+                setWhatsapp(escola.whatsapp_numero);
+                setContato(escola.telefone_contato);
               }}
             >
               Cancelar
@@ -349,6 +395,22 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
           </Field>
           <Field label="Slug">
             <Input mono value={slug} onChange={(e) => setSlug(e.target.value)} />
+          </Field>
+          <Field label="Telefone de contato (E.164) — obrigatório">
+            <Input
+              mono
+              value={contato}
+              onChange={(e) => setContato(e.target.value)}
+              placeholder="+5511999998888"
+            />
+          </Field>
+          <Field label="WhatsApp da plataforma (E.164)">
+            <Input
+              mono
+              value={whatsapp}
+              onChange={(e) => setWhatsapp(e.target.value)}
+              placeholder="+14155238886"
+            />
           </Field>
         </form>
       </Modal>

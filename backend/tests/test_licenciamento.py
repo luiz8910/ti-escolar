@@ -26,6 +26,9 @@ from app.domain.entities import (
 )
 from app.domain.entities import Papel
 
+# Telefone de contato válido (o campo é obrigatório ao criar/atualizar escolas).
+_CONTATO = "+5511999990001"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -95,7 +98,7 @@ class FakeEmailSender:
 # --------------------------------------------------------------------------- #
 async def test_super_admin_bloqueia_e_registra_motivo():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
 
     bloqueada = await BloquearEscola(tenants=repo).executar(
         criador=_super(), tenant_id=escola.id, motivo="Inadimplência"
@@ -108,7 +111,7 @@ async def test_super_admin_bloqueia_e_registra_motivo():
 
 async def test_bloqueio_exige_motivo():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     with pytest.raises(ValueError, match="motivo"):
         await BloquearEscola(tenants=repo).executar(
             criador=_super(), tenant_id=escola.id, motivo="   "
@@ -117,7 +120,7 @@ async def test_bloqueio_exige_motivo():
 
 async def test_admin_de_tenant_nao_bloqueia():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     with pytest.raises(PermissionError):
         await BloquearEscola(tenants=repo).executar(
             criador=_admin(escola.id), tenant_id=escola.id, motivo="hack"
@@ -126,7 +129,7 @@ async def test_admin_de_tenant_nao_bloqueia():
 
 async def test_desbloquear_limpa_estado():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     await BloquearEscola(tenants=repo).executar(
         criador=_super(), tenant_id=escola.id, motivo="x"
     )
@@ -141,7 +144,7 @@ async def test_desbloquear_limpa_estado():
 # --------------------------------------------------------------------------- #
 async def test_definir_licenca_anual_com_expiracao():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     expira = _now() + timedelta(days=10)
     out = await DefinirLicenca(tenants=repo).executar(
         criador=_super(), tenant_id=escola.id, plano=PlanoTenant.ANUAL, licenca_expira_em=expira
@@ -166,7 +169,7 @@ async def test_licenca_expirada():
 
 async def test_renomear_preserva_licenciamento():
     repo = FakeTenantRepo()
-    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X")
+    escola = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Escola X", telefone_contato=_CONTATO)
     await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=escola.id,
@@ -177,7 +180,7 @@ async def test_renomear_preserva_licenciamento():
         criador=_super(), tenant_id=escola.id, motivo="pagamento"
     )
     renomeada = await AtualizarEscola(tenants=repo).executar(
-        criador=_super(), tenant_id=escola.id, nome="Escola Renomeada"
+        criador=_super(), tenant_id=escola.id, nome="Escola Renomeada", telefone_contato=_CONTATO
     )
     assert renomeada.nome == "Escola Renomeada"
     assert renomeada.status == StatusTenant.BLOQUEADO
@@ -190,7 +193,7 @@ async def test_renomear_preserva_licenciamento():
 # --------------------------------------------------------------------------- #
 async def test_notifica_apenas_anual_a_vencer():
     repo = FakeTenantRepo()
-    a_vencer = await CriarEscola(tenants=repo).executar(criador=_super(), nome="A Vencer")
+    a_vencer = await CriarEscola(tenants=repo).executar(criador=_super(), nome="A Vencer", telefone_contato=_CONTATO)
     await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=a_vencer.id,
@@ -198,7 +201,7 @@ async def test_notifica_apenas_anual_a_vencer():
         licenca_expira_em=_now() + timedelta(days=7),
     )
     # Mensal dentro da janela: não deve notificar.
-    mensal = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Mensal")
+    mensal = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Mensal", telefone_contato=_CONTATO)
     await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=mensal.id,
@@ -206,7 +209,7 @@ async def test_notifica_apenas_anual_a_vencer():
         licenca_expira_em=_now() + timedelta(days=7),
     )
     # Anual longe do vencimento: não deve notificar.
-    longe = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Longe")
+    longe = await CriarEscola(tenants=repo).executar(criador=_super(), nome="Longe", telefone_contato=_CONTATO)
     await DefinirLicenca(tenants=repo).executar(
         criador=_super(),
         tenant_id=longe.id,

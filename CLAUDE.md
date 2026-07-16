@@ -139,7 +139,8 @@ ti-escolar/
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
   `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
   `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant` →
-  `0008_professores`.
+  `0008_professores` → `0009_tenant_whatsapp` → `0010_template_content_sid` →
+  `0011_tenant_telefone_contato`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -305,10 +306,27 @@ ti-escolar/
 - **Visão cross-tenant:** `ListarEscolas` devolve `ResumoEscola` (totais de conversas, contatos e
   broadcasts por escola); o super admin também inspeciona **conversas + mensagens**
   (`ObterConversaDaEscola`) e **broadcasts** de cada escola.
+- **Número de WhatsApp por escola (`Tenant.whatsapp_numero`, E.164):** cada escola atende/dispara
+  pelo seu próprio número (multi-tenant). `CriarEscola`/`AtualizarEscola` recebem o número,
+  **normalizam** para E.164 (`normalizar_whatsapp`, aceita DDI internacional — ex.: o número do
+  Sandbox `+14155238886`) e **validam a unicidade** entre escolas (`TenantRepository.por_whatsapp`;
+  dois tenants com o mesmo número tornariam o inbound ambíguo). Vazio = usa o número padrão do canal
+  (`TWILIO_WHATSAPP_FROM`). Migration `0009_tenant_whatsapp`. **Roteamento:** o webhook Twilio
+  resolve o tenant pelo número de destino (`To`) e o outbound (`EnviarBroadcast`) sai do número da
+  própria escola — ver §9c. **Modelo operacional:** cada escola **adquire um número dedicado** à
+  plataforma (o número antigo da secretaria segue livre para atendimento manual).
+- **Telefone de contato por escola (`Tenant.telefone_contato`, E.164):** o número **público** que
+  a secretaria já usa no dia a dia — apenas **informativo** (referência de contato). É
+  **obrigatório** no cadastro/edição (`CriarEscola`/`AtualizarEscola` via
+  `normalizar_telefone_contato`), mas **não roteia inbound**, **não é remetente do outbound** e
+  **não exige unicidade** entre escolas (duas escolas podem compartilhá-lo). Migration
+  `0011_tenant_telefone_contato`. Distinto de `whatsapp_numero` (o número operado pela plataforma).
 - **Rotas** em `app/interfaces/api/admin.py` (guard `_exige_super_admin`): `/api/admin/escolas`
   (POST/GET), `/escolas/{tenant_id}` (GET/PUT/DELETE), `/escolas/{tenant_id}/conversas`,
-  `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`.
-- **Painel:** `web/app/admin/escolas/` (lista + detalhe por `[tenantId]`).
+  `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`. `EscolaEntrada`
+  e `Escola(Resumo)Saida` carregam `whatsapp_numero` e `telefone_contato`.
+- **Painel:** `web/app/admin/escolas/` (lista com campo de WhatsApp no cadastro/edição + detalhe por
+  `[tenantId]`).
 
 ### 6e. Licenciamento, cobrança e bloqueio (super admin)
 
@@ -434,19 +452,36 @@ recebimento de imediato (o usuário entra no Sandbox com `join <palavra>`).
   como id externo (mesmo papel do `wamid` da Meta). O Sandbox **não usa templates HSM**:
   dentro da janela de 24h o corpo do template é enviado como **texto livre** (templates reais
   usam o Content API — `ContentSid`, roadmap). Cota/throttling continuam nos casos de uso.
+- **From por escola (multi-tenant):** os métodos de `MessageChannel` recebem um parâmetro
+  opcional `remetente` (E.164); quando informado, o Twilio envia a partir dele, senão usa o
+  `TWILIO_WHATSAPP_FROM` padrão. `EnviarBroadcast` resolve o `Tenant.whatsapp_numero` da escola
+  (via `TenantRepository`) e o passa como `remetente`, de modo que o **outbound sai do número
+  da própria escola**. Meta/demo aceitam o parâmetro por conformidade (a Meta fixa a origem no
+  `phone_number_id`, então ignora).
 - **Webhook** (`app/interfaces/api/webhook_twilio.py`, `POST /api/webhook/twilio`): o Twilio
   envia **form-urlencoded** (parseado com a stdlib, sem `python-multipart`) e espera **TwiML**
   como resposta. Trata **status de entrega** (`MessageStatus` → `StatusEntrega` via
   `broadcasts.registrar_status`, pelo `MessageSid`) **e mensagens recebidas** (`Body`/`From` →
   `ReceberMensagemRecebida`, respondendo em TwiML) — **fechando o inbound real** (o webhook da
-  Meta ainda só trata status). Como o Sandbox tem um número único, o inbound cai em um único
-  tenant (`TWILIO_DEFAULT_TENANT_ID`; default = tenant demo). Valida `X-Twilio-Signature`
-  (HMAC-SHA1, só stdlib) quando `TWILIO_VALIDATE_SIGNATURE=true`.
+  Meta ainda só trata status). O inbound é **roteado pelo número de destino** (`To` → escola via
+  `TenantRepository.por_whatsapp`); quando nenhum tenant casa com o `To` (ex.: número único do
+  Sandbox), cai no `TWILIO_DEFAULT_TENANT_ID` (default = tenant demo). A resposta em TwiML sai
+  automaticamente pelo mesmo número que recebeu. Valida `X-Twilio-Signature` (HMAC-SHA1, só
+  stdlib) quando `TWILIO_VALIDATE_SIGNATURE=true`.
 - **Config** (`.env`): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
   (ex.: `whatsapp:+14155238886`), `TWILIO_STATUS_CALLBACK_URL` (opcional),
   `TWILIO_DEFAULT_TENANT_ID` (opcional), `TWILIO_VALIDATE_SIGNATURE` (default `false`).
   A fábrica `criar_canal` (`app/infrastructure/factories.py`) escolhe o adaptador pelo
   `MESSAGE_CHANNEL` (`demo` | `meta` | `twilio`).
+- **Template aprovado (Content API):** `MessageTemplate.content_sid` (migration
+  `0010_template_content_sid`) guarda o `ContentSid` (`HX...`) do template aprovado no Twilio.
+  `TwilioMessageChannel.enviar_template` envia via `ContentSid` + `ContentVariables` quando o
+  `content_sid` está presente (produção, obrigatório fora da janela de 24h) e cai em **texto
+  livre** quando vazio (Sandbox / dentro das 24h). Falta apenas **preencher** o `content_sid`
+  por tenant (seed/DB ou a futura tela de templates).
+- **Go-live em produção:** `docs/producao-whatsapp.md` traz o checklist completo (self
+  sign-up/Embedded Signup do Twilio, aprovação de templates, número por escola, webhooks,
+  limites/tiers e Business Verification).
 
 ---
 

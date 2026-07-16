@@ -154,17 +154,18 @@ class FakeChannel:
         self.enviados: list[tuple[str, str]] = []
         self._falhar_em = falhar_em or set()
 
-    async def enviar_texto(self, *, contato, texto) -> str:
+    async def enviar_texto(self, *, contato, texto, remetente=None) -> str:
         self.enviados.append((contato, "texto"))
         return "x"
 
-    async def enviar_template(self, *, contato, template, parametros) -> str:
+    async def enviar_template(self, *, contato, template, parametros, remetente=None) -> str:
         if contato in self._falhar_em:
             raise RuntimeError("falha simulada")
+        self.remetente = remetente
         self.enviados.append((contato, "template"))
         return f"wamid:{contato}"
 
-    async def enviar_documento(self, *, contato, documento) -> str:
+    async def enviar_documento(self, *, contato, documento, remetente=None) -> str:
         self.enviados.append((contato, "documento"))
         return "x"
 

@@ -416,7 +416,13 @@ def _licenca_saida(t: Tenant) -> LicencaSaida:
 
 def _escola_saida(t: Tenant) -> EscolaSaida:
     return EscolaSaida(
-        id=t.id, nome=t.nome, slug=t.slug, criado_em=t.criado_em, licenca=_licenca_saida(t)
+        id=t.id,
+        nome=t.nome,
+        slug=t.slug,
+        whatsapp_numero=t.whatsapp_numero,
+        telefone_contato=t.telefone_contato,
+        criado_em=t.criado_em,
+        licenca=_licenca_saida(t),
     )
 
 
@@ -428,7 +434,11 @@ async def criar_escola(
 ) -> EscolaSaida:
     try:
         escola = await CriarEscola(tenants=tenants).executar(
-            criador=criador, nome=payload.nome, slug=payload.slug
+            criador=criador,
+            nome=payload.nome,
+            slug=payload.slug,
+            whatsapp_numero=payload.whatsapp_numero,
+            telefone_contato=payload.telefone_contato,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
@@ -451,6 +461,8 @@ async def listar_escolas(
             id=r.tenant.id,
             nome=r.tenant.nome,
             slug=r.tenant.slug,
+            whatsapp_numero=r.tenant.whatsapp_numero,
+            telefone_contato=r.tenant.telefone_contato,
             criado_em=r.tenant.criado_em,
             total_conversas=r.total_conversas,
             total_contatos=r.total_contatos,
@@ -487,7 +499,12 @@ async def atualizar_escola(
 ) -> EscolaSaida:
     try:
         escola = await AtualizarEscola(tenants=tenants).executar(
-            criador=criador, tenant_id=tenant_id, nome=payload.nome, slug=payload.slug
+            criador=criador,
+            tenant_id=tenant_id,
+            nome=payload.nome,
+            slug=payload.slug,
+            whatsapp_numero=payload.whatsapp_numero,
+            telefone_contato=payload.telefone_contato,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e

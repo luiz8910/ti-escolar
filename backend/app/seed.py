@@ -128,6 +128,8 @@ async def _seed() -> None:
                     nome="Escola Demonstração",
                     slug="escola-demo",
                     criado_em=datetime.now(timezone.utc),
+                    # Telefone de contato público da escola (informativo).
+                    telefone_contato="+5511999990000",
                     # Preços da ficha financeira (centavos): R$ 299/mês, R$ 2.990/ano.
                     valor_mensal_centavos=29900,
                     valor_anual_centavos=299000,

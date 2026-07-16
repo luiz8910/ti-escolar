@@ -23,12 +23,20 @@ class DemoMessageChannel:
         self.enviados: list[EnvioRegistrado] = field(default_factory=list)  # type: ignore[assignment]
         self.enviados = []
 
-    async def enviar_texto(self, *, contato: str, texto: str) -> str:
+    # ``remetente`` é aceito por conformidade com a porta; no demo não há número real.
+    async def enviar_texto(
+        self, *, contato: str, texto: str, remetente: str | None = None
+    ) -> str:
         self.enviados.append(EnvioRegistrado(contato=contato, tipo="texto", conteudo=texto))
         return f"demo-{len(self.enviados)}"
 
     async def enviar_template(
-        self, *, contato: str, template: MessageTemplate, parametros: list[str]
+        self,
+        *,
+        contato: str,
+        template: MessageTemplate,
+        parametros: list[str],
+        remetente: str | None = None,
     ) -> str:
         corpo = template.corpo
         for i, p in enumerate(parametros, start=1):
@@ -36,7 +44,9 @@ class DemoMessageChannel:
         self.enviados.append(EnvioRegistrado(contato=contato, tipo="template", conteudo=corpo))
         return f"demo-{len(self.enviados)}"
 
-    async def enviar_documento(self, *, contato: str, documento: Documento) -> str:
+    async def enviar_documento(
+        self, *, contato: str, documento: Documento, remetente: str | None = None
+    ) -> str:
         self.enviados.append(
             EnvioRegistrado(contato=contato, tipo="documento", conteudo=documento.url)
         )

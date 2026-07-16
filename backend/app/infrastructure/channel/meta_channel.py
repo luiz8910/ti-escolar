@@ -33,7 +33,11 @@ class MetaMessageChannel:
             data = resp.json()
         return data["messages"][0]["id"]
 
-    async def enviar_texto(self, *, contato: str, texto: str) -> str:
+    # ``remetente`` é aceito por conformidade com a porta; na Meta o número de origem é
+    # fixado pelo ``phone_number_id`` da credencial, então o parâmetro é ignorado.
+    async def enviar_texto(
+        self, *, contato: str, texto: str, remetente: str | None = None
+    ) -> str:
         return await self._post(
             {
                 "messaging_product": "whatsapp",
@@ -44,7 +48,12 @@ class MetaMessageChannel:
         )
 
     async def enviar_template(
-        self, *, contato: str, template: MessageTemplate, parametros: list[str]
+        self,
+        *,
+        contato: str,
+        template: MessageTemplate,
+        parametros: list[str],
+        remetente: str | None = None,
     ) -> str:
         componentes = []
         if parametros:
@@ -67,7 +76,9 @@ class MetaMessageChannel:
             }
         )
 
-    async def enviar_documento(self, *, contato: str, documento: Documento) -> str:
+    async def enviar_documento(
+        self, *, contato: str, documento: Documento, remetente: str | None = None
+    ) -> str:
         return await self._post(
             {
                 "messaging_product": "whatsapp",

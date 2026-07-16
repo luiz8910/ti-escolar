@@ -25,7 +25,13 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from app.config import Settings
 from app.domain.entities import StatusEntrega
 from app.infrastructure.db.repositories import SqlBroadcastRepository
-from app.interfaces.deps import get_broadcast_repo, get_receber_mensagem, get_settings_dep
+from app.infrastructure.db.repositories_admin import SqlTenantRepository
+from app.interfaces.deps import (
+    get_broadcast_repo,
+    get_receber_mensagem,
+    get_settings_dep,
+    get_tenant_repo,
+)
 
 logger = logging.getLogger("webhook.twilio")
 router = APIRouter(prefix="/api/webhook/twilio", tags=["webhook"])
@@ -74,6 +80,7 @@ def _twiml(texto: str | None = None) -> Response:
 async def receber_evento(
     request: Request,
     broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
     receber=Depends(get_receber_mensagem),
     settings: Settings = Depends(get_settings_dep),
 ) -> Response:
@@ -114,11 +121,16 @@ async def receber_evento(
     corpo = (params.get("Body") or "").strip()
     origem = params.get("From", "")
     if corpo and origem:
-        tenant_id = (
-            UUID(settings.twilio_default_tenant_id)
-            if settings.twilio_default_tenant_id
-            else _TENANT_DEMO
-        )
+        # Roteia pelo número de destino (To = número da escola). Sem escola cadastrada com
+        # esse número (ex.: número único do Sandbox), cai no tenant padrão.
+        destino = _sem_prefixo(params.get("To", ""))
+        escola = await tenants.por_whatsapp(destino) if destino else None
+        if escola is not None:
+            tenant_id = escola.id
+        elif settings.twilio_default_tenant_id:
+            tenant_id = UUID(settings.twilio_default_tenant_id)
+        else:
+            tenant_id = _TENANT_DEMO
         resposta = await receber.executar(
             tenant_id=tenant_id, contato=_sem_prefixo(origem), texto=corpo
         )

@@ -54,6 +54,51 @@ def slugify(texto: str) -> str:
     return slug or "escola"
 
 
+def normalizar_whatsapp(bruto: str) -> str:
+    """Normaliza o número de WhatsApp para E.164 (``+<dígitos>``); "" quando vazio.
+
+    Aceita internacional (ex.: número do Sandbox Twilio ``+14155238886``), então não força
+    DDI do Brasil. Remove o prefixo ``whatsapp:`` e qualquer separador (espaços, traços,
+    parênteses). Valida um formato E.164 plausível (8 a 15 dígitos após o ``+``).
+    """
+    bruto = (bruto or "").strip()
+    if not bruto:
+        return ""
+    if bruto.startswith("whatsapp:"):
+        bruto = bruto.split(":", 1)[1]
+    digitos = re.sub(r"\D", "", bruto)
+    if not (8 <= len(digitos) <= 15):
+        raise ValueError("Número de WhatsApp inválido: informe no formato E.164 (ex.: +14155238886).")
+    return f"+{digitos}"
+
+
+def normalizar_telefone_contato(bruto: str) -> str:
+    """Normaliza o telefone de contato para E.164. **Obrigatório:** vazio levanta erro.
+
+    Diferente de ``whatsapp_numero``, o contato é só informativo (número público da
+    secretaria) — não é validado por unicidade nem roteia mensagens.
+    """
+    if not (bruto or "").strip():
+        raise ValueError("O telefone de contato da escola é obrigatório.")
+    try:
+        return normalizar_whatsapp(bruto)
+    except ValueError as e:
+        raise ValueError(
+            "Telefone de contato inválido: informe no formato E.164 (ex.: +5511999998888)."
+        ) from e
+
+
+async def _validar_whatsapp_unico(
+    tenants: TenantRepository, *, numero: str, tenant_id: UUID | None = None
+) -> None:
+    """Impede dois tenants com o mesmo número (roteamento do inbound seria ambíguo)."""
+    if not numero:
+        return
+    conflito = await tenants.por_whatsapp(numero)
+    if conflito and conflito.id != tenant_id:
+        raise ValueError(f"O número {numero} já está vinculado a outra escola.")
+
+
 # --------------------------------------------------------------------------- #
 # CRUD de escolas (super admin)
 # --------------------------------------------------------------------------- #
@@ -61,7 +106,15 @@ class CriarEscola:
     def __init__(self, *, tenants: TenantRepository) -> None:
         self._tenants = tenants
 
-    async def executar(self, *, criador: Usuario, nome: str, slug: str = "") -> Tenant:
+    async def executar(
+        self,
+        *,
+        criador: Usuario,
+        nome: str,
+        slug: str = "",
+        whatsapp_numero: str = "",
+        telefone_contato: str = "",
+    ) -> Tenant:
         _exige_super_admin(criador)
         nome = nome.strip()
         if not nome:
@@ -69,7 +122,12 @@ class CriarEscola:
         slug = slugify(slug or nome)
         if await self._tenants.por_slug(slug):
             raise ValueError("Já existe uma escola com este slug.")
-        return await self._tenants.criar(Tenant(nome=nome, slug=slug))
+        numero = normalizar_whatsapp(whatsapp_numero)
+        contato = normalizar_telefone_contato(telefone_contato)
+        await _validar_whatsapp_unico(self._tenants, numero=numero)
+        return await self._tenants.criar(
+            Tenant(nome=nome, slug=slug, whatsapp_numero=numero, telefone_contato=contato)
+        )
 
 
 class ListarEscolas:
@@ -95,7 +153,14 @@ class AtualizarEscola:
         self._tenants = tenants
 
     async def executar(
-        self, *, criador: Usuario, tenant_id: UUID, nome: str, slug: str = ""
+        self,
+        *,
+        criador: Usuario,
+        tenant_id: UUID,
+        nome: str,
+        slug: str = "",
+        whatsapp_numero: str = "",
+        telefone_contato: str = "",
     ) -> Tenant:
         _exige_super_admin(criador)
         existente = await self._tenants.obter(tenant_id)
@@ -108,9 +173,14 @@ class AtualizarEscola:
         conflito = await self._tenants.por_slug(slug)
         if conflito and conflito.id != tenant_id:
             raise ValueError("Já existe uma escola com este slug.")
+        numero = normalizar_whatsapp(whatsapp_numero)
+        contato = normalizar_telefone_contato(telefone_contato)
+        await _validar_whatsapp_unico(self._tenants, numero=numero, tenant_id=tenant_id)
         # Renomear não mexe no licenciamento: preserva status/plano/expiração.
         existente.nome = nome
         existente.slug = slug
+        existente.whatsapp_numero = numero
+        existente.telefone_contato = contato
         return await self._tenants.atualizar(existente)
 
 
