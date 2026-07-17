@@ -18,6 +18,7 @@ from app.domain.ports import (
     ProfessorRepository,
     SalaRepository,
 )
+from app.infrastructure.security import hash_senha
 
 
 # --------------------------------------------------------------------------- #
@@ -436,11 +437,17 @@ class CadastrarProfessor:
     def __init__(self, *, professores: ProfessorRepository) -> None:
         self._professores = professores
 
-    async def executar(self, *, tenant_id: UUID, nome: str, telefone: str) -> Professor:
+    async def executar(
+        self, *, tenant_id: UUID, nome: str, telefone: str, senha: str = ""
+    ) -> Professor:
         if await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone):
             raise ValueError("Já existe um professor com este telefone neste tenant.")
+        # Senha opcional habilita o login do professor no mural (§A1).
+        senha_hash = hash_senha(senha) if senha else ""
         return await self._professores.criar(
-            Professor(tenant_id=tenant_id, nome=nome, telefone=telefone)
+            Professor(
+                tenant_id=tenant_id, nome=nome, telefone=telefone, senha_hash=senha_hash
+            )
         )
 
 
@@ -468,7 +475,13 @@ class AtualizarProfessor:
         self._professores = professores
 
     async def executar(
-        self, *, tenant_id: UUID, professor_id: UUID, nome: str, telefone: str
+        self,
+        *,
+        tenant_id: UUID,
+        professor_id: UUID,
+        nome: str,
+        telefone: str,
+        senha: str | None = None,
     ) -> Professor:
         atual = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
         if atual is None:
@@ -479,6 +492,9 @@ class AtualizarProfessor:
                 raise ValueError("Já existe um professor com este telefone neste tenant.")
         atual.nome = nome
         atual.telefone = telefone
+        # ``senha=None`` mantém a atual; string vazia limpa o acesso; texto define nova senha.
+        if senha is not None:
+            atual.senha_hash = hash_senha(senha) if senha else ""
         return await self._professores.atualizar(atual)
 
 

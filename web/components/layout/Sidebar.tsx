@@ -17,6 +17,8 @@ import {
   FileIcon,
   ExternalIcon,
   CloseIcon,
+  SparkIcon,
+  PrintIcon,
 } from "../ui/icons";
 
 interface NavItem {
@@ -33,6 +35,14 @@ const PRINCIPAL: NavItem[] = [
   { href: "/admin/professores", label: "Professores", icon: TeacherIcon },
   { href: "/admin/conhecimento", label: "Base de conhecimento", icon: BookIcon },
   { href: "/admin/prompt", label: "Instruções da escola", icon: InstructionsIcon },
+];
+
+// Comunicação interna e atendimento (Onda 1 · Rosa Cury).
+const COMUNICACAO: NavItem[] = [
+  { href: "/admin/respostas-rapidas", label: "Respostas rápidas", icon: SparkIcon },
+  { href: "/admin/avisos", label: "Avisos do dia", icon: BellIcon },
+  { href: "/admin/mural", label: "Mural do professor", icon: TeacherIcon },
+  { href: "/admin/impressao", label: "Fila de impressão", icon: PrintIcon },
 ];
 
 // Observabilidade / histórico da escola (conversas, disparos e auditoria).
@@ -156,6 +166,13 @@ export function Sidebar({
             PRINCIPAL
           </div>
           {PRINCIPAL.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={onClose} />
+          ))}
+
+          <div className="px-2.5 pb-2 pt-3.5 text-[10px] font-bold tracking-[0.12em] text-n-400">
+            COMUNICAÇÃO
+          </div>
+          {COMUNICACAO.map((item) => (
             <NavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={onClose} />
           ))}
 

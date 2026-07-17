@@ -80,14 +80,16 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
   const toast = useToast();
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
+  const [senha, setSenha] = useState("");
 
   async function cadastrar(e: React.FormEvent) {
     e.preventDefault();
     if (!nome.trim() || !telefone.trim()) return;
     try {
-      await cadastrarProfessor(nome.trim(), telefone.trim());
+      await cadastrarProfessor(nome.trim(), telefone.trim(), senha);
       setNome("");
       setTelefone("");
+      setSenha("");
       await onMudou();
       toast({ tone: "success", title: "Professor cadastrado." });
     } catch (err) {
@@ -114,13 +116,20 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
           onChange={(e) => setTelefone(e.target.value)}
           placeholder="WhatsApp, ex.: +5511999990000"
         />
+        <Input
+          className="w-44"
+          type="password"
+          value={senha}
+          onChange={(e) => setSenha(e.target.value)}
+          placeholder="Senha do mural (opcional)"
+        />
         <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
           Cadastrar
         </Button>
       </form>
       <p className="mt-2 text-xs text-n-400">
-        Atribua o professor às séries no card abaixo. Um professor pode conduzir várias séries;
-        cada série tem no máximo um professor.
+        A senha habilita o login do professor no mural (em <strong>/professor</strong>). Atribua
+        o professor às séries no card abaixo — um professor pode conduzir várias séries.
       </p>
     </Card>
   );
@@ -314,11 +323,18 @@ function EditarProfessor({
   const toast = useToast();
   const [nome, setNome] = useState(professor.nome);
   const [telefone, setTelefone] = useState(professor.telefone);
+  const [senha, setSenha] = useState("");
 
   async function salvar() {
     if (!nome.trim() || !telefone.trim()) return;
     try {
-      await atualizarProfessor(professor.id, nome.trim(), telefone.trim());
+      // Senha em branco mantém a atual; preenchida, redefine o acesso ao mural.
+      await atualizarProfessor(
+        professor.id,
+        nome.trim(),
+        telefone.trim(),
+        senha ? senha : undefined
+      );
       onClose();
       await onMudou();
       toast({ tone: "success", title: "Professor atualizado." });
@@ -350,6 +366,17 @@ function EditarProfessor({
           onChange={(e) => setTelefone(e.target.value)}
           placeholder="WhatsApp, ex.: +5511999990000"
         />
+        <Input
+          type="password"
+          value={senha}
+          onChange={(e) => setSenha(e.target.value)}
+          placeholder="Nova senha do mural (deixe em branco para manter)"
+        />
+        <p className="text-xs text-n-400">
+          {professor.tem_acesso
+            ? "Este professor já tem acesso ao mural."
+            : "Defina uma senha para habilitar o acesso ao mural."}
+        </p>
       </div>
     </Modal>
   );

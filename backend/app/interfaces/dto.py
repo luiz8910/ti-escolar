@@ -384,18 +384,23 @@ class ProfessorEntrada(BaseModel):
     tenant_id: UUID
     nome: str
     telefone: str = Field(..., examples=["+5511999990000"])
+    # Senha opcional: habilita o login do professor no mural (§A1).
+    senha: str = ""
 
 
 class ProfessorAtualizar(BaseModel):
     tenant_id: UUID
     nome: str
     telefone: str = Field(..., examples=["+5511999990000"])
+    # ``None`` mantém a senha atual; "" limpa o acesso; texto define nova senha.
+    senha: str | None = None
 
 
 class ProfessorSaida(BaseModel):
     id: UUID
     nome: str
     telefone: str
+    tem_acesso: bool = False
 
 
 class AtribuirProfessorEntrada(BaseModel):
@@ -534,6 +539,89 @@ class FonteConhecimentoSaida(BaseModel):
     criado_em: datetime
 
 
+class RespostaRapidaEntrada(BaseModel):
+    tenant_id: UUID
+    chave: str = Field(..., examples=["Horário do portão"])
+    conteudo: str
+    ativo: bool = True
+
+
+class RespostaRapidaAtualizar(BaseModel):
+    tenant_id: UUID
+    chave: str
+    conteudo: str
+    ativo: bool = True
+
+
+class RespostaRapidaSaida(BaseModel):
+    id: UUID
+    chave: str
+    conteudo: str
+    ativo: bool
+    fonte_id: UUID | None = None
+    atualizado_em: datetime | None = None
+
+
+class ImpressaoEntrada(BaseModel):
+    tenant_id: UUID
+    arquivo_nome: str = Field(..., examples=["prova_2bim_5A.pdf"])
+    professor_id: UUID | None = None
+    arquivo_url: str = ""
+    copias: int = 1
+    colorido: bool = False
+    frente_verso: bool = False
+    observacao: str = ""
+
+
+class ImpressaoStatusEntrada(BaseModel):
+    tenant_id: UUID
+    # "pendente" | "em_processo" | "concluida" | "cancelada"
+    status: str
+
+
+class ImpressaoSaida(BaseModel):
+    id: UUID
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+    arquivo_nome: str
+    arquivo_url: str = ""
+    copias: int
+    colorido: bool
+    frente_verso: bool
+    observacao: str = ""
+    status: str
+    criado_em: datetime
+    atualizado_em: datetime | None = None
+
+
+class AvisoTemporizadoEntrada(BaseModel):
+    tenant_id: UUID
+    mensagem: str = Field(
+        ..., examples=["Por motivo de saúde, a secretaria não abre à tarde hoje."]
+    )
+    ativo: bool = True
+    inicia_em: datetime | None = None
+    expira_em: datetime | None = None
+
+
+class AvisoTemporizadoAtualizar(BaseModel):
+    tenant_id: UUID
+    mensagem: str
+    ativo: bool = True
+    inicia_em: datetime | None = None
+    expira_em: datetime | None = None
+
+
+class AvisoTemporizadoSaida(BaseModel):
+    id: UUID
+    mensagem: str
+    ativo: bool
+    inicia_em: datetime | None = None
+    expira_em: datetime | None = None
+    vigente: bool = False
+    atualizado_em: datetime | None = None
+
+
 class PromptTenantEntrada(BaseModel):
     tenant_id: UUID
     conteudo: str = ""
@@ -543,3 +631,85 @@ class PromptTenantSaida(BaseModel):
     tenant_id: UUID
     conteudo: str
     atualizado_em: datetime | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Mural do professor: recados + confirmação de leitura (§A1)
+# --------------------------------------------------------------------------- #
+class ProfessorLoginEntrada(BaseModel):
+    tenant_id: UUID
+    telefone: str = Field(..., examples=["+5511999990000"])
+    senha: str
+
+
+class ProfessorLogadoSaida(BaseModel):
+    id: UUID
+    nome: str
+    telefone: str
+    tenant_id: UUID
+
+
+class ProfessorTokenSaida(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expira_em: int
+    professor: ProfessorLogadoSaida
+
+
+class RecadoEntrada(BaseModel):
+    tenant_id: UUID
+    titulo: str = Field(..., examples=["Reunião pedagógica sexta-feira"])
+    corpo: str
+
+
+class RecadoResumoSaida(BaseModel):
+    id: UUID
+    titulo: str
+    corpo: str
+    autor_nome: str = ""
+    criado_em: datetime
+    total_professores: int = 0
+    total_lidos: int = 0
+    total_nao_lidos: int = 0
+
+
+class LeitorRecadoSaida(BaseModel):
+    professor_id: UUID
+    nome: str
+    telefone: str
+    lido_em: datetime | None = None
+
+
+class RecadoStatusLeituraSaida(BaseModel):
+    id: UUID
+    titulo: str
+    corpo: str
+    criado_em: datetime
+    lidos: list[LeitorRecadoSaida] = []
+    nao_lidos: list[LeitorRecadoSaida] = []
+
+
+class RecadoDoProfessorSaida(BaseModel):
+    id: UUID
+    titulo: str
+    corpo: str
+    autor_nome: str = ""
+    criado_em: datetime
+    lido: bool = False
+    lido_em: datetime | None = None
+
+
+class ReNotificarRecadoSaida(BaseModel):
+    avisados: int
+
+
+class ProfessorImpressaoEntrada(BaseModel):
+    """Solicitação de impressão criada pelo próprio professor logado (tenant/professor
+    vêm do token, não do corpo)."""
+
+    arquivo_nome: str = Field(..., examples=["prova_2bim_5A.pdf"])
+    arquivo_url: str = ""
+    copias: int = 1
+    colorido: bool = False
+    frente_verso: bool = False
+    observacao: str = ""

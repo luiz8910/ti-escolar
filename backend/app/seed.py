@@ -15,11 +15,14 @@ from sqlalchemy import select
 from app.application.admin_use_cases import CriarGrupo
 from app.application.cadastro_use_cases import (
     AtribuirProfessorASala,
+    AtualizarProfessor,
     CadastrarAluno,
     CadastrarPai,
     CadastrarProfessor,
     CriarSala,
 )
+from app.application.mural_use_cases import PublicarRecado
+from app.application.respostas_rapidas_use_cases import CriarRespostaRapida
 from app.application.use_cases import IndexarConhecimento
 from app.config import get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
@@ -33,7 +36,12 @@ from app.infrastructure.db.repositories_admin import (
     SqlSalaRepository,
     SqlUsuarioRepository,
 )
-from app.infrastructure.db.repositories_conhecimento import SqlPromptTenantRepository
+from app.infrastructure.db.repositories_comunicacao import SqlMuralRepository
+from app.infrastructure.db.repositories_conhecimento import (
+    SqlFonteConhecimentoRepository,
+    SqlPromptTenantRepository,
+    SqlRespostaRapidaRepository,
+)
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import criar_embedder
 from app.infrastructure.security import hash_senha
@@ -75,6 +83,30 @@ _PROMPT_DEMO = (
     "para a portaria. Nunca compartilhe notas ou dados de um aluno com quem não seja o "
     "responsável cadastrado."
 )
+
+# Respostas rápidas ("atalhos") reais da EM Rosa Cury (chave, conteúdo).
+# São a base de conhecimento pronta da secretaria: ingeridas no RAG para o bot responder.
+_RESPOSTAS_RAPIDAS = [
+    ("SEDU", "O acesso ao portal SEDU (Secretaria de Educação) é feito pelo site oficial com o login do responsável. Em caso de dúvida no acesso, procure a secretaria."),
+    ("Horário do portão", "O portão abre às 7h e fecha às 7h30 no período da manhã. Após o horário, a entrada é somente pela secretaria."),
+    ("Horário da secretaria", "A secretaria atende de segunda a sexta-feira, das 7h30 às 17h."),
+    ("Buscar mais cedo", "Para buscar o aluno mais cedo, o responsável deve comparecer à secretaria e assinar o registro de saída antecipada."),
+    ("Pix APM", "As contribuições da APM podem ser feitas por Pix. Solicite a chave atualizada na secretaria e envie o comprovante."),
+    ("Eventual (lista complementar)", "A lista complementar de professores eventuais é organizada pela secretaria. Interessados devem deixar nome e contato atualizados."),
+    ("Histórico escolar", "O histórico escolar pode ser solicitado na secretaria; o prazo de emissão é informado no ato do pedido."),
+    ("Transferência (SED)", "A transferência é registrada no sistema SED. Traga um documento do aluno e o comprovante da nova escola para dar entrada."),
+    ("Endereço da escola", "A EM Rosa Cury fica no endereço informado no site da prefeitura. Em caso de dúvida, confirme com a secretaria."),
+    ("Transporte escolar gratuito", "O transporte escolar gratuito é solicitado na secretaria mediante comprovante de endereço e conforme os critérios da rede municipal."),
+    ("Inscrição rede municipal", "As inscrições na rede municipal seguem o calendário da Secretaria de Educação. Consulte prazos e documentos na secretaria."),
+    ("Conselho Tutelar", "Casos que envolvem o Conselho Tutelar são encaminhados pela direção. Em emergências, procure diretamente o órgão."),
+    ("Atestado", "O atestado médico deve ser entregue à secretaria em até 48 horas para justificar a ausência do aluno."),
+    ("Faltas", "Para justificar faltas, envie atestado ou justificativa à secretaria em até 48 horas, presencialmente ou pelo WhatsApp."),
+    ("Autorizar retirada", "A autorização de retirada por terceiros deve ser registrada por escrito na secretaria, com documento do autorizado."),
+    ("Autorizar van", "A autorização para transporte por van é feita na secretaria, identificando o condutor responsável."),
+    ("Troca de período", "A troca de período depende de vaga na turma desejada. Faça a solicitação na secretaria."),
+    ("Declaração de escolaridade", "A declaração de escolaridade é emitida pela secretaria e enviada em PDF quando solicitada pelo WhatsApp."),
+    ("Boas-vindas / grupo da turma", "Seja bem-vindo(a)! O grupo oficial da turma é usado apenas para avisos da escola. Assuntos de secretaria devem ser tratados por este canal."),
+]
 
 _CONHECIMENTO = [
     (
@@ -262,11 +294,56 @@ async def _seed() -> None:
             cadastrar_professor = CadastrarProfessor(professores=professores_repo)
             atribuir = AtribuirProfessorASala(salas=salas_repo)
             prof = await cadastrar_professor.executar(
-                tenant_id=DEMO_TENANT_ID, nome="Prof. Carla Mendes", telefone="+5511977770001"
+                tenant_id=DEMO_TENANT_ID,
+                nome="Prof. Carla Mendes",
+                telefone="+5511977770001",
+                # Senha para o login do professor no mural (§A1) — trocar em produção.
+                senha=settings.demo_professor_senha,
             )
             for sala in await salas_repo.listar(tenant_id=DEMO_TENANT_ID):
                 await atribuir.executar(
                     tenant_id=DEMO_TENANT_ID, sala_id=sala.id, professor_id=prof.id
+                )
+
+        # Garante que o professor demo tenha senha para o login do mural, mesmo em bases
+        # já semeadas antes desta feature (idempotente: só define se estiver vazia).
+        prof_demo = await professores_repo.por_telefone(
+            tenant_id=DEMO_TENANT_ID, telefone="+5511977770001"
+        )
+        if prof_demo is not None and not prof_demo.senha_hash:
+            await AtualizarProfessor(professores=professores_repo).executar(
+                tenant_id=DEMO_TENANT_ID,
+                professor_id=prof_demo.id,
+                nome=prof_demo.nome,
+                telefone=prof_demo.telefone,
+                senha=settings.demo_professor_senha,
+            )
+
+        # Mural do professor — um recado de demonstração da secretaria.
+        mural_repo = SqlMuralRepository(session)
+        if not await mural_repo.listar(tenant_id=DEMO_TENANT_ID):
+            await PublicarRecado(mural=mural_repo).executar(
+                tenant_id=DEMO_TENANT_ID,
+                titulo="Reunião pedagógica na sexta-feira",
+                corpo=(
+                    "Prezados professores, teremos reunião pedagógica nesta sexta-feira, "
+                    "às 17h, na sala dos professores. Confirmem a leitura deste recado."
+                ),
+                autor_nome="Secretaria",
+            )
+
+        # Respostas rápidas ("atalhos") da Rosa Cury — só cria se ainda não houver.
+        respostas_repo = SqlRespostaRapidaRepository(session)
+        if not await respostas_repo.listar(tenant_id=DEMO_TENANT_ID):
+            criar_resposta = CriarRespostaRapida(
+                respostas=respostas_repo,
+                embedder=criar_embedder(settings),
+                store=store,
+                fontes=SqlFonteConhecimentoRepository(session),
+            )
+            for chave, conteudo in _RESPOSTAS_RAPIDAS:
+                await criar_resposta.executar(
+                    tenant_id=DEMO_TENANT_ID, chave=chave, conteudo=conteudo
                 )
 
         # System prompt do tenant demo — só define se ainda não houver um

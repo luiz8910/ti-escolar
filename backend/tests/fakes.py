@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app.domain.entities import (
     Aluno,
+    AvisoTemporizado,
     Broadcast,
     Contato,
     Conversa,
@@ -15,11 +16,15 @@ from app.domain.entities import (
     Grupo,
     MessageQuota,
     MessageTemplate,
+    LeituraRecado,
     Professor,
     PromptTenant,
+    Recado,
     RespostaLLM,
+    RespostaRapida,
     ResultadoBusca,
     Sala,
+    SolicitacaoImpressao,
     TrechoConhecimento,
     TurnoConversa,
 )
@@ -73,6 +78,80 @@ class FakeFonteConhecimentoRepo:
         if f is None or f.tenant_id != tenant_id:
             return False
         del self.fontes[fonte_id]
+        return True
+
+
+class FakeAvisoTemporizadoRepo:
+    def __init__(self) -> None:
+        self.avisos: dict[uuid.UUID, "AvisoTemporizado"] = {}
+
+    async def criar(self, aviso):
+        self.avisos[aviso.id] = aviso
+        return aviso
+
+    async def obter(self, *, tenant_id, aviso_id):
+        a = self.avisos.get(aviso_id)
+        return a if a and a.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id):
+        return sorted(
+            [a for a in self.avisos.values() if a.tenant_id == tenant_id],
+            key=lambda a: a.criado_em,
+            reverse=True,
+        )
+
+    async def vigente(self, *, tenant_id):
+        for a in await self.listar(tenant_id=tenant_id):
+            if a.vigente_em():
+                return a
+        return None
+
+    async def atualizar(self, aviso):
+        self.avisos[aviso.id] = aviso
+        return aviso
+
+    async def remover(self, *, tenant_id, aviso_id):
+        a = self.avisos.get(aviso_id)
+        if a is None or a.tenant_id != tenant_id:
+            return False
+        del self.avisos[aviso_id]
+        return True
+
+
+class FakeRespostaRapidaRepo:
+    def __init__(self) -> None:
+        self.respostas: dict[uuid.UUID, "RespostaRapida"] = {}
+
+    async def criar(self, resposta):
+        self.respostas[resposta.id] = resposta
+        return resposta
+
+    async def obter(self, *, tenant_id, resposta_id):
+        r = self.respostas.get(resposta_id)
+        return r if r and r.tenant_id == tenant_id else None
+
+    async def por_chave(self, *, tenant_id, chave):
+        return next(
+            (
+                r
+                for r in self.respostas.values()
+                if r.tenant_id == tenant_id and r.chave == chave
+            ),
+            None,
+        )
+
+    async def listar(self, *, tenant_id):
+        return [r for r in self.respostas.values() if r.tenant_id == tenant_id]
+
+    async def atualizar(self, resposta):
+        self.respostas[resposta.id] = resposta
+        return resposta
+
+    async def remover(self, *, tenant_id, resposta_id):
+        r = self.respostas.get(resposta_id)
+        if r is None or r.tenant_id != tenant_id:
+            return False
+        del self.respostas[resposta_id]
         return True
 
 
@@ -318,6 +397,87 @@ class FakeContatoRepo:
         if c is None or c.tenant_id != tenant_id:
             return False
         del self.contatos[contato_id]
+        return True
+
+
+class FakeMuralRepo:
+    def __init__(self) -> None:
+        self.recados: dict[uuid.UUID, "Recado"] = {}
+        self._leituras: list["LeituraRecado"] = []
+
+    async def criar(self, recado):
+        self.recados[recado.id] = recado
+        return recado
+
+    async def obter(self, *, tenant_id, recado_id):
+        r = self.recados.get(recado_id)
+        return r if r and r.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id):
+        itens = [r for r in self.recados.values() if r.tenant_id == tenant_id]
+        itens.sort(key=lambda r: r.criado_em, reverse=True)
+        return itens
+
+    async def remover(self, *, tenant_id, recado_id):
+        r = self.recados.get(recado_id)
+        if r is None or r.tenant_id != tenant_id:
+            return False
+        del self.recados[recado_id]
+        self._leituras = [x for x in self._leituras if x.recado_id != recado_id]
+        return True
+
+    async def marcar_leitura(self, *, tenant_id, recado_id, professor_id):
+        for x in self._leituras:
+            if x.recado_id == recado_id and x.professor_id == professor_id:
+                return x
+        leitura = LeituraRecado(recado_id=recado_id, professor_id=professor_id)
+        self._leituras.append(leitura)
+        return leitura
+
+    async def leituras(self, *, recado_id):
+        return [x for x in self._leituras if x.recado_id == recado_id]
+
+    async def leituras_do_professor(self, *, tenant_id, professor_id):
+        recados_do_tenant = {
+            r.id for r in self.recados.values() if r.tenant_id == tenant_id
+        }
+        return [
+            x
+            for x in self._leituras
+            if x.professor_id == professor_id and x.recado_id in recados_do_tenant
+        ]
+
+
+class FakeSolicitacaoImpressaoRepo:
+    def __init__(self) -> None:
+        self.solicitacoes: dict[uuid.UUID, "SolicitacaoImpressao"] = {}
+
+    async def criar(self, solicitacao):
+        self.solicitacoes[solicitacao.id] = solicitacao
+        return solicitacao
+
+    async def obter(self, *, tenant_id, solicitacao_id):
+        s = self.solicitacoes.get(solicitacao_id)
+        return s if s and s.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id, status=None):
+        itens = [
+            s
+            for s in self.solicitacoes.values()
+            if s.tenant_id == tenant_id and (status is None or s.status == status)
+        ]
+        itens.sort(key=lambda s: s.criado_em, reverse=True)
+        return itens
+
+    async def atualizar(self, solicitacao):
+        self.solicitacoes[solicitacao.id] = solicitacao
+        return solicitacao
+
+    async def remover(self, *, tenant_id, solicitacao_id):
+        s = self.solicitacoes.get(solicitacao_id)
+        if s is None or s.tenant_id != tenant_id:
+            return False
+        del self.solicitacoes[solicitacao_id]
         return True
 
 

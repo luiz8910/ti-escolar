@@ -298,8 +298,49 @@ class Professor:
     tenant_id: UUID
     nome: str
     telefone: str  # E.164, ex.: +5511999990000
+    # Senha (hash PBKDF2) para o login do professor no mural (§A1). Vazio = sem acesso.
+    senha_hash: str = ""
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+
+    @property
+    def tem_acesso(self) -> bool:
+        """Verdadeiro quando o professor tem senha definida (pode entrar no mural)."""
+        return bool(self.senha_hash)
+
+
+class StatusImpressao(str, enum.Enum):
+    """Estado de uma solicitação de impressão na fila da secretaria."""
+
+    PENDENTE = "pendente"  # na fila, aguardando a secretaria
+    EM_PROCESSO = "em_processo"  # a secretaria está imprimindo
+    CONCLUIDA = "concluida"  # impressa e disponível
+    CANCELADA = "cancelada"  # cancelada (pelo professor ou pela secretaria)
+
+
+@dataclass
+class SolicitacaoImpressao:
+    """Pedido de impressão feito por um professor à secretaria (fila de impressão).
+
+    Dor de campo (Rosa Cury): "elas mandam atividade/prova/lista de chamada pra imprimir
+    o dia inteiro". O professor envia o arquivo com os parâmetros (nº de cópias,
+    colorido/PB, frente-e-verso) e o pedido cai numa fila para a secretaria processar,
+    sem ficar perguntando cada detalhe. ``professor_nome`` é denormalizado só para exibição.
+    """
+
+    tenant_id: UUID
+    arquivo_nome: str
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+    arquivo_url: str = ""  # referência/link do arquivo enviado
+    copias: int = 1
+    colorido: bool = False
+    frente_verso: bool = False
+    observacao: str = ""
+    status: StatusImpressao = StatusImpressao.PENDENTE
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
 
 
 @dataclass
@@ -507,6 +548,67 @@ class RegistroAuditoria:
 
 
 # --------------------------------------------------------------------------- #
+# Mural do professor: recados da secretaria + confirmação de leitura (§A1)
+# --------------------------------------------------------------------------- #
+@dataclass
+class Recado:
+    """Recado da secretaria/gestão publicado no mural dos professores.
+
+    Substitui o WhatsApp pessoal das professoras (que "não leem" e reclamam do volume)
+    por um canal profissional com **confirmação de leitura**: fica marcado quem viu, e
+    quem não viu pode ser re-notificado. ``autor_nome`` é denormalizado para exibição.
+    """
+
+    tenant_id: UUID
+    titulo: str
+    corpo: str
+    autor_id: str = ""  # id do usuário que publicou
+    autor_nome: str = ""
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class LeituraRecado:
+    """Confirmação de leitura de um recado por um professor ("ticado")."""
+
+    recado_id: UUID
+    professor_id: UUID
+    lido_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class RecadoResumo:
+    """Recado com os contadores de leitura, para a visão da secretaria."""
+
+    recado: Recado
+    total_professores: int = 0
+    total_lidos: int = 0
+
+    @property
+    def total_nao_lidos(self) -> int:
+        return max(0, self.total_professores - self.total_lidos)
+
+
+@dataclass
+class RecadoDoProfessor:
+    """Recado na visão do professor, com o seu próprio status de leitura."""
+
+    recado: Recado
+    lido: bool = False
+    lido_em: datetime | None = None
+
+
+@dataclass
+class StatusLeituraRecado:
+    """Detalhe de leitura de um recado: quem leu (com data) e quem ainda não leu."""
+
+    recado: Recado
+    lidos: list[tuple[Professor, datetime | None]] = field(default_factory=list)
+    nao_lidos: list[Professor] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Base de conhecimento (RAG)
 # --------------------------------------------------------------------------- #
 class TipoConhecimento(str, enum.Enum):
@@ -547,6 +649,65 @@ class FonteConhecimento:
     total_trechos: int = 0
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class RespostaRapida:
+    """Resposta rápida ("atalho") da escola: uma chave curta + o conteúdo padrão.
+
+    São os atalhos de "Respostas rápidas" que a secretaria já usa no WhatsApp
+    (ex.: "SEDU", "Horário do portão", "Transporte escolar gratuito"). Cada uma é
+    **ingerida na base de RAG** do tenant (``fonte_id`` aponta para a
+    ``FonteConhecimento`` gerada) para que o bot responda automaticamente. ``ativo``
+    controla se está indexada/disponível para o bot. Única por ``(tenant_id, chave)``.
+    """
+
+    tenant_id: UUID
+    chave: str  # ex.: "Horário do portão"
+    conteudo: str
+    ativo: bool = True
+    fonte_id: UUID | None = None
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class AvisoTemporizado:
+    """Aviso geral **temporizado** que o bot responde automaticamente a quem inicia conversa.
+
+    Dor de campo: hoje a secretaria só consegue configurar um recado do dia mexendo no
+    aparelho ("fica arrumando bom dia/boa tarde"). Aqui o recado é cadastrado no painel,
+    tem uma **janela de vigência** opcional (``inicia_em``/``expira_em``) e, enquanto
+    vigente, é anexado à resposta do bot — sem mexer no celular. Ex.: "Por motivo de
+    saúde, a secretaria não abre à tarde hoje."
+    """
+
+    tenant_id: UUID
+    mensagem: str
+    ativo: bool = True
+    inicia_em: datetime | None = None
+    expira_em: datetime | None = None
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+    def vigente_em(self, agora: datetime | None = None) -> bool:
+        """Verdadeiro se o aviso está ativo e dentro da janela de vigência."""
+        if not self.ativo:
+            return False
+        agora = agora or _now()
+        inicio = self.inicia_em
+        fim = self.expira_em
+        if inicio is not None and inicio.tzinfo is None:
+            inicio = inicio.replace(tzinfo=timezone.utc)
+        if fim is not None and fim.tzinfo is None:
+            fim = fim.replace(tzinfo=timezone.utc)
+        if inicio is not None and agora < inicio:
+            return False
+        if fim is not None and agora > fim:
+            return False
+        return True
 
 
 @dataclass
