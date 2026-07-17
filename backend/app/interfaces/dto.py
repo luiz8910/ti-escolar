@@ -713,3 +713,155 @@ class ProfessorImpressaoEntrada(BaseModel):
     colorido: bool = False
     frente_verso: bool = False
     observacao: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A2/A4 — Canal interno professor → secretaria/gestão/pedagógico
+# --------------------------------------------------------------------------- #
+class SolicitacaoInternaEntrada(BaseModel):
+    """Solicitação interna aberta pela secretaria em nome de um professor."""
+
+    tenant_id: UUID
+    assunto: str = Field(..., examples=["Falta amanhã (consulta médica)"])
+    corpo: str
+    professor_id: UUID | None = None
+    categoria: str = Field("secretaria", examples=["secretaria", "gestao", "pedagogico"])
+
+
+class ProfessorSolicitacaoInternaEntrada(BaseModel):
+    """Solicitação interna criada pelo próprio professor logado (tenant/professor vêm do token)."""
+
+    assunto: str = Field(..., examples=["Preciso de 2ª via da lista de chamada"])
+    corpo: str
+    categoria: str = Field("secretaria", examples=["secretaria", "gestao", "pedagogico"])
+
+
+class SolicitacaoInternaRespostaEntrada(BaseModel):
+    tenant_id: UUID
+    resposta: str
+    notificar: bool = False
+
+
+class SolicitacaoInternaStatusEntrada(BaseModel):
+    tenant_id: UUID
+    status: str = Field(..., examples=["em_andamento", "resolvida", "cancelada"])
+
+
+class SolicitacaoInternaSaida(BaseModel):
+    id: UUID
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+    assunto: str
+    corpo: str
+    categoria: str
+    status: str
+    resposta: str = ""
+    respondido_em: datetime | None = None
+    criado_em: datetime
+    atualizado_em: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A3 — Canal pai ↔ professor mediado
+# --------------------------------------------------------------------------- #
+class MediacaoEnvioEntrada(BaseModel):
+    """Mensagem enviada pelo professor logado a um responsável (sai pelo nº da escola)."""
+
+    contato_telefone: str = Field(..., examples=["+5515999990000"])
+    corpo: str
+
+
+class MediacaoRecebidaEntrada(BaseModel):
+    """Registro de mensagem recebida de um responsável, direcionada a um professor."""
+
+    tenant_id: UUID
+    professor_id: UUID
+    contato_telefone: str
+    corpo: str
+    contato_nome: str = ""
+
+
+class MensagemMediadaSaida(BaseModel):
+    id: UUID
+    professor_id: UUID
+    contato_telefone: str
+    contato_nome: str = ""
+    professor_nome: str = ""
+    direcao: str
+    corpo: str
+    criado_em: datetime
+
+
+class InterlocutorMediadoSaida(BaseModel):
+    contato_telefone: str
+    contato_nome: str = ""
+    total_mensagens: int
+    ultima_em: datetime | None = None
+    ultima_previa: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · B2 — Cota e relatório de impressões
+# --------------------------------------------------------------------------- #
+class CotaImpressaoEntrada(BaseModel):
+    tenant_id: UUID
+    professor_id: UUID
+    limite_mensal: int = Field(0, examples=[3000])
+
+
+class CotaImpressaoSaida(BaseModel):
+    id: UUID
+    professor_id: UUID
+    professor_nome: str = ""
+    limite_mensal: int
+    ilimitado: bool
+
+
+class LinhaRelatorioImpressaoSaida(BaseModel):
+    professor_id: UUID | None = None
+    professor_nome: str
+    total_solicitacoes: int
+    total_copias: int
+    limite_mensal: int
+    ilimitado: bool
+    excedeu: bool
+    restante: int
+
+
+class RelatorioImpressaoSaida(BaseModel):
+    competencia: str
+    total_copias: int
+    total_solicitacoes: int
+    linhas: list[LinhaRelatorioImpressaoSaida] = []
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · F1 — Progressão de série e ciclo de vida do responsável
+# --------------------------------------------------------------------------- #
+class PromocaoItemEntrada(BaseModel):
+    origem_sala_id: UUID
+    destino_sala_id: UUID | None = None  # None = última série (marca ex-alunos)
+
+
+class PromoverTurmasEntrada(BaseModel):
+    tenant_id: UUID
+    promocoes: list[PromocaoItemEntrada]
+
+
+class ResultadoPromocaoSaida(BaseModel):
+    origem_sala_id: UUID
+    origem_sala_nome: str
+    destino_sala_id: UUID | None = None
+    destino_sala_nome: str = ""
+    alunos_promovidos: int
+    alunos_formados: int
+
+
+class InativarResponsaveisEntrada(BaseModel):
+    tenant_id: UUID
+
+
+class ResponsavelInativadoSaida(BaseModel):
+    contato_id: UUID
+    nome: str
+    telefone: str

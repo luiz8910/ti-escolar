@@ -15,12 +15,14 @@ from app.domain.entities import (
     Broadcast,
     Contato,
     Conversa,
+    CotaImpressao,
     Documento,
     FerramentaSpec,
     FonteConhecimento,
     Grupo,
     LeituraRecado,
     Mensagem,
+    MensagemMediada,
     MetricasUsoEscola,
     MessageQuota,
     MessageTemplate,
@@ -35,8 +37,10 @@ from app.domain.entities import (
     ResumoEscola,
     Sala,
     SolicitacaoImpressao,
+    SolicitacaoInterna,
     StatusEntrega,
     StatusImpressao,
+    StatusSolicitacaoInterna,
     Tenant,
     TrechoConhecimento,
     TurnoConversa,
@@ -469,3 +473,68 @@ class AlunoRepository(Protocol):
     async def desvincular_responsavel(
         self, *, tenant_id: UUID, aluno_id: UUID, contato_id: UUID
     ) -> None: ...
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 — comunicação interna, mediação, cota de impressão
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class SolicitacaoInternaRepository(Protocol):
+    """Canal interno professor → secretaria/gestão/pedagógico (§A2/A4), por tenant."""
+
+    async def criar(self, solicitacao: SolicitacaoInterna) -> SolicitacaoInterna: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, solicitacao_id: UUID
+    ) -> SolicitacaoInterna | None: ...
+
+    async def listar(
+        self,
+        *,
+        tenant_id: UUID,
+        categoria: str | None = None,
+        status: StatusSolicitacaoInterna | None = None,
+        professor_id: UUID | None = None,
+    ) -> list[SolicitacaoInterna]:
+        """Solicitações do tenant, mais recentes primeiro; filtros opcionais."""
+        ...
+
+    async def atualizar(self, solicitacao: SolicitacaoInterna) -> SolicitacaoInterna: ...
+
+    async def remover(self, *, tenant_id: UUID, solicitacao_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class MediacaoRepository(Protocol):
+    """Conversas mediadas pai ↔ professor (§A3), escopadas por tenant."""
+
+    async def registrar(self, mensagem: MensagemMediada) -> MensagemMediada: ...
+
+    async def conversa(
+        self, *, tenant_id: UUID, professor_id: UUID, contato_telefone: str
+    ) -> list[MensagemMediada]:
+        """Mensagens de um par (professor, responsável), da mais antiga à mais recente."""
+        ...
+
+    async def interlocutores(
+        self, *, tenant_id: UUID, professor_id: UUID
+    ) -> list[MensagemMediada]:
+        """Todas as mensagens do professor (para agrupar por responsável no painel)."""
+        ...
+
+
+@runtime_checkable
+class CotaImpressaoRepository(Protocol):
+    """Franquia mensal de impressão por professor (§B2), escopada por tenant."""
+
+    async def definir(self, cota: CotaImpressao) -> CotaImpressao:
+        """Cria ou atualiza (upsert) a cota do professor."""
+        ...
+
+    async def por_professor(
+        self, *, tenant_id: UUID, professor_id: UUID
+    ) -> CotaImpressao | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[CotaImpressao]: ...
+
+    async def remover(self, *, tenant_id: UUID, professor_id: UUID) -> bool: ...

@@ -37,8 +37,11 @@ from app.infrastructure.db.repositories_admin import (
 )
 from app.infrastructure.db.repositories_comunicacao import (
     SqlAvisoTemporizadoRepository,
+    SqlCotaImpressaoRepository,
+    SqlMediacaoRepository,
     SqlMuralRepository,
     SqlSolicitacaoImpressaoRepository,
+    SqlSolicitacaoInternaRepository,
 )
 from app.infrastructure.db.repositories_conhecimento import (
     SqlFonteConhecimentoRepository,
@@ -262,3 +265,24 @@ def get_impressao_repo(
 
 def get_mural_repo(session: AsyncSession = Depends(get_session)) -> SqlMuralRepository:
     return SqlMuralRepository(session)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 — comunicação interna, mediação pai↔professor e cota de impressão
+# --------------------------------------------------------------------------- #
+def get_solicitacao_interna_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlSolicitacaoInternaRepository:
+    return SqlSolicitacaoInternaRepository(session)
+
+
+def get_mediacao_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlMediacaoRepository:
+    return SqlMediacaoRepository(session)
+
+
+def get_cota_impressao_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlCotaImpressaoRepository:
+    return SqlCotaImpressaoRepository(session)

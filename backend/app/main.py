@@ -12,10 +12,13 @@ from app.interfaces.api import (
     broadcast,
     cadastro,
     chat,
+    comunicacao_interna,
     conhecimento,
     impressao,
+    mediacao,
     mural,
     professor,
+    progressao,
     respostas_rapidas,
     webhook,
     webhook_twilio,
@@ -58,6 +61,9 @@ app.include_router(respostas_rapidas.router)
 app.include_router(avisos.router)
 app.include_router(impressao.router)
 app.include_router(mural.router)
+app.include_router(comunicacao_interna.router)
+app.include_router(mediacao.router)
+app.include_router(progressao.router)
 app.include_router(professor.router)
 app.include_router(webhook.router)
 app.include_router(webhook_twilio.router)

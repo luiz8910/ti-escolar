@@ -14,16 +14,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import (
     AvisoTemporizado,
+    CategoriaSolicitacao,
+    CotaImpressao,
+    DirecaoMensagem,
     LeituraRecado,
+    MensagemMediada,
     Recado,
     SolicitacaoImpressao,
+    SolicitacaoInterna,
     StatusImpressao,
+    StatusSolicitacaoInterna,
 )
 from app.infrastructure.db.models import (
     AvisoTemporizadoORM,
+    CotaImpressaoORM,
     LeituraRecadoORM,
+    MensagemMediadaORM,
     RecadoORM,
     SolicitacaoImpressaoORM,
+    SolicitacaoInternaORM,
 )
 
 
@@ -329,3 +338,249 @@ class SqlMuralRepository:
         )
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_leitura(r) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A2/A4 — Canal interno professor → secretaria/gestão/pedagógico
+# --------------------------------------------------------------------------- #
+def _to_solicitacao_interna(row: SolicitacaoInternaORM) -> SolicitacaoInterna:
+    return SolicitacaoInterna(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        professor_id=row.professor_id,
+        professor_nome=row.professor_nome,
+        assunto=row.assunto,
+        corpo=row.corpo,
+        categoria=CategoriaSolicitacao(row.categoria),
+        status=StatusSolicitacaoInterna(row.status),
+        resposta=row.resposta,
+        respondido_em=row.respondido_em,
+        criado_em=row.criado_em,
+        atualizado_em=row.atualizado_em,
+    )
+
+
+class SqlSolicitacaoInternaRepository:
+    """Canal interno professor → secretaria/gestão/pedagógico, escopado por tenant."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def criar(self, solicitacao: SolicitacaoInterna) -> SolicitacaoInterna:
+        self._s.add(
+            SolicitacaoInternaORM(
+                id=solicitacao.id,
+                tenant_id=solicitacao.tenant_id,
+                professor_id=solicitacao.professor_id,
+                professor_nome=solicitacao.professor_nome,
+                assunto=solicitacao.assunto,
+                corpo=solicitacao.corpo,
+                categoria=solicitacao.categoria.value,
+                status=solicitacao.status.value,
+                resposta=solicitacao.resposta,
+                respondido_em=solicitacao.respondido_em,
+                criado_em=solicitacao.criado_em,
+                atualizado_em=solicitacao.atualizado_em,
+            )
+        )
+        await self._s.flush()
+        return solicitacao
+
+    async def _orm(
+        self, *, tenant_id: uuid.UUID, solicitacao_id: uuid.UUID
+    ) -> SolicitacaoInternaORM | None:
+        stmt = select(SolicitacaoInternaORM).where(
+            SolicitacaoInternaORM.id == solicitacao_id,
+            SolicitacaoInternaORM.tenant_id == tenant_id,
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def obter(
+        self, *, tenant_id: uuid.UUID, solicitacao_id: uuid.UUID
+    ) -> SolicitacaoInterna | None:
+        row = await self._orm(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
+        return _to_solicitacao_interna(row) if row else None
+
+    async def listar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        categoria: str | None = None,
+        status: StatusSolicitacaoInterna | None = None,
+        professor_id: uuid.UUID | None = None,
+    ) -> list[SolicitacaoInterna]:
+        stmt = select(SolicitacaoInternaORM).where(
+            SolicitacaoInternaORM.tenant_id == tenant_id
+        )
+        if categoria is not None:
+            stmt = stmt.where(SolicitacaoInternaORM.categoria == categoria)
+        if status is not None:
+            stmt = stmt.where(SolicitacaoInternaORM.status == status.value)
+        if professor_id is not None:
+            stmt = stmt.where(SolicitacaoInternaORM.professor_id == professor_id)
+        stmt = stmt.order_by(SolicitacaoInternaORM.criado_em.desc())
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_solicitacao_interna(r) for r in rows]
+
+    async def atualizar(self, solicitacao: SolicitacaoInterna) -> SolicitacaoInterna:
+        row = await self._orm(
+            tenant_id=solicitacao.tenant_id, solicitacao_id=solicitacao.id
+        )
+        if row is None:
+            raise ValueError("Solicitação interna não encontrada para o tenant.")
+        row.assunto = solicitacao.assunto
+        row.corpo = solicitacao.corpo
+        row.categoria = solicitacao.categoria.value
+        row.status = solicitacao.status.value
+        row.resposta = solicitacao.resposta
+        row.respondido_em = solicitacao.respondido_em
+        row.atualizado_em = solicitacao.atualizado_em
+        await self._s.flush()
+        return _to_solicitacao_interna(row)
+
+    async def remover(self, *, tenant_id: uuid.UUID, solicitacao_id: uuid.UUID) -> bool:
+        row = await self._orm(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
+        if row is None:
+            return False
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A3 — Canal pai ↔ professor mediado (sem expor o número do professor)
+# --------------------------------------------------------------------------- #
+def _to_mensagem_mediada(row: MensagemMediadaORM) -> MensagemMediada:
+    return MensagemMediada(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        professor_id=row.professor_id,
+        contato_telefone=row.contato_telefone,
+        contato_nome=row.contato_nome,
+        professor_nome=row.professor_nome,
+        direcao=DirecaoMensagem(row.direcao),
+        corpo=row.corpo,
+        criado_em=row.criado_em,
+    )
+
+
+class SqlMediacaoRepository:
+    """Conversas mediadas pai ↔ professor, escopadas por tenant."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def registrar(self, mensagem: MensagemMediada) -> MensagemMediada:
+        self._s.add(
+            MensagemMediadaORM(
+                id=mensagem.id,
+                tenant_id=mensagem.tenant_id,
+                professor_id=mensagem.professor_id,
+                contato_telefone=mensagem.contato_telefone,
+                contato_nome=mensagem.contato_nome,
+                professor_nome=mensagem.professor_nome,
+                direcao=mensagem.direcao.value,
+                corpo=mensagem.corpo,
+                criado_em=mensagem.criado_em,
+            )
+        )
+        await self._s.flush()
+        return mensagem
+
+    async def conversa(
+        self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID, contato_telefone: str
+    ) -> list[MensagemMediada]:
+        stmt = (
+            select(MensagemMediadaORM)
+            .where(
+                MensagemMediadaORM.tenant_id == tenant_id,
+                MensagemMediadaORM.professor_id == professor_id,
+                MensagemMediadaORM.contato_telefone == contato_telefone,
+            )
+            .order_by(MensagemMediadaORM.criado_em.asc())
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_mensagem_mediada(r) for r in rows]
+
+    async def interlocutores(
+        self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID
+    ) -> list[MensagemMediada]:
+        stmt = (
+            select(MensagemMediadaORM)
+            .where(
+                MensagemMediadaORM.tenant_id == tenant_id,
+                MensagemMediadaORM.professor_id == professor_id,
+            )
+            .order_by(MensagemMediadaORM.criado_em.asc())
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_mensagem_mediada(r) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · B2 — Cota de impressão por professor
+# --------------------------------------------------------------------------- #
+def _to_cota(row: CotaImpressaoORM) -> CotaImpressao:
+    return CotaImpressao(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        professor_id=row.professor_id,
+        limite_mensal=row.limite_mensal,
+        criado_em=row.criado_em,
+        atualizado_em=row.atualizado_em,
+    )
+
+
+class SqlCotaImpressaoRepository:
+    """Franquia mensal de impressão por professor, escopada por tenant (upsert)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def _orm(
+        self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID
+    ) -> CotaImpressaoORM | None:
+        stmt = select(CotaImpressaoORM).where(
+            CotaImpressaoORM.tenant_id == tenant_id,
+            CotaImpressaoORM.professor_id == professor_id,
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def definir(self, cota: CotaImpressao) -> CotaImpressao:
+        row = await self._orm(
+            tenant_id=cota.tenant_id, professor_id=cota.professor_id
+        )
+        if row is None:
+            row = CotaImpressaoORM(
+                id=cota.id,
+                tenant_id=cota.tenant_id,
+                professor_id=cota.professor_id,
+                limite_mensal=cota.limite_mensal,
+                criado_em=cota.criado_em,
+                atualizado_em=cota.atualizado_em,
+            )
+            self._s.add(row)
+        else:
+            row.limite_mensal = cota.limite_mensal
+            row.atualizado_em = cota.atualizado_em
+        await self._s.flush()
+        return _to_cota(row)
+
+    async def por_professor(
+        self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID
+    ) -> CotaImpressao | None:
+        row = await self._orm(tenant_id=tenant_id, professor_id=professor_id)
+        return _to_cota(row) if row else None
+
+    async def listar(self, *, tenant_id: uuid.UUID) -> list[CotaImpressao]:
+        stmt = select(CotaImpressaoORM).where(CotaImpressaoORM.tenant_id == tenant_id)
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_cota(r) for r in rows]
+
+    async def remover(self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID) -> bool:
+        row = await self._orm(tenant_id=tenant_id, professor_id=professor_id)
+        if row is None:
+            return False
+        await self._s.delete(row)
+        await self._s.flush()
+        return True

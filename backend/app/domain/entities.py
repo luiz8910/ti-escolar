@@ -261,11 +261,17 @@ class Usuario:
 # --------------------------------------------------------------------------- #
 @dataclass
 class Contato:
-    """Pai/responsável com número de WhatsApp, dentro de um tenant."""
+    """Pai/responsável com número de WhatsApp, dentro de um tenant.
+
+    ``ativo=False`` marca um responsável **inativo** — normalmente porque todos os seus
+    alunos já são ex-alunos (ver a progressão de série, §F1). Um responsável inativo
+    permanece no cadastro (histórico), mas não deve receber novos avisos.
+    """
 
     tenant_id: UUID
     nome: str
     telefone: str  # E.164, ex.: +5511999990000
+    ativo: bool = True
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
 
@@ -903,3 +909,181 @@ class MessageQuota:
 
     def pode_enviar(self, quantidade: int = 1) -> bool:
         return self.ilimitado or self.enviados + quantidade <= self.limite_diario
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A2/A4 — Canal interno professor → secretaria (com roteamento por assunto)
+# --------------------------------------------------------------------------- #
+class CategoriaSolicitacao(str, enum.Enum):
+    """Para onde a solicitação do professor deve ser encaminhada (roteamento, §A4).
+
+    A secretaria trata do operacional; comportamento/pedagógico vão para a **gestão**.
+    """
+
+    SECRETARIA = "secretaria"
+    GESTAO = "gestao"
+    PEDAGOGICO = "pedagogico"
+
+
+class StatusSolicitacaoInterna(str, enum.Enum):
+    ABERTA = "aberta"
+    EM_ANDAMENTO = "em_andamento"
+    RESOLVIDA = "resolvida"
+    CANCELADA = "cancelada"
+
+
+@dataclass
+class SolicitacaoInterna:
+    """Solicitação/recado que um **professor** envia à escola pelo sistema (§A2).
+
+    Substitui o WhatsApp pessoal das professoras: o pedido (impressão à parte, na fila
+    §B1; aqui é o canal geral — aviso, falta, dúvida) fica **registrado** e **roteado**
+    por ``categoria`` (§A4) para a secretaria, a gestão ou o pedagógico. A resposta da
+    escola fica no próprio registro (``resposta``), evitando o "elas mandam pra cá e a
+    gente não tem controle". ``professor_nome`` é denormalizado só para exibição.
+    """
+
+    tenant_id: UUID
+    assunto: str
+    corpo: str
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+    categoria: CategoriaSolicitacao = CategoriaSolicitacao.SECRETARIA
+    status: StatusSolicitacaoInterna = StatusSolicitacaoInterna.ABERTA
+    resposta: str = ""
+    respondido_em: datetime | None = None
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A3 — Canal pai ↔ professor mediado (sem expor o número do professor)
+# --------------------------------------------------------------------------- #
+class DirecaoMensagem(str, enum.Enum):
+    RESPONSAVEL_PARA_PROFESSOR = "responsavel_para_professor"
+    PROFESSOR_PARA_RESPONSAVEL = "professor_para_responsavel"
+
+
+@dataclass
+class MensagemMediada:
+    """Mensagem trocada entre um responsável e um professor **roteada pelo sistema** (§A3).
+
+    O professor não expõe o contato pessoal: quando ele responde, a mensagem sai pelo
+    **número da própria escola** (``MessageChannel`` com ``remetente`` = número do
+    tenant) e é registrada aqui. As mensagens do responsável entram pelo mesmo canal e
+    aparecem no painel do professor. Uma "conversa" é o par (``professor_id``,
+    ``contato_telefone``). ``*_nome`` são denormalizados só para exibição.
+    """
+
+    tenant_id: UUID
+    professor_id: UUID
+    contato_telefone: str  # E.164 do responsável
+    direcao: DirecaoMensagem
+    corpo: str
+    professor_nome: str = ""
+    contato_nome: str = ""
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class InterlocutorMediado:
+    """Resumo de uma conversa mediada na visão do professor (um responsável)."""
+
+    contato_telefone: str
+    contato_nome: str
+    total_mensagens: int
+    ultima_em: datetime | None
+    ultima_previa: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · B2 — Cota e relatório de impressões (por professor / competência)
+# --------------------------------------------------------------------------- #
+@dataclass
+class CotaImpressao:
+    """Franquia mensal de cópias de um professor (ex.: 3.000 cópias/mês), por tenant.
+
+    ``limite_mensal <= 0`` significa **sem limite**. A cota é recorrente (vale para todo
+    mês); o consumo é apurado por competência a partir das ``SolicitacaoImpressao``.
+    """
+
+    tenant_id: UUID
+    professor_id: UUID
+    limite_mensal: int = 0
+    professor_nome: str = ""
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+    @property
+    def ilimitado(self) -> bool:
+        return self.limite_mensal <= 0
+
+
+@dataclass
+class LinhaRelatorioImpressao:
+    """Consumo de impressão de um professor numa competência (mês)."""
+
+    professor_id: UUID | None
+    professor_nome: str
+    total_solicitacoes: int
+    total_copias: int
+    limite_mensal: int = 0
+
+    @property
+    def ilimitado(self) -> bool:
+        return self.limite_mensal <= 0
+
+    @property
+    def excedeu(self) -> bool:
+        """Verdadeiro quando há limite e o consumo passou da franquia (bateu a meta)."""
+        return not self.ilimitado and self.total_copias > self.limite_mensal
+
+    @property
+    def restante(self) -> int:
+        if self.ilimitado:
+            return 2**31
+        return max(0, self.limite_mensal - self.total_copias)
+
+
+@dataclass
+class RelatorioImpressao:
+    """Relatório mensal de impressões do tenant (agregado por professor)."""
+
+    tenant_id: UUID
+    competencia: str  # "YYYY-MM"
+    linhas: list[LinhaRelatorioImpressao] = field(default_factory=list)
+
+    @property
+    def total_copias(self) -> int:
+        return sum(linha.total_copias for linha in self.linhas)
+
+    @property
+    def total_solicitacoes(self) -> int:
+        return sum(linha.total_solicitacoes for linha in self.linhas)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · F1 — Progressão de série e ciclo de vida do responsável
+# --------------------------------------------------------------------------- #
+@dataclass
+class ResultadoPromocao:
+    """Resultado da promoção de uma série na virada de ano (§F1)."""
+
+    origem_sala_id: UUID
+    origem_sala_nome: str
+    destino_sala_id: UUID | None
+    destino_sala_nome: str
+    alunos_promovidos: int
+    alunos_formados: int  # marcados como ex-aluno (última série)
+
+
+@dataclass
+class ResponsavelInativado:
+    """Responsável cujo cadastro foi inativado por não ter mais alunos ativos (§F1)."""
+
+    contato_id: UUID
+    nome: str
+    telefone: str

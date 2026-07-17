@@ -32,17 +32,20 @@ const PRINCIPAL: NavItem[] = [
   { href: "/admin", label: "Grupos & disparos", icon: GridIcon },
   { href: "/admin/salas", label: "Salas e pais", icon: UsersIcon },
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
+  { href: "/admin/progressao", label: "Progressão de série", icon: CapIcon },
   { href: "/admin/professores", label: "Professores", icon: TeacherIcon },
   { href: "/admin/conhecimento", label: "Base de conhecimento", icon: BookIcon },
   { href: "/admin/prompt", label: "Instruções da escola", icon: InstructionsIcon },
 ];
 
-// Comunicação interna e atendimento (Onda 1 · Rosa Cury).
+// Comunicação interna e atendimento (Onda 1 · Rosa Cury + Onda 2 · consolidação).
 const COMUNICACAO: NavItem[] = [
   { href: "/admin/respostas-rapidas", label: "Respostas rápidas", icon: SparkIcon },
   { href: "/admin/avisos", label: "Avisos do dia", icon: BellIcon },
   { href: "/admin/mural", label: "Mural do professor", icon: TeacherIcon },
+  { href: "/admin/solicitacoes", label: "Canal do professor", icon: ChatBubbleIcon },
   { href: "/admin/impressao", label: "Fila de impressão", icon: PrintIcon },
+  { href: "/admin/impressao/relatorio", label: "Cotas & relatório", icon: FileIcon },
 ];
 
 // Observabilidade / histórico da escola (conversas, disparos e auditoria).

@@ -97,6 +97,7 @@ def _to_contato(row: ContatoORM) -> Contato:
         tenant_id=row.tenant_id,
         nome=row.nome,
         telefone=row.telefone,
+        ativo=row.ativo,
         criado_em=row.criado_em,
     )
 
@@ -523,6 +524,7 @@ class SqlContatoRepository:
                 tenant_id=contato.tenant_id,
                 nome=contato.nome,
                 telefone=contato.telefone,
+                ativo=contato.ativo,
                 criado_em=contato.criado_em,
             )
         )
@@ -561,6 +563,7 @@ class SqlContatoRepository:
             raise ValueError("Contato não encontrado para o tenant.")
         row.nome = contato.nome
         row.telefone = contato.telefone
+        row.ativo = contato.ativo
         await self._s.flush()
         return _to_contato(row)
 

@@ -21,11 +21,18 @@ from app.application.cadastro_use_cases import (
     CadastrarProfessor,
     CriarSala,
 )
+from app.application.comunicacao_interna_use_cases import AbrirSolicitacaoInterna
+from app.application.impressao_use_cases import DefinirCotaImpressao
 from app.application.mural_use_cases import PublicarRecado
 from app.application.respostas_rapidas_use_cases import CriarRespostaRapida
 from app.application.use_cases import IndexarConhecimento
 from app.config import get_settings
-from app.domain.entities import Papel, TipoConhecimento, Usuario
+from app.domain.entities import (
+    CategoriaSolicitacao,
+    Papel,
+    TipoConhecimento,
+    Usuario,
+)
 from app.infrastructure.db.models import TemplateORM, TenantORM
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories_admin import (
@@ -36,7 +43,11 @@ from app.infrastructure.db.repositories_admin import (
     SqlSalaRepository,
     SqlUsuarioRepository,
 )
-from app.infrastructure.db.repositories_comunicacao import SqlMuralRepository
+from app.infrastructure.db.repositories_comunicacao import (
+    SqlCotaImpressaoRepository,
+    SqlMuralRepository,
+    SqlSolicitacaoInternaRepository,
+)
 from app.infrastructure.db.repositories_conhecimento import (
     SqlFonteConhecimentoRepository,
     SqlPromptTenantRepository,
@@ -330,6 +341,36 @@ async def _seed() -> None:
                     "às 17h, na sala dos professores. Confirmem a leitura deste recado."
                 ),
                 autor_nome="Secretaria",
+            )
+
+        # Onda 2 — canal interno (§A2/A4) e cota de impressão (§B2) de demonstração.
+        prof_demo = await professores_repo.por_telefone(
+            tenant_id=DEMO_TENANT_ID, telefone="+5511977770001"
+        )
+        solicitacoes_internas_repo = SqlSolicitacaoInternaRepository(session)
+        if not await solicitacoes_internas_repo.listar(tenant_id=DEMO_TENANT_ID):
+            await AbrirSolicitacaoInterna(
+                solicitacoes=solicitacoes_internas_repo, professores=professores_repo
+            ).executar(
+                tenant_id=DEMO_TENANT_ID,
+                assunto="Preciso da 2ª via da lista de chamada do 5º A",
+                corpo=(
+                    "A lista de chamada da minha turma rasgou. Podem imprimir uma 2ª via "
+                    "para amanhã de manhã? Obrigada."
+                ),
+                professor_id=prof_demo.id if prof_demo else None,
+                categoria=CategoriaSolicitacao.SECRETARIA,
+            )
+
+        # Cota (franquia mensal) de impressão do professor demo — só cria se ainda não houver.
+        cotas_impressao_repo = SqlCotaImpressaoRepository(session)
+        if prof_demo is not None and not await cotas_impressao_repo.listar(
+            tenant_id=DEMO_TENANT_ID
+        ):
+            await DefinirCotaImpressao(
+                cotas=cotas_impressao_repo, professores=professores_repo
+            ).executar(
+                tenant_id=DEMO_TENANT_ID, professor_id=prof_demo.id, limite_mensal=3000
             )
 
         # Respostas rápidas ("atalhos") da Rosa Cury — só cria se ainda não houver.

@@ -1311,3 +1311,204 @@ export async function removerRecado(id: string): Promise<void> {
   );
   if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover recado");
 }
+
+// ========================================================================== //
+// Onda 2 · A2/A4 — canal interno professor → secretaria/gestão/pedagógico
+// ========================================================================== //
+export type CategoriaSolicitacao = "secretaria" | "gestao" | "pedagogico";
+export type StatusSolicitacaoInterna =
+  | "aberta"
+  | "em_andamento"
+  | "resolvida"
+  | "cancelada";
+
+export interface SolicitacaoInterna {
+  id: string;
+  professor_id: string | null;
+  professor_nome: string;
+  assunto: string;
+  corpo: string;
+  categoria: CategoriaSolicitacao;
+  status: StatusSolicitacaoInterna;
+  resposta: string;
+  respondido_em: string | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export async function listarSolicitacoesInternas(filtros?: {
+  categoria?: CategoriaSolicitacao;
+  status?: StatusSolicitacaoInterna;
+}): Promise<SolicitacaoInterna[]> {
+  const params = new URLSearchParams();
+  if (filtros?.categoria) params.set("categoria", filtros.categoria);
+  if (filtros?.status) params.set("status_filtro", filtros.status);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/solicitacoes-internas/tenant/${tenantEmFoco()}${qs}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar solicitações internas");
+}
+
+export async function abrirSolicitacaoInterna(dados: {
+  assunto: string;
+  corpo: string;
+  professor_id?: string | null;
+  categoria: CategoriaSolicitacao;
+}): Promise<SolicitacaoInterna> {
+  const resp = await apiFetch(`${API_URL}/api/admin/solicitacoes-internas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), ...dados }),
+  });
+  return jsonOuErro(resp, "abrir solicitação interna");
+}
+
+export async function responderSolicitacaoInterna(
+  id: string,
+  resposta: string,
+  notificar: boolean
+): Promise<SolicitacaoInterna> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/solicitacoes-internas/${id}/responder`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ tenant_id: tenantEmFoco(), resposta, notificar }),
+    }
+  );
+  return jsonOuErro(resp, "responder solicitação interna");
+}
+
+export async function atualizarStatusSolicitacaoInterna(
+  id: string,
+  status: StatusSolicitacaoInterna
+): Promise<SolicitacaoInterna> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/solicitacoes-internas/${id}/status`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ tenant_id: tenantEmFoco(), status }),
+    }
+  );
+  return jsonOuErro(resp, "atualizar status da solicitação");
+}
+
+export async function removerSolicitacaoInterna(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/solicitacoes-internas/${id}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover solicitação");
+}
+
+// ========================================================================== //
+// Onda 2 · B2 — cota e relatório de impressões por professor
+// ========================================================================== //
+export interface CotaImpressao {
+  id: string;
+  professor_id: string;
+  professor_nome: string;
+  limite_mensal: number;
+  ilimitado: boolean;
+}
+
+export interface LinhaRelatorioImpressao {
+  professor_id: string | null;
+  professor_nome: string;
+  total_solicitacoes: number;
+  total_copias: number;
+  limite_mensal: number;
+  ilimitado: boolean;
+  excedeu: boolean;
+  restante: number;
+}
+
+export interface RelatorioImpressao {
+  competencia: string;
+  total_copias: number;
+  total_solicitacoes: number;
+  linhas: LinhaRelatorioImpressao[];
+}
+
+export async function listarCotasImpressao(): Promise<CotaImpressao[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/cotas/tenant/${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar cotas de impressão");
+}
+
+export async function definirCotaImpressao(
+  professorId: string,
+  limiteMensal: number
+): Promise<CotaImpressao> {
+  const resp = await apiFetch(`${API_URL}/api/admin/impressao/cotas`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      professor_id: professorId,
+      limite_mensal: limiteMensal,
+    }),
+  });
+  return jsonOuErro(resp, "definir cota de impressão");
+}
+
+export async function removerCotaImpressao(professorId: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/cotas/${professorId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover cota");
+}
+
+export async function relatorioImpressao(
+  competencia: string
+): Promise<RelatorioImpressao> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/relatorio/tenant/${tenantEmFoco()}?competencia=${competencia}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "gerar relatório de impressão");
+}
+
+// ========================================================================== //
+// Onda 2 · F1 — progressão de série e ciclo de vida do responsável
+// ========================================================================== //
+export interface ResultadoPromocao {
+  origem_sala_id: string;
+  origem_sala_nome: string;
+  destino_sala_id: string | null;
+  destino_sala_nome: string;
+  alunos_promovidos: number;
+  alunos_formados: number;
+}
+
+export interface ResponsavelInativado {
+  contato_id: string;
+  nome: string;
+  telefone: string;
+}
+
+export async function promoverTurmas(
+  promocoes: { origem_sala_id: string; destino_sala_id: string | null }[]
+): Promise<ResultadoPromocao[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/progressao/promover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), promocoes }),
+  });
+  return jsonOuErro(resp, "promover turmas");
+}
+
+export async function inativarResponsaveis(): Promise<ResponsavelInativado[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/progressao/inativar-responsaveis`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco() }),
+  });
+  return jsonOuErro(resp, "inativar responsáveis");
+}
