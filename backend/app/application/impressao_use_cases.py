@@ -8,8 +8,19 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from app.domain.entities import SolicitacaoImpressao, StatusImpressao, _now
-from app.domain.ports import ProfessorRepository, SolicitacaoImpressaoRepository
+from app.domain.entities import (
+    CotaImpressao,
+    LinhaRelatorioImpressao,
+    RelatorioImpressao,
+    SolicitacaoImpressao,
+    StatusImpressao,
+    _now,
+)
+from app.domain.ports import (
+    CotaImpressaoRepository,
+    ProfessorRepository,
+    SolicitacaoImpressaoRepository,
+)
 
 
 class SolicitarImpressao:
@@ -123,4 +134,143 @@ class RemoverSolicitacaoImpressao:
     async def executar(self, *, tenant_id: UUID, solicitacao_id: UUID) -> bool:
         return await self._solicitacoes.remover(
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
+        )
+
+
+# --------------------------------------------------------------------------- #
+# B2 · Cota (franquia mensal) e relatório de impressões por professor
+# --------------------------------------------------------------------------- #
+class DefinirCotaImpressao:
+    """Define/atualiza (upsert) a franquia mensal de cópias de um professor.
+
+    ``limite_mensal <= 0`` significa **sem limite**. Valida que o professor pertence
+    ao tenant.
+    """
+
+    def __init__(
+        self,
+        *,
+        cotas: CotaImpressaoRepository,
+        professores: ProfessorRepository,
+    ) -> None:
+        self._cotas = cotas
+        self._professores = professores
+
+    async def executar(
+        self, *, tenant_id: UUID, professor_id: UUID, limite_mensal: int
+    ) -> CotaImpressao:
+        professor = await self._professores.obter(
+            tenant_id=tenant_id, professor_id=professor_id
+        )
+        if professor is None:
+            raise ValueError("Professor não encontrado para o tenant.")
+        cota = CotaImpressao(
+            tenant_id=tenant_id,
+            professor_id=professor_id,
+            limite_mensal=max(0, limite_mensal),
+            atualizado_em=_now(),
+        )
+        salva = await self._cotas.definir(cota)
+        salva.professor_nome = professor.nome
+        return salva
+
+
+class ListarCotasImpressao:
+    """Lista as cotas do tenant com o nome do professor resolvido."""
+
+    def __init__(
+        self,
+        *,
+        cotas: CotaImpressaoRepository,
+        professores: ProfessorRepository,
+    ) -> None:
+        self._cotas = cotas
+        self._professores = professores
+
+    async def executar(self, *, tenant_id: UUID) -> list[CotaImpressao]:
+        cotas = await self._cotas.listar(tenant_id=tenant_id)
+        nomes = {
+            p.id: p.nome
+            for p in await self._professores.listar(tenant_id=tenant_id)
+        }
+        for cota in cotas:
+            cota.professor_nome = nomes.get(cota.professor_id, "")
+        return cotas
+
+
+class RemoverCotaImpressao:
+    def __init__(self, *, cotas: CotaImpressaoRepository) -> None:
+        self._cotas = cotas
+
+    async def executar(self, *, tenant_id: UUID, professor_id: UUID) -> bool:
+        return await self._cotas.remover(tenant_id=tenant_id, professor_id=professor_id)
+
+
+class RelatorioImpressaoMensal:
+    """Relatório de impressões de uma competência (mês ``YYYY-MM``), por professor.
+
+    Soma as **cópias** das solicitações **não canceladas** criadas no mês e cruza com a
+    franquia (cota) de cada professor, sinalizando quem excedeu ("bateu a meta"). Inclui
+    professores com cota definida mesmo sem solicitações no mês.
+    """
+
+    def __init__(
+        self,
+        *,
+        solicitacoes: SolicitacaoImpressaoRepository,
+        cotas: CotaImpressaoRepository,
+        professores: ProfessorRepository,
+    ) -> None:
+        self._solicitacoes = solicitacoes
+        self._cotas = cotas
+        self._professores = professores
+
+    async def executar(
+        self, *, tenant_id: UUID, competencia: str
+    ) -> RelatorioImpressao:
+        todas = await self._solicitacoes.listar(tenant_id=tenant_id)
+        cotas = {
+            c.professor_id: c.limite_mensal
+            for c in await self._cotas.listar(tenant_id=tenant_id)
+        }
+        nomes = {
+            p.id: p.nome
+            for p in await self._professores.listar(tenant_id=tenant_id)
+        }
+
+        # Agrega consumo por professor no mês (ignora canceladas).
+        consumo: dict[UUID | None, dict] = {}
+        for s in todas:
+            if s.criado_em.strftime("%Y-%m") != competencia:
+                continue
+            if s.status == StatusImpressao.CANCELADA:
+                continue
+            item = consumo.setdefault(
+                s.professor_id,
+                {"solicitacoes": 0, "copias": 0, "nome": s.professor_nome},
+            )
+            item["solicitacoes"] += 1
+            item["copias"] += s.copias
+            if s.professor_nome:
+                item["nome"] = s.professor_nome
+
+        # Professores com cota, ainda que sem consumo no mês.
+        professores_relevantes = set(consumo.keys()) | set(cotas.keys())
+
+        linhas: list[LinhaRelatorioImpressao] = []
+        for professor_id in professores_relevantes:
+            dados = consumo.get(professor_id, {"solicitacoes": 0, "copias": 0, "nome": ""})
+            nome = nomes.get(professor_id) or dados["nome"] or "Sem professor"
+            linhas.append(
+                LinhaRelatorioImpressao(
+                    professor_id=professor_id,
+                    professor_nome=nome,
+                    total_solicitacoes=dados["solicitacoes"],
+                    total_copias=dados["copias"],
+                    limite_mensal=cotas.get(professor_id, 0),
+                )
+            )
+        linhas.sort(key=lambda linha: linha.professor_nome.lower())
+        return RelatorioImpressao(
+            tenant_id=tenant_id, competencia=competencia, linhas=linhas
         )

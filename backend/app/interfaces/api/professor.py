@@ -13,33 +13,66 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.application.comunicacao_interna_use_cases import (
+    AbrirSolicitacaoInterna,
+    ListarSolicitacoesDoProfessor,
+)
 from app.application.impressao_use_cases import SolicitarImpressao
+from app.application.mediacao_use_cases import (
+    EnviarMensagemAoResponsavel,
+    ListarConversaMediada,
+    ListarInterlocutoresDoProfessor,
+)
 from app.application.mural_use_cases import (
     AutenticarProfessor,
     ConfirmarLeituraRecado,
     ListarRecadosDoProfessor,
 )
 from app.config import Settings
-from app.domain.entities import Professor, RecadoDoProfessor
-from app.infrastructure.db.repositories_admin import SqlProfessorRepository
+from app.domain.entities import (
+    CategoriaSolicitacao,
+    InterlocutorMediado,
+    MensagemMediada,
+    Professor,
+    RecadoDoProfessor,
+    SolicitacaoInterna,
+)
+from app.domain.ports import MessageChannel
+from app.infrastructure.db.repositories_admin import (
+    SqlContatoRepository,
+    SqlProfessorRepository,
+    SqlTenantRepository,
+)
 from app.infrastructure.db.repositories_comunicacao import (
+    SqlMediacaoRepository,
     SqlMuralRepository,
     SqlSolicitacaoImpressaoRepository,
+    SqlSolicitacaoInternaRepository,
 )
 from app.infrastructure.security import criar_token, decodificar_token
 from app.interfaces.deps import (
+    get_canal,
+    get_contato_repo,
     get_impressao_repo,
+    get_mediacao_repo,
     get_mural_repo,
     get_professor_repo,
     get_settings_dep,
+    get_solicitacao_interna_repo,
+    get_tenant_repo,
 )
 from app.interfaces.dto import (
     ImpressaoSaida,
+    InterlocutorMediadoSaida,
+    MediacaoEnvioEntrada,
+    MensagemMediadaSaida,
     ProfessorImpressaoEntrada,
     ProfessorLoginEntrada,
     ProfessorLogadoSaida,
+    ProfessorSolicitacaoInternaEntrada,
     ProfessorTokenSaida,
     RecadoDoProfessorSaida,
+    SolicitacaoInternaSaida,
 )
 
 router = APIRouter(prefix="/api/professor", tags=["professor"])
@@ -198,3 +231,152 @@ async def solicitar_impressao(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return _impressao_saida(solicitacao)
+
+
+# --------------------------------------------------------------------------- #
+# A2/A4 — canal interno do professor para a secretaria/gestão/pedagógico
+# --------------------------------------------------------------------------- #
+def _solicitacao_interna_saida(s: SolicitacaoInterna) -> SolicitacaoInternaSaida:
+    return SolicitacaoInternaSaida(
+        id=s.id,
+        professor_id=s.professor_id,
+        professor_nome=s.professor_nome,
+        assunto=s.assunto,
+        corpo=s.corpo,
+        categoria=s.categoria.value,
+        status=s.status.value,
+        resposta=s.resposta,
+        respondido_em=s.respondido_em,
+        criado_em=s.criado_em,
+        atualizado_em=s.atualizado_em,
+    )
+
+
+@router.post(
+    "/solicitacoes",
+    response_model=SolicitacaoInternaSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+async def abrir_solicitacao(
+    payload: ProfessorSolicitacaoInternaEntrada,
+    professor: Professor = Depends(professor_autenticado),
+    solicitacoes: SqlSolicitacaoInternaRepository = Depends(get_solicitacao_interna_repo),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> SolicitacaoInternaSaida:
+    """O professor abre uma solicitação/recado à escola pelo sistema."""
+    try:
+        categoria = CategoriaSolicitacao(payload.categoria)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Categoria inválida. Use secretaria, gestao ou pedagogico.",
+        ) from e
+    try:
+        solicitacao = await AbrirSolicitacaoInterna(
+            solicitacoes=solicitacoes, professores=professores
+        ).executar(
+            tenant_id=professor.tenant_id,
+            assunto=payload.assunto,
+            corpo=payload.corpo,
+            professor_id=professor.id,
+            categoria=categoria,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _solicitacao_interna_saida(solicitacao)
+
+
+@router.get("/solicitacoes", response_model=list[SolicitacaoInternaSaida])
+async def minhas_solicitacoes(
+    professor: Professor = Depends(professor_autenticado),
+    solicitacoes: SqlSolicitacaoInternaRepository = Depends(get_solicitacao_interna_repo),
+) -> list[SolicitacaoInternaSaida]:
+    itens = await ListarSolicitacoesDoProfessor(solicitacoes=solicitacoes).executar(
+        tenant_id=professor.tenant_id, professor_id=professor.id
+    )
+    return [_solicitacao_interna_saida(s) for s in itens]
+
+
+# --------------------------------------------------------------------------- #
+# A3 — mensagens mediadas com os responsáveis (sem expor o número do professor)
+# --------------------------------------------------------------------------- #
+def _mediada_saida(m: MensagemMediada) -> MensagemMediadaSaida:
+    return MensagemMediadaSaida(
+        id=m.id,
+        professor_id=m.professor_id,
+        contato_telefone=m.contato_telefone,
+        contato_nome=m.contato_nome,
+        professor_nome=m.professor_nome,
+        direcao=m.direcao.value,
+        corpo=m.corpo,
+        criado_em=m.criado_em,
+    )
+
+
+def _interlocutor_saida(i: InterlocutorMediado) -> InterlocutorMediadoSaida:
+    return InterlocutorMediadoSaida(
+        contato_telefone=i.contato_telefone,
+        contato_nome=i.contato_nome,
+        total_mensagens=i.total_mensagens,
+        ultima_em=i.ultima_em,
+        ultima_previa=i.ultima_previa,
+    )
+
+
+@router.get("/mensagens", response_model=list[InterlocutorMediadoSaida])
+async def meus_interlocutores(
+    professor: Professor = Depends(professor_autenticado),
+    mediacao: SqlMediacaoRepository = Depends(get_mediacao_repo),
+) -> list[InterlocutorMediadoSaida]:
+    """Responsáveis com quem o professor conversou (caixa de entrada)."""
+    itens = await ListarInterlocutoresDoProfessor(mediacao=mediacao).executar(
+        tenant_id=professor.tenant_id, professor_id=professor.id
+    )
+    return [_interlocutor_saida(i) for i in itens]
+
+
+@router.get("/mensagens/{contato_telefone}", response_model=list[MensagemMediadaSaida])
+async def conversa_com_responsavel(
+    contato_telefone: str,
+    professor: Professor = Depends(professor_autenticado),
+    mediacao: SqlMediacaoRepository = Depends(get_mediacao_repo),
+) -> list[MensagemMediadaSaida]:
+    mensagens = await ListarConversaMediada(mediacao=mediacao).executar(
+        tenant_id=professor.tenant_id,
+        professor_id=professor.id,
+        contato_telefone=contato_telefone,
+    )
+    return [_mediada_saida(m) for m in mensagens]
+
+
+@router.post(
+    "/mensagens",
+    response_model=MensagemMediadaSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+async def enviar_ao_responsavel(
+    payload: MediacaoEnvioEntrada,
+    professor: Professor = Depends(professor_autenticado),
+    mediacao: SqlMediacaoRepository = Depends(get_mediacao_repo),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+    canal: MessageChannel = Depends(get_canal),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
+) -> MensagemMediadaSaida:
+    """O professor responde ao responsável — a mensagem sai pelo número da escola."""
+    try:
+        mensagem = await EnviarMensagemAoResponsavel(
+            mediacao=mediacao,
+            professores=professores,
+            canal=canal,
+            tenants=tenants,
+            contatos=contatos,
+        ).executar(
+            tenant_id=professor.tenant_id,
+            professor_id=professor.id,
+            contato_telefone=payload.contato_telefone,
+            corpo=payload.corpo,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _mediada_saida(mensagem)

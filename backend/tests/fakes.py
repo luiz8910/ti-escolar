@@ -234,6 +234,7 @@ class FakeChannel:
         self._falhar_em = falhar_em or set()
 
     async def enviar_texto(self, *, contato, texto, remetente=None) -> str:
+        self.remetente = remetente
         self.enviados.append((contato, "texto"))
         return "x"
 
@@ -637,3 +638,103 @@ class FakeAlunoRepo:
         if a is None:
             raise ValueError("Aluno não encontrado para o tenant.")
         a.responsaveis = [c for c in a.responsaveis if c.id != contato_id]
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 — comunicação interna, mediação pai↔professor e cota de impressão
+# --------------------------------------------------------------------------- #
+class FakeSolicitacaoInternaRepo:
+    def __init__(self) -> None:
+        self.solicitacoes: dict[uuid.UUID, object] = {}
+
+    async def criar(self, solicitacao):
+        self.solicitacoes[solicitacao.id] = solicitacao
+        return solicitacao
+
+    async def obter(self, *, tenant_id, solicitacao_id):
+        s = self.solicitacoes.get(solicitacao_id)
+        return s if s and s.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id, categoria=None, status=None, professor_id=None):
+        itens = [
+            s
+            for s in self.solicitacoes.values()
+            if s.tenant_id == tenant_id
+            and (categoria is None or s.categoria.value == categoria)
+            and (status is None or s.status == status)
+            and (professor_id is None or s.professor_id == professor_id)
+        ]
+        itens.sort(key=lambda s: s.criado_em, reverse=True)
+        return itens
+
+    async def atualizar(self, solicitacao):
+        self.solicitacoes[solicitacao.id] = solicitacao
+        return solicitacao
+
+    async def remover(self, *, tenant_id, solicitacao_id):
+        s = self.solicitacoes.get(solicitacao_id)
+        if s is None or s.tenant_id != tenant_id:
+            return False
+        del self.solicitacoes[solicitacao_id]
+        return True
+
+
+class FakeMediacaoRepo:
+    def __init__(self) -> None:
+        self.mensagens: list = []
+
+    async def registrar(self, mensagem):
+        self.mensagens.append(mensagem)
+        return mensagem
+
+    async def conversa(self, *, tenant_id, professor_id, contato_telefone):
+        itens = [
+            m
+            for m in self.mensagens
+            if m.tenant_id == tenant_id
+            and m.professor_id == professor_id
+            and m.contato_telefone == contato_telefone
+        ]
+        itens.sort(key=lambda m: m.criado_em)
+        return itens
+
+    async def interlocutores(self, *, tenant_id, professor_id):
+        itens = [
+            m
+            for m in self.mensagens
+            if m.tenant_id == tenant_id and m.professor_id == professor_id
+        ]
+        itens.sort(key=lambda m: m.criado_em)
+        return itens
+
+
+class FakeCotaImpressaoRepo:
+    def __init__(self) -> None:
+        self.cotas: dict[tuple, object] = {}
+
+    async def definir(self, cota):
+        self.cotas[(cota.tenant_id, cota.professor_id)] = cota
+        return cota
+
+    async def por_professor(self, *, tenant_id, professor_id):
+        return self.cotas.get((tenant_id, professor_id))
+
+    async def listar(self, *, tenant_id):
+        return [c for c in self.cotas.values() if c.tenant_id == tenant_id]
+
+    async def remover(self, *, tenant_id, professor_id):
+        chave = (tenant_id, professor_id)
+        if chave not in self.cotas:
+            return False
+        del self.cotas[chave]
+        return True
+
+
+class FakeTenantRepo:
+    """Fake mínimo de TenantRepository para resolver o número de WhatsApp da escola."""
+
+    def __init__(self, tenants=None) -> None:
+        self.tenants: dict[uuid.UUID, object] = {t.id: t for t in (tenants or [])}
+
+    async def obter(self, tenant_id):
+        return self.tenants.get(tenant_id)

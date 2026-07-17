@@ -13,22 +13,41 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.application.impressao_use_cases import (
     AtualizarStatusImpressao,
+    DefinirCotaImpressao,
+    ListarCotasImpressao,
     ListarFilaImpressao,
     ObterSolicitacaoImpressao,
+    RelatorioImpressaoMensal,
+    RemoverCotaImpressao,
     RemoverSolicitacaoImpressao,
     SolicitarImpressao,
 )
-from app.domain.entities import SolicitacaoImpressao, StatusImpressao, Usuario
+from app.domain.entities import (
+    CotaImpressao,
+    RelatorioImpressao,
+    SolicitacaoImpressao,
+    StatusImpressao,
+    Usuario,
+)
 from app.infrastructure.db.repositories_admin import SqlProfessorRepository
 from app.infrastructure.db.repositories_comunicacao import (
+    SqlCotaImpressaoRepository,
     SqlSolicitacaoImpressaoRepository,
 )
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
-from app.interfaces.deps import get_impressao_repo, get_professor_repo
+from app.interfaces.deps import (
+    get_cota_impressao_repo,
+    get_impressao_repo,
+    get_professor_repo,
+)
 from app.interfaces.dto import (
+    CotaImpressaoEntrada,
+    CotaImpressaoSaida,
     ImpressaoEntrada,
     ImpressaoSaida,
     ImpressaoStatusEntrada,
+    LinhaRelatorioImpressaoSaida,
+    RelatorioImpressaoSaida,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["impressao"])
@@ -138,6 +157,114 @@ async def atualizar_status_impressao(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return _saida(solicitacao)
+
+
+# --------------------------------------------------------------------------- #
+# B2 · Cota (franquia mensal) e relatório de impressões por professor
+# --------------------------------------------------------------------------- #
+def _cota_saida(c: CotaImpressao) -> CotaImpressaoSaida:
+    return CotaImpressaoSaida(
+        id=c.id,
+        professor_id=c.professor_id,
+        professor_nome=c.professor_nome,
+        limite_mensal=c.limite_mensal,
+        ilimitado=c.ilimitado,
+    )
+
+
+def _relatorio_saida(r: RelatorioImpressao) -> RelatorioImpressaoSaida:
+    return RelatorioImpressaoSaida(
+        competencia=r.competencia,
+        total_copias=r.total_copias,
+        total_solicitacoes=r.total_solicitacoes,
+        linhas=[
+            LinhaRelatorioImpressaoSaida(
+                professor_id=linha.professor_id,
+                professor_nome=linha.professor_nome,
+                total_solicitacoes=linha.total_solicitacoes,
+                total_copias=linha.total_copias,
+                limite_mensal=linha.limite_mensal,
+                ilimitado=linha.ilimitado,
+                excedeu=linha.excedeu,
+                restante=linha.restante,
+            )
+            for linha in r.linhas
+        ],
+    )
+
+
+@router.put("/impressao/cotas", response_model=CotaImpressaoSaida)
+async def definir_cota_impressao(
+    payload: CotaImpressaoEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    cotas: SqlCotaImpressaoRepository = Depends(get_cota_impressao_repo),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> CotaImpressaoSaida:
+    """Define/atualiza a franquia mensal de cópias de um professor (0 = sem limite)."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        cota = await DefinirCotaImpressao(
+            cotas=cotas, professores=professores
+        ).executar(
+            tenant_id=payload.tenant_id,
+            professor_id=payload.professor_id,
+            limite_mensal=payload.limite_mensal,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _cota_saida(cota)
+
+
+@router.get("/impressao/cotas/tenant/{tenant_id}", response_model=list[CotaImpressaoSaida])
+async def listar_cotas_impressao(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    cotas: SqlCotaImpressaoRepository = Depends(get_cota_impressao_repo),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> list[CotaImpressaoSaida]:
+    _exige_acesso_tenant(usuario, tenant_id)
+    itens = await ListarCotasImpressao(cotas=cotas, professores=professores).executar(
+        tenant_id=tenant_id
+    )
+    return [_cota_saida(c) for c in itens]
+
+
+@router.delete(
+    "/impressao/cotas/{professor_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def remover_cota_impressao(
+    professor_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    cotas: SqlCotaImpressaoRepository = Depends(get_cota_impressao_repo),
+) -> None:
+    _exige_acesso_tenant(usuario, tenant_id)
+    removido = await RemoverCotaImpressao(cotas=cotas).executar(
+        tenant_id=tenant_id, professor_id=professor_id
+    )
+    if not removido:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Cota não encontrada"
+        )
+
+
+@router.get(
+    "/impressao/relatorio/tenant/{tenant_id}", response_model=RelatorioImpressaoSaida
+)
+async def relatorio_impressao(
+    tenant_id: UUID,
+    competencia: str,
+    usuario: Usuario = Depends(usuario_autenticado),
+    solicitacoes: SqlSolicitacaoImpressaoRepository = Depends(get_impressao_repo),
+    cotas: SqlCotaImpressaoRepository = Depends(get_cota_impressao_repo),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> RelatorioImpressaoSaida:
+    """Relatório mensal de impressões (``?competencia=YYYY-MM``), agregado por professor."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    relatorio = await RelatorioImpressaoMensal(
+        solicitacoes=solicitacoes, cotas=cotas, professores=professores
+    ).executar(tenant_id=tenant_id, competencia=competencia)
+    return _relatorio_saida(relatorio)
 
 
 @router.delete("/impressao/{solicitacao_id}", status_code=status.HTTP_204_NO_CONTENT)

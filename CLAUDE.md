@@ -133,7 +133,10 @@ ti-escolar/
   `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`,
   `Sala` (turma) + associação `sala_contatos`, `Professor` (vinculado à série por
   `Sala.professor_id`), `FonteConhecimento` (documento da escola),
-  `PromptTenant` (system prompt da escola) e `ResumoEscola` (visão agregada do super admin).
+  `PromptTenant` (system prompt da escola), `ResumoEscola` (visão agregada do super admin),
+  `SolicitacaoInterna` (canal professor→escola), `MensagemMediada` (canal pai↔professor) e
+  `CotaImpressao` (franquia mensal de impressão). `Contato` tem flag `ativo` (responsável
+  inativo — todos os alunos já são ex-alunos).
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
@@ -141,7 +144,8 @@ ti-escolar/
   `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant` →
   `0008_professores` → `0009_tenant_whatsapp` → `0010_template_content_sid` →
   `0011_tenant_telefone_contato` → `0012_respostas_rapidas` → `0013_avisos_temporizados` →
-  `0014_solicitacoes_impressao` → `0015_mural_professor`.
+  `0014_solicitacoes_impressao` → `0015_mural_professor` → `0016_solicitacoes_internas` →
+  `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -419,6 +423,57 @@ LLM novo:** reusam o RAG existente (que já chama o `LLMProvider`).
   `web/app/professor/` (login + mural + solicitar impressão). Seed: professor demo com senha
   (`DEMO_PROFESSOR_SENHA`, default `prof123`) e um recado.
 
+### 6h. Consolidação interna — Onda 2 (cliente-âncora EM Rosa Cury)
+
+Quatro features que consolidam a comunicação interna e o ciclo de vida escolar. Nenhuma
+exige LLM novo. Todas escopadas por `tenant_id`.
+
+- **A2/A4 · Canal interno professor→secretaria + roteamento por assunto
+  (`SolicitacaoInterna`):** o professor abre recados/pedidos pelo sistema (não pelo
+  WhatsApp pessoal), com **`categoria`** ∈ {`secretaria`, `gestao`, `pedagogico`} que
+  **roteia** o assunto (§A4) e **`status`** ∈ {`aberta`, `em_andamento`, `resolvida`,
+  `cancelada`}. A escola responde no próprio registro (`resposta`/`respondido_em`) e pode
+  **notificar o professor por WhatsApp** (`MessageChannel`). Casos de uso em
+  `app/application/comunicacao_interna_use_cases.py`; repositório
+  `SqlSolicitacaoInternaRepository` (`repositories_comunicacao.py`). Rotas: admin
+  `app/interfaces/api/comunicacao_interna.py` (`/api/admin/solicitacoes-internas`) e
+  professor em `professor.py` (`/api/professor/solicitacoes`). Migration
+  `0016_solicitacoes_internas`. Painel: secretaria `web/app/admin/solicitacoes/`; professor
+  em `web/app/professor/`.
+- **A3 · Canal pai↔professor mediado (`MensagemMediada`):** o professor conversa com o
+  responsável **sem expor o número pessoal** — ao responder, a mensagem sai pelo número da
+  escola (`Tenant.whatsapp_numero` como `remetente` do `MessageChannel`) e é registrada; as
+  mensagens do responsável entram pelo mesmo canal (`RegistrarMensagemDoResponsavel`, ponto
+  de entrada para o webhook/secretaria) e aparecem no painel do professor. Uma "conversa" é
+  o par (`professor_id`, `contato_telefone`). Casos de uso em
+  `app/application/mediacao_use_cases.py`; repositório `SqlMediacaoRepository`. Rotas:
+  professor `/api/professor/mensagens` (listar interlocutores/thread, enviar) e admin
+  `app/interfaces/api/mediacao.py` (`/api/admin/mediacao` — registrar recebida + acompanhar).
+  Migration `0017_mensagens_mediadas`. Painel: `web/app/professor/`.
+- **B2 · Cota e relatório de impressões (`CotaImpressao`):** **franquia mensal por
+  professor** (`limite_mensal`; `<= 0` = sem limite). O relatório mensal
+  (`RelatorioImpressaoMensal`, competência `YYYY-MM`) agrega as `SolicitacaoImpressao` **não
+  canceladas** por professor, cruza com a cota e sinaliza quem **excedeu** ("bateu a meta").
+  Casos de uso em `app/application/impressao_use_cases.py` (estende a fila §B1); repositório
+  `SqlCotaImpressaoRepository`. Rotas em `app/interfaces/api/impressao.py`
+  (`/api/admin/impressao/cotas`, `/api/admin/impressao/relatorio`). Migration
+  `0018_cota_impressao`. Painel: `web/app/admin/impressao/relatorio/`.
+- **F1 · Progressão de série + ciclo de vida do responsável:** na virada de ano,
+  `PromoverSerie`/`PromoverTurmas` movem os alunos **ativos** para a série seguinte (ou os
+  marcam como ex-alunos na última série — `destino=None`), e
+  `InativarResponsaveisSemAlunosAtivos` inativa (`Contato.ativo=False`) **apenas** os
+  responsáveis cujos alunos já são **todos** ex-alunos (idempotente; preserva quem ainda tem
+  aluno ativo ou nenhum vínculo). Casos de uso em
+  `app/application/progressao_use_cases.py`. Rotas em `app/interfaces/api/progressao.py`
+  (`/api/admin/progressao/promover`, `/api/admin/progressao/inativar-responsaveis`).
+  Migrations `0019_contato_ativo` (flag `contatos.ativo`). Painel:
+  `web/app/admin/progressao/`.
+- **J1 · Acesso web por link:** princípio transversal já atendido pelo painel Next.js (App
+  Router) e pelo **portal do professor** (`web/app/professor/`), acessíveis por link direto —
+  sem dependência de app nativo. Reforçado nesta onda com as novas páginas web.
+- **Seed:** o tenant demo ganha uma `SolicitacaoInterna` de exemplo e uma `CotaImpressao`
+  (3.000 cópias/mês) para o professor demo.
+
 ## 7. Camada de LLM
 
 - Contrato único: porta **`LLMProvider`** no domínio (ex.: `gerar(prompt/messages, opções) -> resposta`).
@@ -581,7 +636,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   rotas admin exigem `Authorization: Bearer`; o painel guarda o token (não a senha) no
   `localStorage`. Ver §6a.
 - [ ] Endpoint para listar/gerenciar **templates** (o painel ainda usa o template do seed).
-- [ ] **Transferência de responsáveis** Ser possível que os pais de alunos sejam transferidos para a série seguinte ou fiquem inativos caso estejam na última série disponível. Apenas tornar responsáveis inativos se todos os alunos deste responsável já são ex-alunos.
+- [x] **Transferência de responsáveis** (Onda 2 · F1) Progressão de série na virada de ano:
+  os alunos ativos são promovidos para a série seguinte (ou marcados como ex-alunos na
+  última série) e os responsáveis são inativados **apenas quando todos os seus alunos já são
+  ex-alunos**. Ver §6h (`app/application/progressao_use_cases.py`, `web/app/admin/progressao/`).
 - [x] **CRUD de Alunos** Aluno por tenant com **série 1:1** (`sala_id`) e **responsáveis N:N**
   (`aluno_responsaveis`), com `ativo` para marcar ex-aluno. Ver §6c-bis
   (`app/interfaces/api/cadastro.py`, `web/app/admin/alunos/`).

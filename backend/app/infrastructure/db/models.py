@@ -280,6 +280,8 @@ class ContatoORM(Base):
     )
     nome: Mapped[str] = mapped_column(String(200))
     telefone: Mapped[str] = mapped_column(String(50))
+    # Responsável inativo (todos os seus alunos já são ex-alunos, §F1). Mantido no cadastro.
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     criado_em: Mapped[datetime] = mapped_column()
 
     grupos: Mapped[list["GrupoORM"]] = relationship(
@@ -513,6 +515,85 @@ class AvisoTemporizadoORM(Base):
     expira_em: Mapped[datetime | None] = mapped_column(nullable=True)
     criado_em: Mapped[datetime] = mapped_column()
     atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A2/A4 — Canal interno professor → secretaria (roteamento por assunto)
+# --------------------------------------------------------------------------- #
+class SolicitacaoInternaORM(Base):
+    __tablename__ = "solicitacoes_internas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    # Professor solicitante; ON DELETE SET NULL preserva o histórico do canal.
+    professor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    professor_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    assunto: Mapped[str] = mapped_column(String(300))
+    corpo: Mapped[str] = mapped_column(Text)
+    categoria: Mapped[str] = mapped_column(
+        String(20), default="secretaria", server_default="secretaria", index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default="aberta", server_default="aberta", index=True
+    )
+    resposta: Mapped[str] = mapped_column(Text, default="", server_default="")
+    respondido_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · A3 — Canal pai ↔ professor mediado (sem expor o número do professor)
+# --------------------------------------------------------------------------- #
+class MensagemMediadaORM(Base):
+    __tablename__ = "mensagens_mediadas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    professor_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="CASCADE"),
+        index=True,
+    )
+    contato_telefone: Mapped[str] = mapped_column(String(50), index=True)
+    contato_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    professor_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    direcao: Mapped[str] = mapped_column(String(30))
+    corpo: Mapped[str] = mapped_column(Text)
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 2 · B2 — Cota de impressão por professor
+# --------------------------------------------------------------------------- #
+class CotaImpressaoORM(Base):
+    __tablename__ = "cotas_impressao"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    professor_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="CASCADE"),
+        index=True,
+    )
+    limite_mensal: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "professor_id", name="uq_cota_impressao_tenant_professor"),
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -131,3 +131,86 @@ export async function solicitarImpressaoProfessor(dados: {
   });
   return jsonOuErro(resp, "enviar para impressão");
 }
+
+// -------- A2/A4 · canal interno do professor para a secretaria/gestão -------- //
+export type CategoriaSolicitacao = "secretaria" | "gestao" | "pedagogico";
+
+export interface SolicitacaoInternaProfessor {
+  id: string;
+  assunto: string;
+  corpo: string;
+  categoria: CategoriaSolicitacao;
+  status: "aberta" | "em_andamento" | "resolvida" | "cancelada";
+  resposta: string;
+  respondido_em: string | null;
+  criado_em: string;
+}
+
+export async function minhasSolicitacoes(): Promise<SolicitacaoInternaProfessor[]> {
+  const resp = await fetch(`${API_URL}/api/professor/solicitacoes`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "carregar solicitações");
+}
+
+export async function abrirSolicitacao(dados: {
+  assunto: string;
+  corpo: string;
+  categoria: CategoriaSolicitacao;
+}): Promise<SolicitacaoInternaProfessor> {
+  const resp = await fetch(`${API_URL}/api/professor/solicitacoes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(dados),
+  });
+  return jsonOuErro(resp, "abrir solicitação");
+}
+
+// -------- A3 · mensagens mediadas com os responsáveis (sem expor o nº) -------- //
+export interface Interlocutor {
+  contato_telefone: string;
+  contato_nome: string;
+  total_mensagens: number;
+  ultima_em: string | null;
+  ultima_previa: string;
+}
+
+export interface MensagemMediada {
+  id: string;
+  professor_id: string;
+  contato_telefone: string;
+  contato_nome: string;
+  professor_nome: string;
+  direcao: "responsavel_para_professor" | "professor_para_responsavel";
+  corpo: string;
+  criado_em: string;
+}
+
+export async function meusInterlocutores(): Promise<Interlocutor[]> {
+  const resp = await fetch(`${API_URL}/api/professor/mensagens`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "carregar conversas");
+}
+
+export async function conversaComResponsavel(
+  telefone: string
+): Promise<MensagemMediada[]> {
+  const resp = await fetch(
+    `${API_URL}/api/professor/mensagens/${encodeURIComponent(telefone)}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar conversa");
+}
+
+export async function enviarAoResponsavel(
+  telefone: string,
+  corpo: string
+): Promise<MensagemMediada> {
+  const resp = await fetch(`${API_URL}/api/professor/mensagens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ contato_telefone: telefone, corpo }),
+  });
+  return jsonOuErro(resp, "enviar mensagem");
+}
