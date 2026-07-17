@@ -11,6 +11,7 @@ from uuid import UUID
 
 from app.domain.entities import (
     Aluno,
+    AvisoTemporizado,
     Broadcast,
     Contato,
     Conversa,
@@ -18,19 +19,24 @@ from app.domain.entities import (
     FerramentaSpec,
     FonteConhecimento,
     Grupo,
+    LeituraRecado,
     Mensagem,
     MetricasUsoEscola,
     MessageQuota,
     MessageTemplate,
     Professor,
     PromptTenant,
+    Recado,
     RegistroAuditoria,
     RespostaLLM,
+    RespostaRapida,
     ResultadoBusca,
     ResumoConversa,
     ResumoEscola,
     Sala,
+    SolicitacaoImpressao,
     StatusEntrega,
+    StatusImpressao,
     Tenant,
     TrechoConhecimento,
     TurnoConversa,
@@ -308,6 +314,96 @@ class PromptTenantRepository(Protocol):
     async def obter(self, *, tenant_id: UUID) -> PromptTenant | None: ...
 
     async def salvar(self, *, tenant_id: UUID, conteudo: str) -> PromptTenant: ...
+
+
+@runtime_checkable
+class AvisoTemporizadoRepository(Protocol):
+    """CRUD dos avisos temporizados da escola, escopado por tenant."""
+
+    async def criar(self, aviso: AvisoTemporizado) -> AvisoTemporizado: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, aviso_id: UUID
+    ) -> AvisoTemporizado | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[AvisoTemporizado]: ...
+
+    async def vigente(self, *, tenant_id: UUID) -> AvisoTemporizado | None:
+        """Aviso atualmente vigente do tenant (ativo e dentro da janela), se houver."""
+        ...
+
+    async def atualizar(self, aviso: AvisoTemporizado) -> AvisoTemporizado: ...
+
+    async def remover(self, *, tenant_id: UUID, aviso_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class MuralRepository(Protocol):
+    """Mural de recados aos professores + confirmação de leitura, escopado por tenant."""
+
+    async def criar(self, recado: Recado) -> Recado: ...
+
+    async def obter(self, *, tenant_id: UUID, recado_id: UUID) -> Recado | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[Recado]: ...
+
+    async def remover(self, *, tenant_id: UUID, recado_id: UUID) -> bool: ...
+
+    async def marcar_leitura(
+        self, *, tenant_id: UUID, recado_id: UUID, professor_id: UUID
+    ) -> LeituraRecado:
+        """Marca (idempotente) que o professor leu o recado; devolve a leitura."""
+        ...
+
+    async def leituras(self, *, recado_id: UUID) -> list[LeituraRecado]:
+        """Leituras de um recado (quem leu e quando)."""
+        ...
+
+    async def leituras_do_professor(
+        self, *, tenant_id: UUID, professor_id: UUID
+    ) -> list[LeituraRecado]:
+        """Leituras feitas por um professor (para marcar seus recados como lidos)."""
+        ...
+
+
+@runtime_checkable
+class SolicitacaoImpressaoRepository(Protocol):
+    """Fila de solicitações de impressão dos professores, escopada por tenant."""
+
+    async def criar(self, solicitacao: SolicitacaoImpressao) -> SolicitacaoImpressao: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, solicitacao_id: UUID
+    ) -> SolicitacaoImpressao | None: ...
+
+    async def listar(
+        self, *, tenant_id: UUID, status: StatusImpressao | None = None
+    ) -> list[SolicitacaoImpressao]:
+        """Solicitações do tenant (opcionalmente filtradas por status), recentes primeiro."""
+        ...
+
+    async def atualizar(self, solicitacao: SolicitacaoImpressao) -> SolicitacaoImpressao: ...
+
+    async def remover(self, *, tenant_id: UUID, solicitacao_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class RespostaRapidaRepository(Protocol):
+    """CRUD das respostas rápidas ("atalhos") da escola, escopado por tenant."""
+
+    async def criar(self, resposta: RespostaRapida) -> RespostaRapida: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, resposta_id: UUID
+    ) -> RespostaRapida | None: ...
+
+    async def por_chave(self, *, tenant_id: UUID, chave: str) -> RespostaRapida | None: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[RespostaRapida]: ...
+
+    async def atualizar(self, resposta: RespostaRapida) -> RespostaRapida: ...
+
+    async def remover(self, *, tenant_id: UUID, resposta_id: UUID) -> bool: ...
 
 
 @runtime_checkable

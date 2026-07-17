@@ -140,7 +140,8 @@ ti-escolar/
   `0004_conhecimento_prompt` → `0005_alunos` → `0006_licenciamento_tenant` →
   `0006_destinatario_entrega` → `0007_auditoria` → `0007_ficha_financeira_tenant` →
   `0008_professores` → `0009_tenant_whatsapp` → `0010_template_content_sid` →
-  `0011_tenant_telefone_contato`.
+  `0011_tenant_telefone_contato` → `0012_respostas_rapidas` → `0013_avisos_temporizados` →
+  `0014_solicitacoes_impressao` → `0015_mural_professor`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -373,6 +374,50 @@ ti-escolar/
 - **Endpoint:** `GET /api/admin/escolas/{tenant_id}/ficha-financeira` (`FichaFinanceiraSaida`).
 - **Painel:** card "Ficha financeira" no detalhe `web/app/admin/escolas/[tenantId]/` (métricas de
   cobrança, uso e saúde); preços editáveis no modal de licença da lista `web/app/admin/escolas/`.
+
+### 6g. Comunicação interna e atendimento — Onda 1 (cliente-âncora EM Rosa Cury)
+
+Quatro features que reduzem a carga da secretaria e o atrito secretaria↔professor. **Não exigem
+LLM novo:** reusam o RAG existente (que já chama o `LLMProvider`).
+
+- **C1 · Respostas rápidas → RAG (`RespostaRapida`):** os "atalhos" da secretaria (chave +
+  conteúdo), únicos por `(tenant_id, chave)`. Cada uma é **ingerida no RAG** (reusa
+  `IngerirDocumento`; `fonte_id` liga à `FonteConhecimento` gerada) para o bot responder
+  automaticamente; `ativo` controla a indexação. Casos de uso em
+  `app/application/respostas_rapidas_use_cases.py` (criar/listar/obter/atualizar/remover; editar
+  reindexa, remover/desativar apaga os trechos). Repositório `SqlRespostaRapidaRepository`
+  (`repositories_conhecimento.py`). Rotas `app/interfaces/api/respostas_rapidas.py`
+  (`/api/admin/respostas-rapidas`). Migration `0012_respostas_rapidas`. Seed com os 19 atalhos reais
+  da Rosa Cury. Painel `web/app/admin/respostas-rapidas/`.
+- **C2 · Aviso geral temporizado (`AvisoTemporizado`):** recado do dia com **janela de vigência**
+  opcional (`inicia_em`/`expira_em`) e `ativo`. Enquanto **vigente** (`vigente_em`), é **anexado à
+  resposta do bot** a quem inicia a conversa (integrado em `ReceberMensagemRecebida` **e**
+  `AtenderConversa`, via `AvisoTemporizadoRepository` opcional) — "sem mexer no celular". Casos de
+  uso em `app/application/avisos_use_cases.py`. Repositório `SqlAvisoTemporizadoRepository`
+  (`repositories_comunicacao.py`). Rotas `app/interfaces/api/avisos.py` (`/api/admin/avisos`).
+  Migration `0013_avisos_temporizados`. Painel `web/app/admin/avisos/`.
+- **B1 · Fila de impressão (`SolicitacaoImpressao`):** o professor envia um arquivo com parâmetros
+  (`copias`, `colorido`, `frente_verso`, `observacao`); cai numa fila (`status` ∈ {`pendente`,
+  `em_processo`, `concluida`, `cancelada`}) para a secretaria processar. `professor_id` FK a
+  `professores` (`ON DELETE SET NULL`). Casos de uso em `app/application/impressao_use_cases.py`.
+  Repositório `SqlSolicitacaoImpressaoRepository`. Rotas `app/interfaces/api/impressao.py`
+  (admin: `/api/admin/impressao`) e submissão pelo próprio professor em
+  `/api/professor/impressao`. Migration `0014_solicitacoes_impressao`. Painel
+  `web/app/admin/impressao/`.
+- **A1 · Mural do professor (`Recado` + `LeituraRecado`):** a secretaria publica recados; o
+  professor tem **login próprio** e **confirma a leitura** ("ticado"). A secretaria vê quem leu /
+  quem não leu e **re-notifica por WhatsApp** os não-lidos (`ReNotificarRecadoNaoLido` via
+  `MessageChannel`). **Autenticação do professor:** `Professor.senha_hash` (PBKDF2, definida pela
+  secretaria em `CadastrarProfessor`/`AtualizarProfessor` via `senha`); `AutenticarProfessor` +
+  `POST /api/professor/login` emite JWT com `papel="professor"`; a dependência
+  `professor_autenticado` revalida no banco. Casos de uso em `app/application/mural_use_cases.py`.
+  Repositório `SqlMuralRepository` (`repositories_comunicacao.py`). Rotas: admin
+  `app/interfaces/api/mural.py` (`/api/admin/recados` + `.../leitura`, `.../renotificar`) e
+  professor `app/interfaces/api/professor.py` (`/api/professor/recados`, `.../leitura`).
+  Migration `0015_mural_professor` (adiciona `professores.senha_hash` + `recados` +
+  `leituras_recado`). Painel: secretaria `web/app/admin/mural/`; portal do professor
+  `web/app/professor/` (login + mural + solicitar impressão). Seed: professor demo com senha
+  (`DEMO_PROFESSOR_SENHA`, default `prof123`) e um recado.
 
 ## 7. Camada de LLM
 

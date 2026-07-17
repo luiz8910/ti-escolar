@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     # Admin do tenant demo (criado no seed)
     demo_admin_email: str = "admin@escola-demo.test"
     demo_admin_senha: str = "escola123"
+    # Senha do professor demo (login do mural do professor — §A1)
+    demo_professor_senha: str = "prof123"
 
     # Autenticação (JWT) — segredo de assinatura HS256 e validade do token (minutos).
     # Em produção, defina JWT_SECRET com um valor forte e secreto.

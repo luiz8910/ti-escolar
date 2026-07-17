@@ -324,11 +324,41 @@ class ProfessorORM(Base):
     )
     nome: Mapped[str] = mapped_column(String(200))
     telefone: Mapped[str] = mapped_column(String(50))
+    # Senha (hash PBKDF2) para o login do professor no mural (§A1); vazio = sem acesso.
+    senha_hash: Mapped[str] = mapped_column(Text, default="", server_default="")
     criado_em: Mapped[datetime] = mapped_column()
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "telefone", name="uq_professor_tenant_telefone"),
     )
+
+
+class SolicitacaoImpressaoORM(Base):
+    __tablename__ = "solicitacoes_impressao"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    # Professor solicitante; ON DELETE SET NULL preserva o histórico da fila.
+    professor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    professor_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    arquivo_nome: Mapped[str] = mapped_column(String(300))
+    arquivo_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    copias: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    colorido: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    frente_verso: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    observacao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[str] = mapped_column(
+        String(20), default="pendente", server_default="pendente", index=True
+    )
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
 
 
 class SalaORM(Base):
@@ -382,6 +412,45 @@ class AlunoORM(Base):
 
 
 # --------------------------------------------------------------------------- #
+# Mural do professor: recados + confirmação de leitura (§A1)
+# --------------------------------------------------------------------------- #
+class RecadoORM(Base):
+    __tablename__ = "recados"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    titulo: Mapped[str] = mapped_column(String(300))
+    corpo: Mapped[str] = mapped_column(Text)
+    autor_id: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    autor_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+
+    leituras: Mapped[list["LeituraRecadoORM"]] = relationship(
+        back_populates="recado", cascade="all, delete-orphan"
+    )
+
+
+class LeituraRecadoORM(Base):
+    __tablename__ = "leituras_recado"
+
+    recado_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("recados.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    professor_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    lido_em: Mapped[datetime] = mapped_column()
+
+    recado: Mapped[RecadoORM] = relationship(back_populates="leituras")
+
+
+# --------------------------------------------------------------------------- #
 # Auditoria de ações (usuários logados + LLM)
 # --------------------------------------------------------------------------- #
 class AuditoriaORM(Base):
@@ -399,6 +468,51 @@ class AuditoriaORM(Base):
     descricao: Mapped[str] = mapped_column(Text, default="")
     metadados: Mapped[dict] = mapped_column(JSON, default=dict)
     criado_em: Mapped[datetime] = mapped_column(index=True)
+
+
+# --------------------------------------------------------------------------- #
+# Respostas rápidas ("atalhos") da escola — ingeridas no RAG
+# --------------------------------------------------------------------------- #
+class RespostaRapidaORM(Base):
+    __tablename__ = "respostas_rapidas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    chave: Mapped[str] = mapped_column(String(200))
+    conteudo: Mapped[str] = mapped_column(Text)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Documento de RAG gerado por esta resposta rápida; SET NULL ao remover a fonte.
+    fonte_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("fontes_conhecimento.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "chave", name="uq_resposta_rapida_tenant_chave"),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Aviso geral temporizado (resposta automática do bot)
+# --------------------------------------------------------------------------- #
+class AvisoTemporizadoORM(Base):
+    __tablename__ = "avisos_temporizados"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    mensagem: Mapped[str] = mapped_column(Text)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    inicia_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    expira_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
 
 
 # --------------------------------------------------------------------------- #

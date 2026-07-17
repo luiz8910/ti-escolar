@@ -28,6 +28,7 @@ from app.domain.entities import (
 )
 from app.domain.ports import (
     AuditLogRepository,
+    AvisoTemporizadoRepository,
     BroadcastRepository,
     ContatoRepository,
     ConversaRepository,
@@ -192,10 +193,13 @@ class ReceberMensagemRecebida:
         conversas: ConversaRepository,
         responder: ResponderDuvida,
         documentos: RecuperarEEnviarDocumento,
+        avisos: AvisoTemporizadoRepository | None = None,
     ) -> None:
         self._conversas = conversas
         self._responder = responder
         self._documentos = documentos
+        # Opcional: aviso temporizado vigente é anexado à resposta (ver §C2).
+        self._avisos = avisos
 
     async def executar(
         self, *, tenant_id: UUID, contato: str, texto: str
@@ -217,6 +221,10 @@ class ReceberMensagemRecebida:
         )
 
         texto_final = resposta.texto
+        aviso = await self._aviso_vigente(tenant_id)
+        if aviso:
+            # Recado do dia em destaque, antes da resposta normal do bot.
+            texto_final = f"📢 {aviso}\n\n{texto_final}"
         if docs:
             lista = "\n".join(f"• {d.nome}" for d in docs)
             texto_final += f"\n\nEnviei os seguintes documentos:\n{lista}"
@@ -225,6 +233,13 @@ class ReceberMensagemRecebida:
             conversa_id=conversa.id, autor="bot", texto=texto_final, fontes=resposta.fontes
         )
         return RespostaMensagem(texto=texto_final, fontes=resposta.fontes, documentos=docs)
+
+    async def _aviso_vigente(self, tenant_id: UUID) -> str:
+        """Mensagem do aviso temporizado vigente do tenant (ou string vazia)."""
+        if self._avisos is None:
+            return ""
+        aviso = await self._avisos.vigente(tenant_id=tenant_id)
+        return aviso.mensagem if aviso else ""
 
 
 # --------------------------------------------------------------------------- #
@@ -289,6 +304,7 @@ class AtenderConversa:
         documentos: RecuperarEEnviarDocumento,
         prompts: PromptTenantRepository | None = None,
         auditoria: AuditLogRepository | None = None,
+        avisos: AvisoTemporizadoRepository | None = None,
         k: int = 4,
         max_iteracoes: int = 4,
     ) -> None:
@@ -299,6 +315,8 @@ class AtenderConversa:
         self._documentos = documentos
         self._prompts = prompts
         self._auditoria = auditoria
+        # Opcional: aviso temporizado vigente é anexado à resposta (ver §C2).
+        self._avisos = avisos
         self._k = k
         self._max_iteracoes = max_iteracoes
 
@@ -346,6 +364,11 @@ class AtenderConversa:
                 "Estou com dificuldade para concluir seu pedido agora. "
                 "Por gentileza, entre em contato com a secretaria da escola para te ajudarmos."
             )
+
+        if self._avisos is not None:
+            aviso = await self._avisos.vigente(tenant_id=tenant_id)
+            if aviso:
+                texto_final = f"📢 {aviso.mensagem}\n\n{texto_final}"
 
         await self._conversas.adicionar_mensagem(
             conversa_id=conversa.id, autor="bot", texto=texto_final, fontes=fontes

@@ -29,16 +29,21 @@ from app.domain.entities import (
 from app.infrastructure.db.models import (
     AlunoORM,
     AuditoriaORM,
+    AvisoTemporizadoORM,
     BroadcastORM,
     ConhecimentoORM,
     ContatoORM,
     ConversaORM,
     DestinatarioORM,
     DocumentoORM,
+    FonteConhecimentoORM,
     GrupoORM,
     MensagemORM,
     ProfessorORM,
     QuotaORM,
+    RecadoORM,
+    RespostaRapidaORM,
+    SolicitacaoImpressaoORM,
     SalaORM,
     TemplateORM,
     TenantORM,
@@ -258,9 +263,27 @@ class SqlTenantRepository:
             delete(sala_contatos).where(sala_contatos.c.sala_id.in_(salas_do_tenant))
         )
         await self._s.execute(delete(SalaORM).where(SalaORM.tenant_id == tenant_id))
+        # Fila de impressão (FK a professores SET NULL) antes de remover os professores.
+        await self._s.execute(
+            delete(SolicitacaoImpressaoORM).where(
+                SolicitacaoImpressaoORM.tenant_id == tenant_id
+            )
+        )
+        # Recados do mural (as leituras somem por ON DELETE CASCADE).
+        await self._s.execute(delete(RecadoORM).where(RecadoORM.tenant_id == tenant_id))
         await self._s.execute(delete(ProfessorORM).where(ProfessorORM.tenant_id == tenant_id))
         await self._s.execute(delete(ConversaORM).where(ConversaORM.tenant_id == tenant_id))
+        # Respostas rápidas (FK a fontes SET NULL) antes das fontes; depois os trechos e fontes.
+        await self._s.execute(
+            delete(RespostaRapidaORM).where(RespostaRapidaORM.tenant_id == tenant_id)
+        )
         await self._s.execute(delete(ConhecimentoORM).where(ConhecimentoORM.tenant_id == tenant_id))
+        await self._s.execute(
+            delete(FonteConhecimentoORM).where(FonteConhecimentoORM.tenant_id == tenant_id)
+        )
+        await self._s.execute(
+            delete(AvisoTemporizadoORM).where(AvisoTemporizadoORM.tenant_id == tenant_id)
+        )
         await self._s.execute(delete(DocumentoORM).where(DocumentoORM.tenant_id == tenant_id))
         await self._s.execute(
             delete(DestinatarioORM).where(DestinatarioORM.broadcast_id.in_(broadcasts_do_tenant))
@@ -469,6 +492,7 @@ def _to_professor(row: ProfessorORM) -> Professor:
         tenant_id=row.tenant_id,
         nome=row.nome,
         telefone=row.telefone,
+        senha_hash=row.senha_hash,
         criado_em=row.criado_em,
     )
 
@@ -679,6 +703,7 @@ class SqlProfessorRepository:
                 tenant_id=professor.tenant_id,
                 nome=professor.nome,
                 telefone=professor.telefone,
+                senha_hash=professor.senha_hash,
                 criado_em=professor.criado_em,
             )
         )
@@ -717,6 +742,7 @@ class SqlProfessorRepository:
             raise ValueError("Professor não encontrado para o tenant.")
         row.nome = professor.nome
         row.telefone = professor.telefone
+        row.senha_hash = professor.senha_hash
         await self._s.flush()
         return _to_professor(row)
 

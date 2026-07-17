@@ -35,9 +35,15 @@ from app.infrastructure.db.repositories_admin import (
     SqlTenantRepository,
     SqlUsuarioRepository,
 )
+from app.infrastructure.db.repositories_comunicacao import (
+    SqlAvisoTemporizadoRepository,
+    SqlMuralRepository,
+    SqlSolicitacaoImpressaoRepository,
+)
 from app.infrastructure.db.repositories_conhecimento import (
     SqlFonteConhecimentoRepository,
     SqlPromptTenantRepository,
+    SqlRespostaRapidaRepository,
 )
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
@@ -76,7 +82,10 @@ def get_receber_mensagem(
     documentos = RecuperarEEnviarDocumento(source=MockDocumentSource(), canal=canal)
     conversas = SqlConversaRepository(session)
     return ReceberMensagemRecebida(
-        conversas=conversas, responder=responder, documentos=documentos
+        conversas=conversas,
+        responder=responder,
+        documentos=documentos,
+        avisos=SqlAvisoTemporizadoRepository(session),
     )
 
 
@@ -98,6 +107,7 @@ def get_atender_conversa(
         documentos=documentos,
         prompts=SqlPromptTenantRepository(session),
         auditoria=SqlAuditLogRepository(session),
+        avisos=SqlAvisoTemporizadoRepository(session),
     )
 
 
@@ -227,3 +237,28 @@ def get_ingerir_documento(
         store=PgVectorStore(session),
         fontes=SqlFonteConhecimentoRepository(session),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Respostas rápidas ("atalhos") por tenant → RAG
+# --------------------------------------------------------------------------- #
+def get_resposta_rapida_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlRespostaRapidaRepository:
+    return SqlRespostaRapidaRepository(session)
+
+
+def get_aviso_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAvisoTemporizadoRepository:
+    return SqlAvisoTemporizadoRepository(session)
+
+
+def get_impressao_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlSolicitacaoImpressaoRepository:
+    return SqlSolicitacaoImpressaoRepository(session)
+
+
+def get_mural_repo(session: AsyncSession = Depends(get_session)) -> SqlMuralRepository:
+    return SqlMuralRepository(session)

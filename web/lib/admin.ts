@@ -862,6 +862,7 @@ export interface Professor {
   id: string;
   nome: string;
   telefone: string;
+  tem_acesso: boolean;
 }
 
 export async function listarProfessores(): Promise<Professor[]> {
@@ -874,12 +875,13 @@ export async function listarProfessores(): Promise<Professor[]> {
 
 export async function cadastrarProfessor(
   nome: string,
-  telefone: string
+  telefone: string,
+  senha = ""
 ): Promise<Professor> {
   const resp = await apiFetch(`${API_URL}/api/admin/professores`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, senha }),
   });
   return jsonOuErro(resp, "cadastrar professor");
 }
@@ -887,12 +889,19 @@ export async function cadastrarProfessor(
 export async function atualizarProfessor(
   professorId: string,
   nome: string,
-  telefone: string
+  telefone: string,
+  // `undefined` mantém a senha atual; "" limpa o acesso; texto define nova senha.
+  senha?: string
 ): Promise<Professor> {
   const resp = await apiFetch(`${API_URL}/api/admin/professores/${professorId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      nome,
+      telefone,
+      senha: senha ?? null,
+    }),
   });
   return jsonOuErro(resp, "atualizar professor");
 }
@@ -1047,4 +1056,258 @@ export async function salvarPrompt(conteudo: string): Promise<PromptTenant> {
     body: JSON.stringify({ tenant_id: tenantEmFoco(), conteudo }),
   });
   return jsonOuErro(resp, "salvar instruções da escola");
+}
+
+// ============================ ONDA 1 (Rosa Cury) =========================== //
+
+// --------------------- C1 · respostas rápidas ("atalhos") ----------------- //
+export interface RespostaRapida {
+  id: string;
+  chave: string;
+  conteudo: string;
+  ativo: boolean;
+  fonte_id: string | null;
+  atualizado_em: string | null;
+}
+
+export async function listarRespostasRapidas(): Promise<RespostaRapida[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/respostas-rapidas/tenant/${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar respostas rápidas");
+}
+
+export async function criarRespostaRapida(
+  chave: string,
+  conteudo: string,
+  ativo = true
+): Promise<RespostaRapida> {
+  const resp = await apiFetch(`${API_URL}/api/admin/respostas-rapidas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), chave, conteudo, ativo }),
+  });
+  return jsonOuErro(resp, "criar resposta rápida");
+}
+
+export async function atualizarRespostaRapida(
+  id: string,
+  chave: string,
+  conteudo: string,
+  ativo: boolean
+): Promise<RespostaRapida> {
+  const resp = await apiFetch(`${API_URL}/api/admin/respostas-rapidas/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), chave, conteudo, ativo }),
+  });
+  return jsonOuErro(resp, "atualizar resposta rápida");
+}
+
+export async function removerRespostaRapida(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/respostas-rapidas/${id}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover resposta rápida");
+}
+
+// --------------------- C2 · avisos temporizados --------------------------- //
+export interface AvisoTemporizado {
+  id: string;
+  mensagem: string;
+  ativo: boolean;
+  inicia_em: string | null;
+  expira_em: string | null;
+  vigente: boolean;
+  atualizado_em: string | null;
+}
+
+export async function listarAvisos(): Promise<AvisoTemporizado[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/avisos/tenant/${tenantEmFoco()}`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "listar avisos");
+}
+
+export async function criarAviso(
+  mensagem: string,
+  ativo: boolean,
+  iniciaEm: string | null,
+  expiraEm: string | null
+): Promise<AvisoTemporizado> {
+  const resp = await apiFetch(`${API_URL}/api/admin/avisos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      mensagem,
+      ativo,
+      inicia_em: iniciaEm,
+      expira_em: expiraEm,
+    }),
+  });
+  return jsonOuErro(resp, "criar aviso");
+}
+
+export async function atualizarAviso(
+  id: string,
+  mensagem: string,
+  ativo: boolean,
+  iniciaEm: string | null,
+  expiraEm: string | null
+): Promise<AvisoTemporizado> {
+  const resp = await apiFetch(`${API_URL}/api/admin/avisos/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      mensagem,
+      ativo,
+      inicia_em: iniciaEm,
+      expira_em: expiraEm,
+    }),
+  });
+  return jsonOuErro(resp, "atualizar aviso");
+}
+
+export async function removerAviso(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/avisos/${id}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover aviso");
+}
+
+// --------------------- B1 · fila de impressão ----------------------------- //
+export type StatusImpressao = "pendente" | "em_processo" | "concluida" | "cancelada";
+
+export interface Impressao {
+  id: string;
+  professor_id: string | null;
+  professor_nome: string;
+  arquivo_nome: string;
+  arquivo_url: string;
+  copias: number;
+  colorido: boolean;
+  frente_verso: boolean;
+  observacao: string;
+  status: StatusImpressao;
+  criado_em: string;
+  atualizado_em: string | null;
+}
+
+export async function listarFilaImpressao(status?: StatusImpressao): Promise<Impressao[]> {
+  const qs = status ? `?status_filtro=${status}` : "";
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/tenant/${tenantEmFoco()}${qs}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar fila de impressão");
+}
+
+export async function criarImpressao(dados: {
+  arquivo_nome: string;
+  professor_id?: string | null;
+  arquivo_url?: string;
+  copias: number;
+  colorido: boolean;
+  frente_verso: boolean;
+  observacao?: string;
+}): Promise<Impressao> {
+  const resp = await apiFetch(`${API_URL}/api/admin/impressao`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), ...dados }),
+  });
+  return jsonOuErro(resp, "criar solicitação de impressão");
+}
+
+export async function atualizarStatusImpressao(
+  id: string,
+  status: StatusImpressao
+): Promise<Impressao> {
+  const resp = await apiFetch(`${API_URL}/api/admin/impressao/${id}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), status }),
+  });
+  return jsonOuErro(resp, "atualizar status da impressão");
+}
+
+export async function removerImpressao(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/${id}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover solicitação");
+}
+
+// --------------------- A1 · mural do professor (secretaria) --------------- //
+export interface RecadoResumo {
+  id: string;
+  titulo: string;
+  corpo: string;
+  autor_nome: string;
+  criado_em: string;
+  total_professores: number;
+  total_lidos: number;
+  total_nao_lidos: number;
+}
+
+export interface LeitorRecado {
+  professor_id: string;
+  nome: string;
+  telefone: string;
+  lido_em: string | null;
+}
+
+export interface RecadoStatusLeitura {
+  id: string;
+  titulo: string;
+  corpo: string;
+  criado_em: string;
+  lidos: LeitorRecado[];
+  nao_lidos: LeitorRecado[];
+}
+
+export async function listarRecados(): Promise<RecadoResumo[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/recados/tenant/${tenantEmFoco()}`, {
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "listar recados");
+}
+
+export async function publicarRecado(titulo: string, corpo: string): Promise<RecadoResumo> {
+  const resp = await apiFetch(`${API_URL}/api/admin/recados`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), titulo, corpo }),
+  });
+  return jsonOuErro(resp, "publicar recado");
+}
+
+export async function statusLeituraRecado(id: string): Promise<RecadoStatusLeitura> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/recados/${id}/leitura?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar status de leitura");
+}
+
+export async function renotificarRecado(id: string): Promise<{ avisados: number }> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/recados/${id}/renotificar?tenant_id=${tenantEmFoco()}`,
+    { method: "POST", headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "re-notificar professores");
+}
+
+export async function removerRecado(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/recados/${id}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok && resp.status !== 204) throw await erroDe(resp, "remover recado");
 }

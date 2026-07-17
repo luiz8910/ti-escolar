@@ -8,10 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.interfaces.api import (
     admin,
+    avisos,
     broadcast,
     cadastro,
     chat,
     conhecimento,
+    impressao,
+    mural,
+    professor,
+    respostas_rapidas,
     webhook,
     webhook_twilio,
 )
@@ -49,6 +54,11 @@ app.include_router(broadcast.router)
 app.include_router(admin.router)
 app.include_router(cadastro.router)
 app.include_router(conhecimento.router)
+app.include_router(respostas_rapidas.router)
+app.include_router(avisos.router)
+app.include_router(impressao.router)
+app.include_router(mural.router)
+app.include_router(professor.router)
 app.include_router(webhook.router)
 app.include_router(webhook_twilio.router)
 

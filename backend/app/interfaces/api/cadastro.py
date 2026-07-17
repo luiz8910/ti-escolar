@@ -122,7 +122,9 @@ def _sala_saida(s: Sala) -> SalaSaida:
 
 
 def _professor_saida(p: Professor) -> ProfessorSaida:
-    return ProfessorSaida(id=p.id, nome=p.nome, telefone=p.telefone)
+    return ProfessorSaida(
+        id=p.id, nome=p.nome, telefone=p.telefone, tem_acesso=p.tem_acesso
+    )
 
 
 def _cobertura_saida(c: CoberturaContatosSala) -> CoberturaSalaSaida:
@@ -610,7 +612,10 @@ async def cadastrar_professor(
     _exige_acesso_tenant(usuario, payload.tenant_id)
     try:
         professor = await CadastrarProfessor(professores=professores).executar(
-            tenant_id=payload.tenant_id, nome=payload.nome, telefone=payload.telefone
+            tenant_id=payload.tenant_id,
+            nome=payload.nome,
+            telefone=payload.telefone,
+            senha=payload.senha,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -674,6 +679,7 @@ async def atualizar_professor(
             professor_id=professor_id,
             nome=payload.nome,
             telefone=payload.telefone,
+            senha=payload.senha,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
