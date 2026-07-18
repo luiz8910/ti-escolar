@@ -865,3 +865,142 @@ class ResponsavelInativadoSaida(BaseModel):
     contato_id: UUID
     nome: str
     telefone: str
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · I1 — Aviso de falta e chamada de eventual
+# --------------------------------------------------------------------------- #
+class FaltaEntrada(BaseModel):
+    tenant_id: UUID
+    data: str  # "YYYY-MM-DD"
+    motivo: str = ""
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+
+
+class ProfessorFaltaEntrada(BaseModel):
+    data: str  # "YYYY-MM-DD"
+    motivo: str = ""
+
+
+class ChamarEventualEntrada(BaseModel):
+    tenant_id: UUID
+    telefones: list[str]
+    mensagem: str = ""
+
+
+class ConfirmarEventualEntrada(BaseModel):
+    tenant_id: UUID
+    eventual_nome: str
+    eventual_telefone: str = ""
+
+
+class FaltaAcaoEntrada(BaseModel):
+    tenant_id: UUID
+
+
+class FaltaSaida(BaseModel):
+    id: UUID
+    data: str
+    motivo: str
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+    status: str
+    eventual_nome: str = ""
+    eventual_telefone: str = ""
+    eventuais_chamados: list[str] = []
+    criado_em: datetime
+    atualizado_em: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · H1 — Exportação de conversa para fins legais
+# --------------------------------------------------------------------------- #
+class ConversaExportadaSaida(BaseModel):
+    conversa_id: UUID
+    escola_nome: str
+    contato: str
+    documento: str
+    total_mensagens: int
+    inicio: datetime | None = None
+    fim: datetime | None = None
+    gerado_em: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · D1/D2/D3 — Ficha de matrícula digital
+# --------------------------------------------------------------------------- #
+class FichaEntrada(BaseModel):
+    tenant_id: UUID
+    aluno_id: UUID
+    campos: dict
+
+
+class FichaSaida(BaseModel):
+    aluno_id: UUID
+    aluno_nome: str = ""
+    campos: dict
+    atualizado_em: datetime
+
+
+class FichaPreviaEntrada(BaseModel):
+    tenant_id: UUID
+    conteudo: str
+
+
+class FichaPreviaSaida(BaseModel):
+    campos: dict
+    avisos: list[str] = []
+    erros: list[str] = []
+    valido: bool
+
+
+class FichaConfirmarEntrada(BaseModel):
+    tenant_id: UUID
+    aluno_id: UUID
+    campos: dict
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · E1 — Matrícula self-service pelo WhatsApp
+# --------------------------------------------------------------------------- #
+class MatriculaIniciarEntrada(BaseModel):
+    tenant_id: UUID
+    contato_telefone: str
+    nome_responsavel: str = ""
+    nome_aluno: str = ""
+
+
+class DocumentoMatriculaSaida(BaseModel):
+    nome: str
+    url: str = ""
+    recebido_em: datetime
+
+
+class MatriculaSaida(BaseModel):
+    id: UUID
+    contato_telefone: str
+    nome_responsavel: str = ""
+    nome_aluno: str = ""
+    status: str
+    observacao: str = ""
+    documentos: list[DocumentoMatriculaSaida] = []
+    criado_em: datetime
+    atualizado_em: datetime
+
+
+class MatriculaIniciarSaida(BaseModel):
+    solicitacao: MatriculaSaida
+    mensagem: str
+
+
+class MatriculaDocumentoEntrada(BaseModel):
+    tenant_id: UUID
+    nome: str
+    url: str = ""
+
+
+class MatriculaStatusEntrada(BaseModel):
+    tenant_id: UUID
+    status: str
+    observacao: str | None = None

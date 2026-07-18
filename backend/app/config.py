@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "troque-este-segredo-jwt"
     jwt_expira_minutos: int = 480  # 8 horas
 
+    # Inbound / UX das mensagens dos pais (§G1)
+    # Limite de caracteres da mensagem do responsável; acima disso o bot pede objetividade
+    # sem acionar a LLM. 0 desativa o limite.
+    mensagem_pai_max_chars: int = 1000
+
     # Licenciamento / avisos por e-mail
     # Janela (em dias) para avisar que a licença anual está perto de vencer.
     license_warning_days: int = 30

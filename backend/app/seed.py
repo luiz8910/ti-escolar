@@ -22,7 +22,10 @@ from app.application.cadastro_use_cases import (
     CriarSala,
 )
 from app.application.comunicacao_interna_use_cases import AbrirSolicitacaoInterna
+from app.application.falta_use_cases import RegistrarFaltaProfessor
+from app.application.ficha_use_cases import SalvarFichaMatricula
 from app.application.impressao_use_cases import DefinirCotaImpressao
+from app.application.matricula_use_cases import IniciarMatricula
 from app.application.mural_use_cases import PublicarRecado
 from app.application.respostas_rapidas_use_cases import CriarRespostaRapida
 from app.application.use_cases import IndexarConhecimento
@@ -47,6 +50,11 @@ from app.infrastructure.db.repositories_comunicacao import (
     SqlCotaImpressaoRepository,
     SqlMuralRepository,
     SqlSolicitacaoInternaRepository,
+)
+from app.infrastructure.db.repositories_onda3 import (
+    SqlAvisoFaltaRepository,
+    SqlFichaMatriculaRepository,
+    SqlSolicitacaoMatriculaRepository,
 )
 from app.infrastructure.db.repositories_conhecimento import (
     SqlFonteConhecimentoRepository,
@@ -371,6 +379,52 @@ async def _seed() -> None:
                 cotas=cotas_impressao_repo, professores=professores_repo
             ).executar(
                 tenant_id=DEMO_TENANT_ID, professor_id=prof_demo.id, limite_mensal=3000
+            )
+
+        # Onda 3 — aviso de falta (§I1), ficha de matrícula (§D1/D2) e matrícula
+        # self-service (§E1) de demonstração. Idempotente: só cria se ainda não houver.
+        faltas_repo = SqlAvisoFaltaRepository(session)
+        if prof_demo is not None and not await faltas_repo.listar(
+            tenant_id=DEMO_TENANT_ID
+        ):
+            await RegistrarFaltaProfessor(
+                faltas=faltas_repo, professores=professores_repo
+            ).executar(
+                tenant_id=DEMO_TENANT_ID,
+                data="2026-08-03",
+                motivo="Consulta médica agendada.",
+                professor_id=prof_demo.id,
+            )
+
+        # Ficha de matrícula do primeiro aluno demo (com cor/raça obrigatória).
+        fichas_repo = SqlFichaMatriculaRepository(session)
+        alunos_demo = await alunos_repo.listar(tenant_id=DEMO_TENANT_ID)
+        if alunos_demo and await fichas_repo.por_aluno(
+            tenant_id=DEMO_TENANT_ID, aluno_id=alunos_demo[0].id
+        ) is None:
+            await SalvarFichaMatricula(fichas=fichas_repo, alunos=alunos_repo).executar(
+                tenant_id=DEMO_TENANT_ID,
+                aluno_id=alunos_demo[0].id,
+                campos={
+                    "cor_raca": "Parda",
+                    "data_nascimento": "2015-04-12",
+                    "ano_etapa": "4ª série",
+                    "periodo": "Manhã",
+                    "autorizacao_van": True,
+                    "autorizacao_imagem": True,
+                    "alergia": "Nenhuma conhecida",
+                    "laudo_cid": "em investigação",
+                },
+            )
+
+        # Matrícula self-service iniciada por um responsável (demonstração).
+        matriculas_repo = SqlSolicitacaoMatriculaRepository(session)
+        if not await matriculas_repo.listar(tenant_id=DEMO_TENANT_ID):
+            await IniciarMatricula(matriculas=matriculas_repo).executar(
+                tenant_id=DEMO_TENANT_ID,
+                contato_telefone="+5511955550001",
+                nome_responsavel="Responsável Novo",
+                nome_aluno="Criança Nova",
             )
 
         # Respostas rápidas ("atalhos") da Rosa Cury — só cria se ainda não houver.

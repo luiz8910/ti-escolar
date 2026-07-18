@@ -194,12 +194,15 @@ class ReceberMensagemRecebida:
         responder: ResponderDuvida,
         documentos: RecuperarEEnviarDocumento,
         avisos: AvisoTemporizadoRepository | None = None,
+        max_chars: int = 0,
     ) -> None:
         self._conversas = conversas
         self._responder = responder
         self._documentos = documentos
         # Opcional: aviso temporizado vigente é anexado à resposta (ver §C2).
         self._avisos = avisos
+        # Limite de caracteres da mensagem do responsável (§G1); <= 0 desativa.
+        self._max_chars = max_chars
 
     async def executar(
         self, *, tenant_id: UUID, contato: str, texto: str
@@ -208,6 +211,20 @@ class ReceberMensagemRecebida:
         await self._conversas.adicionar_mensagem(
             conversa_id=conversa.id, autor="usuario", texto=texto
         )
+
+        # §G1 — mensagem "textão": pede objetividade sem acionar a LLM (assunto de
+        # secretaria pede recado curto). Só quando há limite configurado.
+        if self._max_chars > 0 and len(texto) > self._max_chars:
+            aviso_limite = (
+                f"Para agilizar o atendimento, envie mensagens de até {self._max_chars} "
+                "caracteres. Por gentileza, resuma a sua mensagem em poucas linhas e "
+                "reenvie — assim a secretaria consegue te responder mais rápido."
+            )
+            await self._conversas.adicionar_mensagem(
+                conversa_id=conversa.id, autor="bot", texto=aviso_limite
+            )
+            return RespostaMensagem(texto=aviso_limite, fontes=[], documentos=[])
+
         historico = await self._conversas.historico(conversa_id=conversa.id)
 
         docs: list[Documento] = []

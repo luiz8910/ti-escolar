@@ -17,6 +17,7 @@ from app.application.comunicacao_interna_use_cases import (
     AbrirSolicitacaoInterna,
     ListarSolicitacoesDoProfessor,
 )
+from app.application.falta_use_cases import RegistrarFaltaProfessor
 from app.application.impressao_use_cases import SolicitarImpressao
 from app.application.mediacao_use_cases import (
     EnviarMensagemAoResponsavel,
@@ -49,10 +50,12 @@ from app.infrastructure.db.repositories_comunicacao import (
     SqlSolicitacaoImpressaoRepository,
     SqlSolicitacaoInternaRepository,
 )
+from app.infrastructure.db.repositories_onda3 import SqlAvisoFaltaRepository
 from app.infrastructure.security import criar_token, decodificar_token
 from app.interfaces.deps import (
     get_canal,
     get_contato_repo,
+    get_falta_repo,
     get_impressao_repo,
     get_mediacao_repo,
     get_mural_repo,
@@ -62,10 +65,12 @@ from app.interfaces.deps import (
     get_tenant_repo,
 )
 from app.interfaces.dto import (
+    FaltaSaida,
     ImpressaoSaida,
     InterlocutorMediadoSaida,
     MediacaoEnvioEntrada,
     MensagemMediadaSaida,
+    ProfessorFaltaEntrada,
     ProfessorImpressaoEntrada,
     ProfessorLoginEntrada,
     ProfessorLogadoSaida,
@@ -380,3 +385,40 @@ async def enviar_ao_responsavel(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return _mediada_saida(mensagem)
+
+
+# --------------------------------------------------------------------------- #
+# I1 — o professor avisa a própria falta pelo sistema
+# --------------------------------------------------------------------------- #
+@router.post("/faltas", response_model=FaltaSaida, status_code=status.HTTP_201_CREATED)
+async def avisar_falta(
+    payload: ProfessorFaltaEntrada,
+    professor: Professor = Depends(professor_autenticado),
+    faltas: SqlAvisoFaltaRepository = Depends(get_falta_repo),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> FaltaSaida:
+    """O professor registra a própria falta; a secretaria organiza o eventual."""
+    try:
+        aviso = await RegistrarFaltaProfessor(
+            faltas=faltas, professores=professores
+        ).executar(
+            tenant_id=professor.tenant_id,
+            data=payload.data,
+            motivo=payload.motivo,
+            professor_id=professor.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return FaltaSaida(
+        id=aviso.id,
+        data=aviso.data,
+        motivo=aviso.motivo,
+        professor_id=aviso.professor_id,
+        professor_nome=aviso.professor_nome,
+        status=aviso.status.value,
+        eventual_nome=aviso.eventual_nome,
+        eventual_telefone=aviso.eventual_telefone,
+        eventuais_chamados=list(aviso.eventuais_chamados),
+        criado_em=aviso.criado_em,
+        atualizado_em=aviso.atualizado_em,
+    )

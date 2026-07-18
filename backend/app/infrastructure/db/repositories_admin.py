@@ -29,6 +29,7 @@ from app.domain.entities import (
 from app.infrastructure.db.models import (
     AlunoORM,
     AuditoriaORM,
+    AvisoFaltaORM,
     AvisoTemporizadoORM,
     BroadcastORM,
     ConhecimentoORM,
@@ -36,6 +37,7 @@ from app.infrastructure.db.models import (
     ConversaORM,
     DestinatarioORM,
     DocumentoORM,
+    FichaMatriculaORM,
     FonteConhecimentoORM,
     GrupoORM,
     MensagemORM,
@@ -44,6 +46,7 @@ from app.infrastructure.db.models import (
     RecadoORM,
     RespostaRapidaORM,
     SolicitacaoImpressaoORM,
+    SolicitacaoMatriculaORM,
     SalaORM,
     TemplateORM,
     TenantORM,
@@ -257,6 +260,16 @@ class SqlTenantRepository:
                 | aluno_responsaveis.c.contato_id.in_(contatos_do_tenant)
             )
         )
+        # Onda 3 — fichas de matrícula (FK ao aluno CASCADE, mas removemos antes para não
+        # depender da ordem) e matrículas self-service (FK só a tenants, sem cascade).
+        await self._s.execute(
+            delete(FichaMatriculaORM).where(FichaMatriculaORM.tenant_id == tenant_id)
+        )
+        await self._s.execute(
+            delete(SolicitacaoMatriculaORM).where(
+                SolicitacaoMatriculaORM.tenant_id == tenant_id
+            )
+        )
         await self._s.execute(delete(AlunoORM).where(AlunoORM.tenant_id == tenant_id))
         # Séries (salas) e seus vínculos com pais; depois os professores que elas referenciam.
         salas_do_tenant = select(SalaORM.id).where(SalaORM.tenant_id == tenant_id)
@@ -272,6 +285,10 @@ class SqlTenantRepository:
         )
         # Recados do mural (as leituras somem por ON DELETE CASCADE).
         await self._s.execute(delete(RecadoORM).where(RecadoORM.tenant_id == tenant_id))
+        # Avisos de falta (FK a professores SET NULL) antes de remover os professores.
+        await self._s.execute(
+            delete(AvisoFaltaORM).where(AvisoFaltaORM.tenant_id == tenant_id)
+        )
         await self._s.execute(delete(ProfessorORM).where(ProfessorORM.tenant_id == tenant_id))
         await self._s.execute(delete(ConversaORM).where(ConversaORM.tenant_id == tenant_id))
         # Respostas rápidas (FK a fontes SET NULL) antes das fontes; depois os trechos e fontes.
