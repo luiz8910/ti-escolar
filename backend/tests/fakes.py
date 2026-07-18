@@ -738,3 +738,123 @@ class FakeTenantRepo:
 
     async def obter(self, tenant_id):
         return self.tenants.get(tenant_id)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 — falta/eventual (I1), ficha de matrícula (D1/D2/D3), matrícula (E1)
+# --------------------------------------------------------------------------- #
+class FakeAvisoFaltaRepo:
+    def __init__(self) -> None:
+        self.avisos: dict[uuid.UUID, object] = {}
+
+    async def criar(self, aviso):
+        self.avisos[aviso.id] = aviso
+        return aviso
+
+    async def obter(self, *, tenant_id, aviso_id):
+        a = self.avisos.get(aviso_id)
+        return a if a and a.tenant_id == tenant_id else None
+
+    async def listar(self, *, tenant_id, status=None):
+        itens = [
+            a
+            for a in self.avisos.values()
+            if a.tenant_id == tenant_id and (status is None or a.status == status)
+        ]
+        itens.sort(key=lambda a: a.criado_em, reverse=True)
+        return itens
+
+    async def atualizar(self, aviso):
+        if aviso.id not in self.avisos:
+            raise ValueError("Aviso de falta não encontrado para o tenant.")
+        self.avisos[aviso.id] = aviso
+        return aviso
+
+    async def remover(self, *, tenant_id, aviso_id):
+        a = self.avisos.get(aviso_id)
+        if a is None or a.tenant_id != tenant_id:
+            return False
+        del self.avisos[aviso_id]
+        return True
+
+
+class FakeFichaMatriculaRepo:
+    def __init__(self) -> None:
+        self.fichas: dict[tuple, object] = {}
+
+    async def salvar(self, ficha):
+        chave = (ficha.tenant_id, ficha.aluno_id)
+        existente = self.fichas.get(chave)
+        if existente is not None:
+            ficha.id = existente.id
+            ficha.criado_em = existente.criado_em
+        self.fichas[chave] = ficha
+        return ficha
+
+    async def por_aluno(self, *, tenant_id, aluno_id):
+        return self.fichas.get((tenant_id, aluno_id))
+
+    async def remover(self, *, tenant_id, aluno_id):
+        chave = (tenant_id, aluno_id)
+        if chave not in self.fichas:
+            return False
+        del self.fichas[chave]
+        return True
+
+
+class FakeSolicitacaoMatriculaRepo:
+    def __init__(self) -> None:
+        self.solicitacoes: dict[uuid.UUID, object] = {}
+
+    async def criar(self, solicitacao):
+        self.solicitacoes[solicitacao.id] = solicitacao
+        return solicitacao
+
+    async def obter(self, *, tenant_id, solicitacao_id):
+        s = self.solicitacoes.get(solicitacao_id)
+        return s if s and s.tenant_id == tenant_id else None
+
+    async def por_telefone(self, *, tenant_id, telefone):
+        abertas = [
+            s
+            for s in self.solicitacoes.values()
+            if s.tenant_id == tenant_id
+            and s.contato_telefone == telefone
+            and s.status.value not in ("concluida", "cancelada")
+        ]
+        abertas.sort(key=lambda s: s.criado_em, reverse=True)
+        return abertas[0] if abertas else None
+
+    async def listar(self, *, tenant_id, status=None):
+        itens = [
+            s
+            for s in self.solicitacoes.values()
+            if s.tenant_id == tenant_id and (status is None or s.status == status)
+        ]
+        itens.sort(key=lambda s: s.criado_em, reverse=True)
+        return itens
+
+    async def atualizar(self, solicitacao):
+        if solicitacao.id not in self.solicitacoes:
+            raise ValueError("Solicitação de matrícula não encontrada para o tenant.")
+        self.solicitacoes[solicitacao.id] = solicitacao
+        return solicitacao
+
+
+class FakeConversaExportRepo:
+    """Fake de ConversaRepository focado na exportação (§H1): conversas + mensagens."""
+
+    def __init__(self) -> None:
+        self.conversas: dict[uuid.UUID, object] = {}
+        self._mensagens: dict[uuid.UUID, list] = {}
+
+    def registrar_conversa(self, conversa, mensagens) -> None:
+        self.conversas[conversa.id] = conversa
+        self._mensagens[conversa.id] = list(mensagens)
+
+    async def obter_conversa(self, *, tenant_id, conversa_id):
+        c = self.conversas.get(conversa_id)
+        return c if c and c.tenant_id == tenant_id else None
+
+    async def mensagens(self, *, conversa_id):
+        return list(self._mensagens.get(conversa_id, []))

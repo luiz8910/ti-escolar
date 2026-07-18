@@ -11,6 +11,7 @@ from uuid import UUID
 
 from app.domain.entities import (
     Aluno,
+    AvisoFalta,
     AvisoTemporizado,
     Broadcast,
     Contato,
@@ -18,6 +19,7 @@ from app.domain.entities import (
     CotaImpressao,
     Documento,
     FerramentaSpec,
+    FichaMatricula,
     FonteConhecimento,
     Grupo,
     LeituraRecado,
@@ -38,8 +40,11 @@ from app.domain.entities import (
     Sala,
     SolicitacaoImpressao,
     SolicitacaoInterna,
+    SolicitacaoMatricula,
     StatusEntrega,
+    StatusFalta,
     StatusImpressao,
+    StatusMatricula,
     StatusSolicitacaoInterna,
     Tenant,
     TrechoConhecimento,
@@ -538,3 +543,65 @@ class CotaImpressaoRepository(Protocol):
     async def listar(self, *, tenant_id: UUID) -> list[CotaImpressao]: ...
 
     async def remover(self, *, tenant_id: UUID, professor_id: UUID) -> bool: ...
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 — falta/eventual, ficha de matrícula e matrícula self-service
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class AvisoFaltaRepository(Protocol):
+    """Avisos de falta de professor + chamada de eventual (§I1), por tenant."""
+
+    async def criar(self, aviso: AvisoFalta) -> AvisoFalta: ...
+
+    async def obter(self, *, tenant_id: UUID, aviso_id: UUID) -> AvisoFalta | None: ...
+
+    async def listar(
+        self, *, tenant_id: UUID, status: StatusFalta | None = None
+    ) -> list[AvisoFalta]:
+        """Avisos do tenant (opcionalmente filtrados por status), recentes primeiro."""
+        ...
+
+    async def atualizar(self, aviso: AvisoFalta) -> AvisoFalta: ...
+
+    async def remover(self, *, tenant_id: UUID, aviso_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class FichaMatriculaRepository(Protocol):
+    """Ficha de matrícula digital por aluno (§D1/D2), escopada por tenant (upsert 1:1)."""
+
+    async def salvar(self, ficha: FichaMatricula) -> FichaMatricula:
+        """Cria ou atualiza (upsert) a ficha do aluno."""
+        ...
+
+    async def por_aluno(
+        self, *, tenant_id: UUID, aluno_id: UUID
+    ) -> FichaMatricula | None: ...
+
+    async def remover(self, *, tenant_id: UUID, aluno_id: UUID) -> bool: ...
+
+
+@runtime_checkable
+class SolicitacaoMatriculaRepository(Protocol):
+    """Matrículas self-service iniciadas pelo responsável (§E1), por tenant."""
+
+    async def criar(self, solicitacao: SolicitacaoMatricula) -> SolicitacaoMatricula: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, solicitacao_id: UUID
+    ) -> SolicitacaoMatricula | None: ...
+
+    async def por_telefone(
+        self, *, tenant_id: UUID, telefone: str
+    ) -> SolicitacaoMatricula | None:
+        """Solicitação em aberto do responsável (para retomar o fluxo pelo WhatsApp)."""
+        ...
+
+    async def listar(
+        self, *, tenant_id: UUID, status: StatusMatricula | None = None
+    ) -> list[SolicitacaoMatricula]: ...
+
+    async def atualizar(
+        self, solicitacao: SolicitacaoMatricula
+    ) -> SolicitacaoMatricula: ...

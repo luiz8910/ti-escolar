@@ -608,3 +608,79 @@ class PromptTenantORM(Base):
     )
     conteudo: Mapped[str] = mapped_column(Text, default="")
     atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · I1 — Aviso de falta de professor e chamada de eventual
+# --------------------------------------------------------------------------- #
+class AvisoFaltaORM(Base):
+    __tablename__ = "avisos_falta"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    # Professor ausente; ON DELETE SET NULL preserva o histórico de faltas.
+    professor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    professor_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    data: Mapped[str] = mapped_column(String(10))  # "YYYY-MM-DD"
+    motivo: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[str] = mapped_column(
+        String(20), default="aberta", server_default="aberta", index=True
+    )
+    eventual_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    eventual_telefone: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    eventuais_chamados: Mapped[list] = mapped_column(JSON, default=list)
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · D1/D2/D3 — Ficha de matrícula digital (1:1 com o aluno)
+# --------------------------------------------------------------------------- #
+class FichaMatriculaORM(Base):
+    __tablename__ = "fichas_matricula"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    # Ficha 1:1 com o aluno; apaga junto com o aluno.
+    aluno_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("alunos.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    # Todos os campos da ficha (frente, verso e sensíveis) serializados em JSON.
+    conteudo: Mapped[dict] = mapped_column(JSON, default=dict)
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · E1 — Matrícula self-service iniciada pelo responsável (WhatsApp)
+# --------------------------------------------------------------------------- #
+class SolicitacaoMatriculaORM(Base):
+    __tablename__ = "solicitacoes_matricula"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    contato_telefone: Mapped[str] = mapped_column(String(50), index=True)
+    nome_responsavel: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    nome_aluno: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    status: Mapped[str] = mapped_column(
+        String(30), default="iniciada", server_default="iniciada", index=True
+    )
+    observacao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Lista de documentos anexados (nome/url/recebido_em) serializada em JSON.
+    documentos: Mapped[list] = mapped_column(JSON, default=list)
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+    atualizado_em: Mapped[datetime] = mapped_column()

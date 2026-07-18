@@ -31,6 +31,27 @@ _GATILHOS_DOC = (
 # Marcador do prompt de importação de alunos (ver app.application.importacao_use_cases).
 _MARCADOR_IMPORTACAO = "IMPORTACAO_ALUNOS_JSON_V1"
 
+# Marcador do prompt de leitura de ficha de matrícula (ver app.application.ficha_use_cases).
+_MARCADOR_FICHA = "FICHA_MATRICULA_JSON_V1"
+
+
+def _texto_para_ficha_json(conteudo: str) -> str:
+    """Converte "campo: valor" (texto/OCR simulado) em JSON de ficha, para o demo sem chaves.
+
+    Não é "inteligente": mapeia linhas ``chave: valor`` para as chaves conhecidas da
+    ficha. A extração "de verdade" (foto/PDF bagunçado) é papel do adaptador Anthropic.
+    """
+    campos: dict[str, str] = {}
+    for linha in conteudo.splitlines():
+        if ":" not in linha:
+            continue
+        chave, valor = linha.split(":", 1)
+        chave = re.sub(r"[^a-z0-9_]", "", chave.strip().lower().replace(" ", "_"))
+        valor = valor.strip()
+        if chave and valor:
+            campos[chave] = valor
+    return json.dumps({"campos": campos}, ensure_ascii=False)
+
 
 def _csv_para_alunos_json(conteudo: str) -> str:
     """Converte texto tabular (CSV/TSV) em JSON de alunos, para o demo sem chaves.
@@ -108,6 +129,8 @@ class FakeLLMProvider:
         )
         if _MARCADOR_IMPORTACAO in sistema:
             return _csv_para_alunos_json(pergunta)
+        if _MARCADOR_FICHA in sistema:
+            return _texto_para_ficha_json(pergunta)
         contexto = ""
         if "CONTEXTO:" in sistema:
             contexto = sistema.split("CONTEXTO:", 1)[1].strip()

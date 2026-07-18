@@ -48,6 +48,11 @@ from app.infrastructure.db.repositories_conhecimento import (
     SqlPromptTenantRepository,
     SqlRespostaRapidaRepository,
 )
+from app.infrastructure.db.repositories_onda3 import (
+    SqlAvisoFaltaRepository,
+    SqlFichaMatriculaRepository,
+    SqlSolicitacaoMatriculaRepository,
+)
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
@@ -89,6 +94,7 @@ def get_receber_mensagem(
         responder=responder,
         documentos=documentos,
         avisos=SqlAvisoTemporizadoRepository(session),
+        max_chars=settings.mensagem_pai_max_chars,
     )
 
 
@@ -286,3 +292,24 @@ def get_cota_impressao_repo(
     session: AsyncSession = Depends(get_session),
 ) -> SqlCotaImpressaoRepository:
     return SqlCotaImpressaoRepository(session)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 — falta/eventual (I1), ficha de matrícula (D1/D2/D3), matrícula (E1)
+# --------------------------------------------------------------------------- #
+def get_falta_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAvisoFaltaRepository:
+    return SqlAvisoFaltaRepository(session)
+
+
+def get_ficha_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlFichaMatriculaRepository:
+    return SqlFichaMatriculaRepository(session)
+
+
+def get_matricula_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlSolicitacaoMatriculaRepository:
+    return SqlSolicitacaoMatriculaRepository(session)

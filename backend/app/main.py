@@ -14,7 +14,11 @@ from app.interfaces.api import (
     chat,
     comunicacao_interna,
     conhecimento,
+    exportacao,
+    faltas,
+    fichas,
     impressao,
+    matricula,
     mediacao,
     mural,
     professor,
@@ -65,6 +69,10 @@ app.include_router(comunicacao_interna.router)
 app.include_router(mediacao.router)
 app.include_router(progressao.router)
 app.include_router(professor.router)
+app.include_router(faltas.router)
+app.include_router(exportacao.router)
+app.include_router(fichas.router)
+app.include_router(matricula.router)
 app.include_router(webhook.router)
 app.include_router(webhook_twilio.router)
 

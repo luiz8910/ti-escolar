@@ -134,9 +134,11 @@ ti-escolar/
   `Sala` (turma) + associação `sala_contatos`, `Professor` (vinculado à série por
   `Sala.professor_id`), `FonteConhecimento` (documento da escola),
   `PromptTenant` (system prompt da escola), `ResumoEscola` (visão agregada do super admin),
-  `SolicitacaoInterna` (canal professor→escola), `MensagemMediada` (canal pai↔professor) e
-  `CotaImpressao` (franquia mensal de impressão). `Contato` tem flag `ativo` (responsável
-  inativo — todos os alunos já são ex-alunos).
+  `SolicitacaoInterna` (canal professor→escola), `MensagemMediada` (canal pai↔professor),
+  `CotaImpressao` (franquia mensal de impressão), `AvisoFalta` (falta de professor +
+  chamada de eventual), `FichaMatricula` (ficha de matrícula digital, 1:1 com `Aluno`) e
+  `SolicitacaoMatricula` (matrícula self-service pelo WhatsApp). `Contato` tem flag `ativo`
+  (responsável inativo — todos os alunos já são ex-alunos).
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
@@ -145,7 +147,8 @@ ti-escolar/
   `0008_professores` → `0009_tenant_whatsapp` → `0010_template_content_sid` →
   `0011_tenant_telefone_contato` → `0012_respostas_rapidas` → `0013_avisos_temporizados` →
   `0014_solicitacoes_impressao` → `0015_mural_professor` → `0016_solicitacoes_internas` →
-  `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo`.
+  `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo` →
+  `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -473,6 +476,57 @@ exige LLM novo. Todas escopadas por `tenant_id`.
   sem dependência de app nativo. Reforçado nesta onda com as novas páginas web.
 - **Seed:** o tenant demo ganha uma `SolicitacaoInterna` de exemplo e uma `CotaImpressao`
   (3.000 cópias/mês) para o professor demo.
+
+### 6i. Digitalização documental — Onda 3 (cliente-âncora EM Rosa Cury)
+
+Cinco features de digitalização e resiliência documental. Nenhuma exige LLM novo (D3 reusa
+a porta `LLMProvider`, como a importação em massa). Todas escopadas por `tenant_id`.
+
+- **I1 · Aviso de falta + chamada de eventual (`AvisoFalta`):** o professor avisa a falta
+  pelo sistema (`RegistrarFaltaProfessor`; também via portal `POST /api/professor/faltas`);
+  a secretaria dispara o pedido de **substituto** para uma lista de candidatos
+  (`ChamarEventual` — envia texto pelo `MessageChannel`, a partir do número da escola, e
+  registra `eventuais_chamados`), confirma quem cobre (`ConfirmarEventual` → `coberta`) ou
+  cancela (`CancelarFalta`). `status` ∈ {`aberta`, `coberta`, `cancelada`}; `professor_id`
+  FK a `professores` (`ON DELETE SET NULL`). Casos de uso em
+  `app/application/falta_use_cases.py`; repositório `SqlAvisoFaltaRepository`
+  (`repositories_onda3.py`); rotas admin `app/interfaces/api/faltas.py`
+  (`/api/admin/faltas`). Migration `0020_avisos_falta`.
+- **H1 · Exportar conversa para fins legais (`ConversaExportada`):** `ExportarConversaLegal`
+  monta um **documento textual** de uma conversa (opcionalmente recortada por período) com
+  cabeçalho institucional e marca de exportação, para anexar a processo/prontuário. Reusa
+  `ConversaRepository` (`obter_conversa`/`mensagens`) + `TenantRepository`. Rota
+  `GET /api/admin/escolas/{tenant_id}/conversas/{conversa_id}/exportar?inicio=&fim=`
+  (`app/interfaces/api/exportacao.py`, guard `_exige_acesso_tenant`). Sem migration.
+- **D1/D2/D3 · Ficha de matrícula digital (`FichaMatricula`):** ficha rica (frente + verso)
+  1:1 com `Aluno`, com os campos **obrigatórios/sensíveis** (§D2): `cor_raca` (obrigatório,
+  validado no caso de uso), Bolsa Família/NIS, deficiência/necessidade especial, laudo/CID,
+  restrição alimentar, alergia; e as autorizações (van, retirada, imagem). Persistida como
+  **JSON `conteudo`** (todos os campos, mais `dados_extra` para campos configuráveis por
+  escola — §D1). CRUD em `app/application/ficha_use_cases.py` (`SalvarFichaMatricula` upsert,
+  `ObterFichaMatricula`, `RemoverFichaMatricula`). **Leitura por IA (§D3):** fluxo
+  prévia→confirmação — `PrevisualizarFichaMatricula` manda o texto/OCR à `LLMProvider`
+  (marcador `FICHA_MATRICULA_JSON_V1`; o `FakeLLMProvider` o reconhece), **valida em código**
+  e devolve para revisão; `ConfirmarFichaMatricula` persiste. Repositório
+  `SqlFichaMatriculaRepository`; rotas `app/interfaces/api/fichas.py` (`/api/admin/fichas`,
+  `.../importar/previa`, `.../importar/confirmar`). Migration `0021_ficha_matricula`.
+- **E1 · Matrícula self-service pelo WhatsApp (`SolicitacaoMatricula`):** o responsável
+  inicia a matrícula; `IniciarMatricula` cria a solicitação (idempotente por telefone) e
+  `montar_mensagem_documentos` devolve a **lista de documentos exigidos** (reusa os atalhos
+  de inscrição). `AnexarDocumentoMatricula` registra os arquivos enviados (`documentos` em
+  JSON) e avança para `documentos_enviados`; `AtualizarStatusMatricula` conduz até
+  `concluida`/`cancelada`. `status` ∈ {`iniciada`, `documentos_enviados`, `em_analise`,
+  `concluida`, `cancelada`}. Casos de uso em `app/application/matricula_use_cases.py`;
+  repositório `SqlSolicitacaoMatriculaRepository`; rotas `app/interfaces/api/matricula.py`
+  (`/api/admin/matriculas`). Migration `0022_solicitacoes_matricula`.
+- **G1 · Limite de caracteres na mensagem do pai:** `ReceberMensagemRecebida` recebe
+  `max_chars` (config `MENSAGEM_PAI_MAX_CHARS`, default 1000; 0 desativa); acima do limite,
+  o bot pede objetividade **sem acionar a LLM** (assunto de secretaria pede recado curto).
+- **Seed:** o tenant demo ganha um `AvisoFalta` (professor demo), uma `FichaMatricula` do
+  primeiro aluno demo (com `cor_raca`) e uma `SolicitacaoMatricula` de exemplo.
+- **Remoção de tenant** (`SqlTenantRepository.remover`): a cascata explícita passa a apagar
+  `fichas_matricula` e `solicitacoes_matricula` (antes dos alunos) e `avisos_falta` (antes
+  dos professores), pois as FKs a `tenants` não têm `ON DELETE CASCADE`.
 
 ## 7. Camada de LLM
 

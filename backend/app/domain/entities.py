@@ -1087,3 +1087,242 @@ class ResponsavelInativado:
     contato_id: UUID
     nome: str
     telefone: str
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · I1 — Aviso de falta de professor e chamada de eventual
+# --------------------------------------------------------------------------- #
+class StatusFalta(str, enum.Enum):
+    """Situação de um aviso de falta de professor."""
+
+    ABERTA = "aberta"  # falta registrada, ainda sem substituto (eventual)
+    COBERTA = "coberta"  # eventual confirmado para cobrir a falta
+    CANCELADA = "cancelada"  # falta cancelada (o professor compareceu, etc.)
+
+
+@dataclass
+class AvisoFalta:
+    """Aviso de falta de um professor + organização da chamada de eventual (§I1).
+
+    Dor de campo (Rosa Cury): o professor avisa a falta pelo WhatsApp pessoal e a
+    secretaria organiza o substituto ("eventual") em planilha + print manual de grupo.
+    Aqui a falta fica **registrada** e a chamada de eventuais é disparada e rastreada
+    pelo sistema. ``eventuais_chamados`` guarda os telefones notificados;
+    ``eventual_*`` registra quem confirmou. ``professor_nome`` é denormalizado só para
+    exibição. ``data`` é o dia da falta ("YYYY-MM-DD").
+    """
+
+    tenant_id: UUID
+    data: str  # "YYYY-MM-DD" — dia da ausência
+    motivo: str = ""
+    professor_id: UUID | None = None
+    professor_nome: str = ""
+    status: StatusFalta = StatusFalta.ABERTA
+    eventual_nome: str = ""
+    eventual_telefone: str = ""
+    eventuais_chamados: list[str] = field(default_factory=list)
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · H1 — Exportação de conversa para fins legais
+# --------------------------------------------------------------------------- #
+@dataclass
+class ConversaExportada:
+    """Conversa formatada para arquivamento legal (processo/prontuário) (§H1).
+
+    Complementa o histórico existente: reúne as mensagens de uma conversa (opcionalmente
+    recortadas por período) num **documento textual** com cabeçalho institucional e marca
+    de exportação, válido para anexar a casos (ocorrências, racismo, etc.). ``documento``
+    é o texto pronto para imprimir; os demais campos são os metadados da exportação.
+    """
+
+    tenant_id: UUID
+    conversa_id: UUID
+    escola_nome: str
+    contato: str
+    documento: str
+    total_mensagens: int
+    inicio: datetime | None = None
+    fim: datetime | None = None
+    gerado_em: datetime = field(default_factory=_now)
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · D1/D2/D3 — Ficha de matrícula digital (campos ricos + sensíveis)
+# --------------------------------------------------------------------------- #
+@dataclass
+class FichaMatricula:
+    """Ficha de matrícula digital de um aluno (§D1/D2), 1:1 com ``Aluno``.
+
+    Digitaliza a ficha física (frente + verso) da escola. Além dos dados cadastrais,
+    carrega os **campos obrigatórios/sensíveis** (§D2): ``cor_raca`` (obrigatório nos
+    dois sistemas), Bolsa Família/NIS, deficiência/necessidade especial, laudo/CID,
+    restrição alimentar e alergia. ``dados_extra`` acomoda campos configuráveis por
+    escola (§D1) sem migração. ``aluno_nome`` é denormalizado só para exibição.
+    """
+
+    tenant_id: UUID
+    aluno_id: UUID
+    # D2 — obrigatório
+    cor_raca: str = ""
+    # Frente da ficha
+    ra_rm: str = ""
+    data_nascimento: str = ""
+    cpf: str = ""
+    cartao_sus: str = ""
+    sexo: str = ""
+    cidade_natal: str = ""
+    endereco: str = ""
+    email: str = ""
+    ano_etapa: str = ""
+    periodo: str = ""
+    filiacao1_nome: str = ""
+    filiacao1_cpf: str = ""
+    filiacao1_telefone: str = ""
+    filiacao2_nome: str = ""
+    filiacao2_cpf: str = ""
+    filiacao2_telefone: str = ""
+    responsavel_legal: str = ""
+    termo_guarda: bool = False
+    # Verso da ficha
+    com_quem_mora: str = ""
+    irmaos_na_escola: str = ""
+    ubs: str = ""
+    convenio: str = ""
+    tratamento_medicacao: str = ""
+    autorizacao_van: bool = False
+    autorizacao_retirada: bool = False
+    autorizacao_imagem: bool = False
+    # D2 — dados sensíveis / de saúde
+    bolsa_familia: bool = False
+    nis: str = ""
+    deficiencia: str = ""
+    necessidade_especial: str = ""
+    laudo_cid: str = ""
+    restricao_alimentar: str = ""
+    alergia: str = ""
+    observacoes_saude: str = ""
+    # D1 — campos configuráveis por escola (livres)
+    dados_extra: dict = field(default_factory=dict)
+    aluno_nome: str = ""
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+
+# Campos da ficha que são persistidos no JSON ``conteudo`` (todos, menos identidade/timestamps).
+CAMPOS_FICHA_MATRICULA: tuple[str, ...] = (
+    "cor_raca",
+    "ra_rm",
+    "data_nascimento",
+    "cpf",
+    "cartao_sus",
+    "sexo",
+    "cidade_natal",
+    "endereco",
+    "email",
+    "ano_etapa",
+    "periodo",
+    "filiacao1_nome",
+    "filiacao1_cpf",
+    "filiacao1_telefone",
+    "filiacao2_nome",
+    "filiacao2_cpf",
+    "filiacao2_telefone",
+    "responsavel_legal",
+    "termo_guarda",
+    "com_quem_mora",
+    "irmaos_na_escola",
+    "ubs",
+    "convenio",
+    "tratamento_medicacao",
+    "autorizacao_van",
+    "autorizacao_retirada",
+    "autorizacao_imagem",
+    "bolsa_familia",
+    "nis",
+    "deficiencia",
+    "necessidade_especial",
+    "laudo_cid",
+    "restricao_alimentar",
+    "alergia",
+    "observacoes_saude",
+    "dados_extra",
+)
+
+
+@dataclass
+class PreviaFichaMatricula:
+    """Resultado da leitura de uma ficha por IA (§D3), pronto para revisão.
+
+    A LLM extrai os campos de uma foto/PDF (texto bruto/OCR); o resultado é **validado
+    em código** (a LLM não é fonte de verdade) e devolvido para o operador revisar antes
+    de gravar. ``campos`` mapeia nome do campo → valor normalizado.
+    """
+
+    campos: dict = field(default_factory=dict)
+    avisos: list[str] = field(default_factory=list)
+    erros: list[str] = field(default_factory=list)
+
+    @property
+    def valido(self) -> bool:
+        return not self.erros
+
+
+# --------------------------------------------------------------------------- #
+# Onda 3 · E1 — Matrícula/atendimento self-service pelo WhatsApp
+# --------------------------------------------------------------------------- #
+class StatusMatricula(str, enum.Enum):
+    """Estágio de uma solicitação de matrícula iniciada pelo responsável."""
+
+    INICIADA = "iniciada"  # bot enviou a lista de documentos
+    DOCUMENTOS_ENVIADOS = "documentos_enviados"  # o responsável anexou documentos
+    EM_ANALISE = "em_analise"  # a secretaria está conferindo
+    CONCLUIDA = "concluida"  # aguardando/feita a assinatura presencial
+    CANCELADA = "cancelada"
+
+
+@dataclass
+class DocumentoMatricula:
+    """Um documento enviado pelo responsável no fluxo de matrícula self-service (§E1)."""
+
+    nome: str
+    url: str = ""
+    recebido_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class SolicitacaoMatricula:
+    """Matrícula iniciada pelo responsável via WhatsApp (§E1).
+
+    Reduz o "pai vem só pra assinar": o bot envia a **lista de documentos**, o responsável
+    manda fotos/scan e a secretaria imprime apenas para a **assinatura presencial**. Uma
+    solicitação é aberta por telefone do responsável (WhatsApp).
+    """
+
+    tenant_id: UUID
+    contato_telefone: str  # E.164 do responsável
+    nome_responsavel: str = ""
+    nome_aluno: str = ""
+    status: StatusMatricula = StatusMatricula.INICIADA
+    observacao: str = ""
+    documentos: list[DocumentoMatricula] = field(default_factory=list)
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+
+# Documentos exigidos na matrícula (reusa os "atalhos" de inscrição da secretaria, §E1).
+DOCUMENTOS_MATRICULA_EXIGIDOS: tuple[str, ...] = (
+    "RG do aluno (ou certidão de nascimento)",
+    "CPF do aluno",
+    "Comprovante de residência atualizado",
+    "Cartão SUS do aluno",
+    "Cartão de vacinação atualizado",
+    "Foto 3x4 recente",
+    "Histórico escolar ou declaração de escolaridade",
+    "RG e CPF do responsável legal",
+)
