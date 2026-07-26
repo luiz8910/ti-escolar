@@ -1,0 +1,100 @@
+name: Site — build & deploy (Cloudflare Pages)
+
+# Landing page institucional (`site/`, tiescolar.com.br).
+#
+# Diferente do back-end — que o Render publica sozinho no push à main — a LP é um
+# export estático publicado na Cloudflare Pages por este workflow.
+#
+# Pré-requisitos (uma vez só, ver site/README.md):
+#   1. Projeto Pages criado na Cloudflare com o nome de CF_PROJECT_NAME abaixo.
+#   2. Secrets no repositório: CLOUDFLARE_API_TOKEN e CLOUDFLARE_ACCOUNT_ID.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  # Permite republicar manualmente sem precisar de um commit novo.
+  workflow_dispatch:
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CF_PROJECT_NAME: ti-escolar-site
+
+jobs:
+  build-deploy:
+    name: Build e publica
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+
+    permissions:
+      contents: read
+      # Necessário para a action comentar a URL de preview no PR.
+      pull-requests: write
+      deployments: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Instala dependências
+        run: npm ci
+
+      - name: Checagem de tipos
+        run: npm run typecheck
+
+      - name: Build (export estático → site/out)
+        run: npm run build
+
+      # A partir daqui só roda quando há credenciais da Cloudflare — assim um PR
+      # de fork ainda valida o build sem quebrar por falta de secret.
+      - name: Verifica credenciais da Cloudflare
+        id: cf
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets da Cloudflare ausentes — deploy ignorado."
+          fi
+
+      - name: Publica em produção
+        if: steps.cf.outputs.ok == 'true' && github.event_name != 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=${{ env.CF_PROJECT_NAME }} --branch=main
+          workingDirectory: site
+
+      - name: Publica preview do PR
+        if: steps.cf.outputs.ok == 'true' && github.event_name == 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy out
+            --project-name=${{ env.CF_PROJECT_NAME }}
+            --branch=pr-${{ github.event.pull_request.number }}
+          workingDirectory: site
