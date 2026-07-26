@@ -739,10 +739,15 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   preenchidos a partir do Cartão CNPJ. **Pendente:** criar o projeto Pages + secrets e
   apontar `tiescolar.com.br` (hoje sem registro A/CNAME) — pré-requisito para reenviar a
   verificação da empresa na Meta.
-- [x] **Deploy automatizado do Render**: o deploy é feito nativamente pelo **Render**
-  (Auto-Deploy ligado no push à `main`). O CI (`.github/workflows/ci.yml`) roda
-  **lint (ruff) + migrations (alembic upgrade head) + pytest** em PRs e na `main`, servindo de
-  portão de qualidade antes do merge.
+- [x] **Deploy automatizado**: são **três destinos**, um por camada —
+  **back-end (FastAPI) → Render** (Auto-Deploy nativo no push à `main`);
+  **painel admin (`web/`) → Vercel**, que consome a API do Render;
+  **landing page (`site/`) → Cloudflare Pages**, via `.github/workflows/site.yml` (§9d).
+  O CI (`.github/workflows/ci.yml`) roda **lint (ruff) + migrations (alembic upgrade head) +
+  pytest** em PRs e na `main`, servindo de portão de qualidade antes do merge.
+  > O `ruff` está fixado em `>=0.5,<0.16` no `backend/pyproject.toml`: sem teto, o CI
+  > instalava a versão mais nova a cada execução e a 0.16.0 quebrou a build sem que o
+  > código mudasse (358 dos 424 achados eram `B008`, o `Depends()` do FastAPI).
 
 **Observabilidade / histórico** _(ver §13)_
 - [x] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —
