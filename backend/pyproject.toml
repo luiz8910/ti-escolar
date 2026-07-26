@@ -20,7 +20,13 @@ dependencies = [
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
-    "ruff>=0.5",
+    # Teto proposital: o CI instala o linter a cada execução, então uma versão
+    # nova do ruff quebra a build sem que uma linha do projeto tenha mudado.
+    # Foi o que houve com a 0.16.0, que passou a acusar 424 erros — 358 deles
+    # B008 (`Depends()` como default de argumento), que é justamente o idioma
+    # de injeção de dependência do FastAPI. Antes de subir o teto, avalie as
+    # regras novas e ajuste `[tool.ruff.lint]` na mesma mudança.
+    "ruff>=0.5,<0.16",
 ]
 llm = [
     "anthropic>=0.39",
