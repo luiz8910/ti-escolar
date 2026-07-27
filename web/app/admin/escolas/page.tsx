@@ -145,6 +145,7 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
   const [nome, setNome] = useState("");
   const [slug, setSlug] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
+  const [metaPhoneId, setMetaPhoneId] = useState("");
   const [contato, setContato] = useState("");
   const [salvando, setSalvando] = useState(false);
 
@@ -157,10 +158,17 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
     }
     setSalvando(true);
     try {
-      await criarEscola(nome.trim(), slug.trim(), whatsapp.trim(), contato.trim());
+      await criarEscola(
+        nome.trim(),
+        slug.trim(),
+        whatsapp.trim(),
+        contato.trim(),
+        metaPhoneId.trim()
+      );
       setNome("");
       setSlug("");
       setWhatsapp("");
+      setMetaPhoneId("");
       setContato("");
       await onCriada();
       toast({ tone: "success", title: "Escola cadastrada." });
@@ -218,6 +226,17 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
             />
           </Field>
         </div>
+        <div className="min-w-[190px]">
+          <Field label="phone_number_id da Meta (opcional)" htmlFor="esc-meta-id">
+            <Input
+              id="esc-meta-id"
+              mono
+              value={metaPhoneId}
+              onChange={(e) => setMetaPhoneId(e.target.value)}
+              placeholder="123456789012345"
+            />
+          </Field>
+        </div>
         <Button type="submit" loading={salvando} leftIcon={<PlusIcon size={15} />}>
           {salvando ? "Salvando…" : "Cadastrar"}
         </Button>
@@ -237,6 +256,7 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
   const [nome, setNome] = useState(escola.nome);
   const [slug, setSlug] = useState(escola.slug);
   const [whatsapp, setWhatsapp] = useState(escola.whatsapp_numero);
+  const [metaPhoneId, setMetaPhoneId] = useState(escola.meta_phone_number_id);
   const [contato, setContato] = useState(escola.telefone_contato);
   const bloqueada = escola.licenca.status === "bloqueado";
   const cancelada = escola.licenca.status === "cancelado";
@@ -248,7 +268,14 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
       return;
     }
     try {
-      await atualizarEscola(escola.id, nome.trim(), slug.trim(), whatsapp.trim(), contato.trim());
+      await atualizarEscola(
+        escola.id,
+        nome.trim(),
+        slug.trim(),
+        whatsapp.trim(),
+        contato.trim(),
+        metaPhoneId.trim()
+      );
       setEditando(false);
       await onMudou();
       toast({ tone: "success", title: "Escola atualizada." });
@@ -310,6 +337,13 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
           )}
           {escola.telefone_contato && (
             <span className="ml-2 text-n-500">· ☎ {escola.telefone_contato}</span>
+          )}
+          {escola.meta_phone_number_id ? (
+            <span className="ml-2 text-n-500">· 🆔 {escola.meta_phone_number_id}</span>
+          ) : (
+            <span className="ml-2 text-amber-600" title="Sem phone_number_id: o WhatsApp recebido por esta escola é descartado.">
+              · ⚠ sem id na Meta
+            </span>
           )}
         </p>
       </div>
@@ -378,6 +412,7 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
                 setNome(escola.nome);
                 setSlug(escola.slug);
                 setWhatsapp(escola.whatsapp_numero);
+                setMetaPhoneId(escola.meta_phone_number_id);
                 setContato(escola.telefone_contato);
               }}
             >
@@ -411,6 +446,18 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
               onChange={(e) => setWhatsapp(e.target.value)}
               placeholder="+14155238886"
             />
+          </Field>
+          <Field label="phone_number_id da Meta (só dígitos)">
+            <Input
+              mono
+              value={metaPhoneId}
+              onChange={(e) => setMetaPhoneId(e.target.value)}
+              placeholder="123456789012345"
+            />
+            <p className="mt-1 text-[11.5px] leading-snug text-n-500">
+              Id do número na Meta (WhatsApp Manager). É por ele que a escola dispara e que o
+              WhatsApp recebido é roteado para cá — sem ele, o inbound desta escola é descartado.
+            </p>
           </Field>
         </form>
       </Modal>

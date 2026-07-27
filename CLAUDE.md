@@ -150,7 +150,7 @@ ti-escolar/
   `0014_solicitacoes_impressao` → `0015_mural_professor` → `0016_solicitacoes_internas` →
   `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo` →
   `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula` →
-  `0023_remover_content_sid`.
+  `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -321,11 +321,20 @@ ti-escolar/
   **normalizam** para E.164 (`normalizar_whatsapp`, aceita DDI internacional) e **validam a
   unicidade** entre escolas (`TenantRepository.por_whatsapp`; dois tenants com o mesmo número
   tornariam o inbound ambíguo). Vazio = usa o número padrão do canal (`META_PHONE_NUMBER_ID`).
-  Migration `0009_tenant_whatsapp`. **Roteamento:** o outbound (`EnviarBroadcast`) sai do número
-  da própria escola; o roteamento do inbound por escola depende do `meta_phone_number_id` — ver
-  §9e.1. **Modelo operacional:** cada escola opera com um **número dedicado** à plataforma,
-  **adquirido e registrado por nós** (o número antigo da secretaria segue livre para o
-  atendimento manual) — ver §9e.3.
+  Migration `0009_tenant_whatsapp`. Hoje é sobretudo a **referência humana** do número: quem
+  roteia o inbound e assina o outbound é o `meta_phone_number_id` (abaixo). **Modelo
+  operacional:** cada escola opera com um **número dedicado** à plataforma, **adquirido e
+  registrado por nós** (o número antigo da secretaria segue livre para o atendimento manual) —
+  ver §9e.3.
+- **`phone_number_id` da Meta por escola (`Tenant.meta_phone_number_id`):** o identificador do
+  número **na Meta** — o que a Graph API exige na URL de envio (`/{phone_number_id}/messages`) e
+  o que o webhook devolve em `value.metadata.phone_number_id`. **É o que faz o multi-tenant
+  funcionar de verdade:** roteia o inbound para a escola certa (`por_meta_phone_number_id`) e é
+  o remetente do outbound (via `Tenant.remetente_canal`). `CriarEscola`/`AtualizarEscola`
+  normalizam (`normalizar_meta_phone_number_id`, só dígitos) e **validam a unicidade** entre
+  escolas. Vazio = a escola **não recebe** inbound (a mensagem é descartada) e dispara pelo
+  número padrão da env. Migration `0024_tenant_meta_phone_number_id` (índice UNIQUE parcial).
+  Ver §9e.1.
 - **Telefone de contato por escola (`Tenant.telefone_contato`, E.164):** o número **público** que
   a secretaria já usa no dia a dia — apenas **informativo** (referência de contato). É
   **obrigatório** no cadastro/edição (`CriarEscola`/`AtualizarEscola` via
@@ -604,14 +613,19 @@ produto: a Twilio, que existiu como atalho para operar sem a verificação de em
 foi **removida do código em 27/jul/2026** quando a verificação foi aprovada — ver §9e.
 
 - **Outbound** (`app/infrastructure/channel/meta_channel.py`): `MetaMessageChannel` implementa
-  `MessageChannel` sobre a Graph API (`/{phone_number_id}/messages`, `Authorization: Bearer`).
+  `MessageChannel` sobre a Graph API (`Authorization: Bearer`). A URL é montada **por envio**
+  (`/{phone_number_id}/messages`) a partir do `remetente` recebido — é assim que cada escola
+  dispara pelo **seu** número (§9e.1) —, com o `META_PHONE_NUMBER_ID` da env só como fallback.
   Retorna o `wamid` como id externo, que é o que liga o envio ao status de entrega (§9b).
   Cobre texto livre (só dentro da janela de 24h), **template** (`nome` + `idioma` + parâmetros
   de body) e documento. Cota e throttling ficam nos casos de uso, não no adaptador.
 - **Webhook** (`app/interfaces/api/webhook.py`, `/api/webhook/meta`): o `GET` responde ao
-  handshake (`hub.challenge`) conferindo o `hub.verify_token`; o `POST` recebe os eventos e
-  aplica os **status de entrega** aos destinatários dos broadcasts via `RegistrarStatusEntrega`.
-  O **inbound de mensagens ainda não está implementado** — ver §9e.1.
+  handshake (`hub.challenge`) conferindo o `hub.verify_token`. O `POST` trata os **dois**
+  caminhos que a Meta empacota no mesmo envelope: os **status de entrega**, aplicados aos
+  destinatários dos broadcasts via `RegistrarStatusEntrega`; e as **mensagens recebidas**,
+  roteadas para o chatbot por `ProcessarInboundMeta` — a escola sai do
+  `value.metadata.phone_number_id` e a resposta é **enviada ativamente** por uma nova chamada à
+  API (a Meta não aceita resposta no corpo do webhook). Ver §9e.1.
 - **Autenticidade do webhook:** todo `POST` é validado pelo **`X-Hub-Signature-256`**
   (HMAC-SHA256 do **corpo bruto** com o app secret, comparação em tempo constante — só stdlib,
   `app/infrastructure/security.py · validar_assinatura_meta`) quando
@@ -677,44 +691,62 @@ credenciais ficam centralizados sob nossa conta, o que casa com o modelo de plan
 por escola (§6e). A alternativa (Embedded Signup, cada escola dona da própria WABA) foi
 descartada: transferiria a cobrança para a escola e inviabilizaria o onboarding assistido.
 
-#### 9e.1 Mudanças necessárias para o multi-tenant funcionar
+#### 9e.1 Inbound real + multi-tenant de envio — ✅ implementado (27/jul/2026)
 
-O adaptador atual é **single-tenant**: `MetaMessageChannel`
-(`app/infrastructure/channel/meta_channel.py`) fixa o `phone_number_id` vindo da env no
-construtor e **ignora o parâmetro `remetente`** da porta `MessageChannel` (o comentário no código
-declara isso: na Meta a origem é fixada pela credencial). Com várias escolas, todo envio sairia
-pelo número errado. São necessárias, nesta ordem:
+**O que existia:** o produto **disparava mas não atendia**. O `POST /api/webhook/meta` só
+chamava `RegistrarStatusEntrega` e **descartava as mensagens recebidas**; e o
+`MetaMessageChannel` fixava o `phone_number_id` da env no construtor, **ignorando o
+`remetente`** da porta `MessageChannel` — com várias escolas, todo envio sairia pelo mesmo
+número. Como ficou:
 
-1. **`Tenant.meta_phone_number_id`** (novo campo, migration `0024_tenant_meta_phone_number_id`
-   encadeada no head `0023_remover_content_sid`): o identificador do número **na Meta**, que é
-   o que a API exige na URL de envio. Não confundir com `Tenant.whatsapp_numero`, que é o E.164
-   legível — os dois passam a coexistir, o E.164 para exibição/roteamento humano e o
-   `phone_number_id` para a chamada da API. Deve ser **único entre escolas** (dois tenants com o
-   mesmo id tornariam o inbound ambíguo), à semelhança do que `TenantRepository.por_whatsapp` já
-   garante para o E.164.
-2. **`MessageChannel.remetente` passa a ser honrado na Meta:** o `MetaMessageChannel` deixa de
-   guardar um `phone_number_id` fixo e passa a **montar a URL por envio**
-   (`/{phone_number_id}/messages`), usando o `remetente` recebido e caindo no
-   `META_PHONE_NUMBER_ID` da env apenas como fallback. `EnviarBroadcast` **já** resolve o
-   `Tenant` e repassa o remetente — a mudança é só do lado do adaptador, sem tocar em domínio
-   ou casos de uso.
-3. **Novo `TenantRepository.por_meta_phone_number_id`** para o roteamento inbound (ver abaixo).
-4. **Inbound real no webhook da Meta** (hoje inexistente — `app/interfaces/api/webhook.py` só
-   chama `RegistrarStatusEntrega`, e mensagens recebidas são descartadas). **É o que derruba o
-   chatbot inteiro**: sem ele o produto só dispara, não atende. Pontos de atenção da API:
-   - o payload é **JSON aninhado** (`entry[].changes[].value.messages[]`);
-   - a Meta exige **`200 OK` imediato**; a resposta ao responsável **não vai no corpo do HTTP** e
-     precisa ser **enviada ativamente** por uma segunda chamada à API, via
-     `MessageChannel.enviar_texto` com o `remetente` da escola;
-   - o **roteamento do tenant** sai de `value.metadata.phone_number_id`, resolvido pelo novo
-     `por_meta_phone_number_id`. **Sem tenant de fallback:** número desconhecido deve ser
-     **descartado com log**, nunca cair num tenant default (vazaria a conversa de uma escola
-     para outra);
-   - o mesmo POST carrega **mensagens e status de entrega** no mesmo envelope; os dois caminhos
-     convivem no handler.
-5. **Config** (`app/config.py`): `META_PHONE_NUMBER_ID` passa a ser **fallback**, não a fonte da
-   verdade; `META_ACCESS_TOKEN` deve ser um token de **usuário do sistema** (o token da tela de
-   Configuração da API expira em 24h e não serve para produção).
+1. **`Tenant.meta_phone_number_id`** (migration `0024_tenant_meta_phone_number_id`): o
+   identificador do número **na Meta**, que é o que a Graph API exige na URL de envio e o que o
+   webhook devolve em `value.metadata.phone_number_id`. Coexiste com `Tenant.whatsapp_numero`
+   (o mesmo número em E.164 legível, para exibição). **Único entre escolas** — duas escolas com
+   o mesmo id tornariam o inbound ambíguo —, validado em `CriarEscola`/`AtualizarEscola`
+   (`normalizar_meta_phone_number_id` + `_validar_meta_phone_number_id_unico`) e no banco por um
+   **índice UNIQUE parcial** (`WHERE meta_phone_number_id <> ''`): o default é `''`, e um UNIQUE
+   simples só permitiria **uma** escola ainda sem número registrado.
+2. **`Tenant.remetente_canal`** (propriedade de domínio): resolve o `remetente` que vai para o
+   canal — o `meta_phone_number_id` tem precedência, o E.164 é o fallback de quem ainda não tem
+   id. É o que `EnviarBroadcast`, `ChamarEventual` (§I1) e a mediação pai↔professor (§A3) passam
+   ao `MessageChannel`.
+3. **`MetaMessageChannel` honra o `remetente`:** a URL é montada **por envio**
+   (`/{phone_number_id}/messages`), com o `META_PHONE_NUMBER_ID` da env só como fallback. Um
+   `remetente` em E.164 (escola sem id cadastrado) **não** vira caminho de URL: cai no padrão e
+   **loga um aviso**, porque nesse estado o disparo sai do número errado.
+4. **`TenantRepository.por_meta_phone_number_id`** — a busca que roteia o inbound.
+5. **Inbound real** (`ProcessarInboundMeta`, `app/application/inbound_use_cases.py`), chamado
+   pelo webhook **depois** da validação de assinatura (§9e.2):
+   - percorre o envelope aninhado (`entry[].changes[].value.messages[]`) e **convive** com o
+     caminho de status de entrega, que chega no mesmo POST;
+   - **roteia pelo `value.metadata.phone_number_id`**. **Sem tenant de fallback:** um número
+     sem escola cadastrada é **descartado com log** — cair num tenant default jogaria a conversa
+     de um responsável na caixa de outra escola;
+   - **normaliza o `from`** para E.164 com `+` (a Meta o entrega sem), senão cada mensagem
+     abriria uma `Conversa` nova e não casaria com o `Contato` cadastrado;
+   - delega a `ReceberMensagemRecebida`, herdando o limite de caracteres (§G1) e os avisos
+     temporizados (§C2);
+   - **responde ativamente**: a Meta exige `200 OK` e não aceita a resposta no corpo do webhook,
+     então a resposta sai por uma **segunda chamada** à API (`MessageChannel.enviar_texto`), a
+     partir do número da própria escola;
+   - **idempotência por `wamid`** (`CacheIdempotencia` / `CacheIdempotenciaMemoria`): a Meta
+     reenvia o evento quando o `200` demora, e sem isso o mesmo recado seria atendido — e cobrado
+     na LLM — duas vezes. O cache é **de processo** (LRU limitado): cobre a reentrega imediata,
+     mas **não** atravessa réplicas nem restart. **[Roadmap]** versão durável (tabela/Redis) e
+     fila/worker, para o `200` não depender da latência da LLM.
+   - **[Roadmap]** mídia (imagem/áudio/documento): hoje é ignorada com log, porque exige baixar
+     o `media_id` pela Graph API.
+6. **Painel:** o `meta_phone_number_id` é editável no cadastro/edição de escola do super admin
+   (`web/app/admin/escolas/`), e a lista marca com ⚠ a escola **sem id** — que é exatamente a
+   que tem o inbound descartado.
+7. **Config** (`app/config.py`): `META_PHONE_NUMBER_ID` é **fallback**, não a fonte da verdade;
+   `META_ACCESS_TOKEN` deve ser um token de **usuário do sistema** (o da tela de Configuração da
+   API expira em 24h).
+
+Cobertura: `tests/test_inbound_meta.py` (roteamento, descarte sem vazamento entre escolas,
+remetente correto, mensagem + status no mesmo envelope, idempotência) e
+`tests/test_meta_channel.py` (montagem da URL e resolução do remetente no broadcast).
 
 #### 9e.2 Autenticidade do webhook — ✅ implementado (27/jul/2026)
 
@@ -817,16 +849,24 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     go-live**: o endpoint aceitava qualquer POST, permitindo forjar status de entrega e
     (após o inbound) conversas falsas.
   - [x] Remoção completa da Twilio (adaptador, webhook, testes, `TWILIO_*`, `content_sid`).
-  - [ ] `Tenant.meta_phone_number_id` + migration `0024` e
-    `TenantRepository.por_meta_phone_number_id`.
-  - [ ] `MetaMessageChannel` honrando o `remetente` (URL por envio) — hoje é single-tenant.
-  - [ ] **Inbound** no `POST /api/webhook/meta` (hoje só trata status; o chatbot não atende)
-    com resposta ativa e roteamento por `metadata.phone_number_id`.
+  - [x] `Tenant.meta_phone_number_id` (migration `0024_tenant_meta_phone_number_id`, único por
+    índice UNIQUE parcial) + `TenantRepository.por_meta_phone_number_id` + campo no painel.
+  - [x] `MetaMessageChannel` honrando o `remetente` (URL montada por envio), com
+    `Tenant.remetente_canal` resolvendo o id da escola — o outbound deixou de ser single-tenant.
+  - [x] **Inbound** no `POST /api/webhook/meta` (`ProcessarInboundMeta`): roteia por
+    `metadata.phone_number_id`, **descarta número desconhecido** (sem tenant de fallback),
+    responde ativamente pelo número da escola e deduplica reentregas por `wamid`.
+  - [ ] Idempotência **durável** do inbound (hoje o cache é de processo) e **fila/worker**, para
+    o `200 OK` não depender da latência da LLM (§9e.1).
+  - [ ] Inbound de **mídia** (imagem/áudio/documento): hoje é ignorado com log — exige baixar o
+    `media_id` pela Graph API.
   - [ ] Automação do registro de número na WABA pela Graph API (§9e.3).
 - [x] **Canal Meta WhatsApp Cloud API** como canal único do produto, com a **assinatura
   `X-Hub-Signature-256`** validada no webhook. Ver §9c e §9e.2.
-- [ ] **Inbound real do WhatsApp** pelo webhook da Meta (hoje só trata status de entrega) —
-  sem ele o produto dispara mas não atende. Ver §9e.1.
+- [x] **Inbound real do WhatsApp** pelo webhook da Meta: mensagens recebidas são roteadas à
+  escola pelo `phone_number_id`, atendidas por `ReceberMensagemRecebida` e respondidas por uma
+  segunda chamada à API, a partir do número da própria escola. O produto passou a **atender**,
+  não só disparar (`app/application/inbound_use_cases.py`). Ver §9e.1.
 - [ ] Integrações reais de `DocumentSource` (substituir mocks).
 - [x] **Base de conhecimento por tenant** (upload de documentos → RAG) e **system prompt
   personalizado por escola** (um "CLAUDE.md" do tenant), com painel em `web/app/admin/`.

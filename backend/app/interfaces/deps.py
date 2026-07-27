@@ -8,6 +8,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_use_cases import EnviarBroadcastParaGrupo
+from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.tenant_use_cases import NotificarLicencasAVencer
 from app.application.use_cases import (
     AtenderConversa,
@@ -56,10 +57,14 @@ from app.infrastructure.db.repositories_onda3 import (
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
+from app.infrastructure.idempotencia import CacheIdempotenciaMemoria
 from app.infrastructure.messaging.email import LogEmailSender
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
+# Singleton de processo: precisa sobreviver entre requisições para reconhecer a reentrega
+# de um webhook que a Meta repetiu. Ver os limites declarados em `idempotencia.py`.
+_idempotencia_inbound = CacheIdempotenciaMemoria()
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -95,6 +100,19 @@ def get_receber_mensagem(
         documentos=documentos,
         avisos=SqlAvisoTemporizadoRepository(session),
         max_chars=settings.mensagem_pai_max_chars,
+    )
+
+
+def get_processar_inbound_meta(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ProcessarInboundMeta:
+    """Inbound do webhook da Meta: roteia a mensagem à escola e responde por ela (§9e.1)."""
+    return ProcessarInboundMeta(
+        tenants=SqlTenantRepository(session),
+        receber=get_receber_mensagem(session=session, settings=settings),
+        canal=criar_canal(settings),
+        idempotencia=_idempotencia_inbound,
     )
 
 

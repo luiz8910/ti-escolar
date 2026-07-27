@@ -88,6 +88,26 @@ def normalizar_telefone_contato(bruto: str) -> str:
         ) from e
 
 
+def normalizar_meta_phone_number_id(bruto: str) -> str:
+    """Normaliza o ``phone_number_id`` do número da escola na Meta; "" quando vazio.
+
+    É um identificador **numérico** emitido pela Meta (não é telefone): vem assim na URL de
+    envio e em ``value.metadata.phone_number_id`` do webhook. Um E.164 digitado aqui por
+    engano (com ``+``) é recusado, porque montaria uma URL inválida na Graph API.
+    """
+    bruto = (bruto or "").strip()
+    if not bruto:
+        return ""
+    if not bruto.isdigit():
+        raise ValueError(
+            "phone_number_id da Meta inválido: informe apenas dígitos (ex.: 123456789012345). "
+            "Não é o telefone em E.164 — esse vai no campo de WhatsApp da escola."
+        )
+    if not (5 <= len(bruto) <= 32):
+        raise ValueError("phone_number_id da Meta inválido: tamanho fora do esperado.")
+    return bruto
+
+
 async def _validar_whatsapp_unico(
     tenants: TenantRepository, *, numero: str, tenant_id: UUID | None = None
 ) -> None:
@@ -97,6 +117,23 @@ async def _validar_whatsapp_unico(
     conflito = await tenants.por_whatsapp(numero)
     if conflito and conflito.id != tenant_id:
         raise ValueError(f"O número {numero} já está vinculado a outra escola.")
+
+
+async def _validar_meta_phone_number_id_unico(
+    tenants: TenantRepository, *, phone_number_id: str, tenant_id: UUID | None = None
+) -> None:
+    """Impede duas escolas com o mesmo ``phone_number_id``.
+
+    O inbound é roteado por ele: duplicado, uma mensagem endereçada a uma escola poderia
+    cair na conversa da outra.
+    """
+    if not phone_number_id:
+        return
+    conflito = await tenants.por_meta_phone_number_id(phone_number_id)
+    if conflito and conflito.id != tenant_id:
+        raise ValueError(
+            f"O phone_number_id {phone_number_id} já está vinculado a outra escola."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -114,6 +151,7 @@ class CriarEscola:
         slug: str = "",
         whatsapp_numero: str = "",
         telefone_contato: str = "",
+        meta_phone_number_id: str = "",
     ) -> Tenant:
         _exige_super_admin(criador)
         nome = nome.strip()
@@ -124,9 +162,17 @@ class CriarEscola:
             raise ValueError("Já existe uma escola com este slug.")
         numero = normalizar_whatsapp(whatsapp_numero)
         contato = normalizar_telefone_contato(telefone_contato)
+        meta_id = normalizar_meta_phone_number_id(meta_phone_number_id)
         await _validar_whatsapp_unico(self._tenants, numero=numero)
+        await _validar_meta_phone_number_id_unico(self._tenants, phone_number_id=meta_id)
         return await self._tenants.criar(
-            Tenant(nome=nome, slug=slug, whatsapp_numero=numero, telefone_contato=contato)
+            Tenant(
+                nome=nome,
+                slug=slug,
+                whatsapp_numero=numero,
+                meta_phone_number_id=meta_id,
+                telefone_contato=contato,
+            )
         )
 
 
@@ -161,6 +207,7 @@ class AtualizarEscola:
         slug: str = "",
         whatsapp_numero: str = "",
         telefone_contato: str = "",
+        meta_phone_number_id: str = "",
     ) -> Tenant:
         _exige_super_admin(criador)
         existente = await self._tenants.obter(tenant_id)
@@ -175,11 +222,16 @@ class AtualizarEscola:
             raise ValueError("Já existe uma escola com este slug.")
         numero = normalizar_whatsapp(whatsapp_numero)
         contato = normalizar_telefone_contato(telefone_contato)
+        meta_id = normalizar_meta_phone_number_id(meta_phone_number_id)
         await _validar_whatsapp_unico(self._tenants, numero=numero, tenant_id=tenant_id)
+        await _validar_meta_phone_number_id_unico(
+            self._tenants, phone_number_id=meta_id, tenant_id=tenant_id
+        )
         # Renomear não mexe no licenciamento: preserva status/plano/expiração.
         existente.nome = nome
         existente.slug = slug
         existente.whatsapp_numero = numero
+        existente.meta_phone_number_id = meta_id
         existente.telefone_contato = contato
         return await self._tenants.atualizar(existente)
 

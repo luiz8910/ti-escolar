@@ -68,6 +68,7 @@ def _to_tenant(row: TenantORM) -> Tenant:
         slug=row.slug,
         criado_em=row.criado_em,
         whatsapp_numero=row.whatsapp_numero,
+        meta_phone_number_id=row.meta_phone_number_id,
         telefone_contato=row.telefone_contato,
         status=StatusTenant(row.status),
         motivo_bloqueio=row.motivo_bloqueio,
@@ -123,6 +124,7 @@ class SqlTenantRepository:
                 slug=tenant.slug,
                 criado_em=tenant.criado_em,
                 whatsapp_numero=tenant.whatsapp_numero,
+                meta_phone_number_id=tenant.meta_phone_number_id,
                 telefone_contato=tenant.telefone_contato,
                 status=tenant.status.value,
                 motivo_bloqueio=tenant.motivo_bloqueio,
@@ -156,6 +158,15 @@ class SqlTenantRepository:
         if not numero:  # nunca casar pelo número vazio (padrão das escolas sem número)
             return None
         stmt = select(TenantORM).where(TenantORM.whatsapp_numero == numero)
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_tenant(row) if row else None
+
+    async def por_meta_phone_number_id(self, phone_number_id: str) -> Tenant | None:
+        """Escola dona do ``phone_number_id`` da Meta — roteamento do inbound (§9e.1)."""
+        pid = (phone_number_id or "").strip()
+        if not pid:  # o id vazio é o default das escolas sem número na Meta: nunca casa
+            return None
+        stmt = select(TenantORM).where(TenantORM.meta_phone_number_id == pid)
         row = (await self._s.execute(stmt)).scalars().first()
         return _to_tenant(row) if row else None
 
@@ -222,6 +233,7 @@ class SqlTenantRepository:
         row.nome = tenant.nome
         row.slug = tenant.slug
         row.whatsapp_numero = tenant.whatsapp_numero
+        row.meta_phone_number_id = tenant.meta_phone_number_id
         row.telefone_contato = tenant.telefone_contato
         row.status = tenant.status.value
         row.motivo_bloqueio = tenant.motivo_bloqueio

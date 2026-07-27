@@ -122,8 +122,10 @@ class DocumentSource(Protocol):
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class MessageChannel(Protocol):
-    # ``remetente`` (E.164) permite enviar a partir do número da escola (multi-tenant).
-    # Quando None/vazio, o adaptador usa o número padrão configurado no canal.
+    # ``remetente`` identifica o número da escola no canal (multi-tenant), tal como
+    # ``Tenant.remetente_canal`` o resolve: na Meta é o ``phone_number_id``, nos canais que
+    # roteiam por número é o E.164. Quando None/vazio, o adaptador usa o número padrão
+    # configurado no canal.
     async def enviar_texto(
         self, *, contato: str, texto: str, remetente: str | None = None
     ) -> str:
@@ -176,6 +178,22 @@ class EmailSender(Protocol):
 
 
 # --------------------------------------------------------------------------- #
+# Idempotência (reentrega de webhooks)
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class CacheIdempotencia(Protocol):
+    """Marca chaves já processadas para descartar reentregas.
+
+    A Meta **reenvia** o webhook quando não recebe o ``200 OK`` a tempo. Sem isso a mesma
+    mensagem do responsável seria atendida (e cobrada na LLM) mais de uma vez.
+    """
+
+    async def registrar(self, chave: str) -> bool:
+        """``True`` se a chave é inédita (siga o processamento); ``False`` se repetida."""
+        ...
+
+
+# --------------------------------------------------------------------------- #
 # Repositórios de persistência
 # --------------------------------------------------------------------------- #
 @runtime_checkable
@@ -189,7 +207,16 @@ class TenantRepository(Protocol):
     async def por_slug(self, slug: str) -> Tenant | None: ...
 
     async def por_whatsapp(self, numero: str) -> Tenant | None:
-        """Escola cujo ``whatsapp_numero`` casa com ``numero`` (E.164). Roteia o inbound."""
+        """Escola cujo ``whatsapp_numero`` casa com ``numero`` (E.164). Referência humana."""
+        ...
+
+    async def por_meta_phone_number_id(self, phone_number_id: str) -> Tenant | None:
+        """Escola dona do ``phone_number_id`` da Meta. **Roteia o inbound do webhook.**
+
+        É o identificador que chega em ``value.metadata.phone_number_id``. Sem escola
+        correspondente o evento é descartado — nunca cai num tenant padrão, sob pena de
+        vazar a conversa de uma escola para outra.
+        """
         ...
 
     async def listar(self) -> list[Tenant]: ...

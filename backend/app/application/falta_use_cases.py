@@ -116,8 +116,8 @@ class ChamarEventual:
         remetente: str | None = None
         if self._tenants is not None:
             tenant = await self._tenants.obter(tenant_id)
-            if tenant is not None and tenant.whatsapp_numero.strip():
-                remetente = tenant.whatsapp_numero.strip()
+            if tenant is not None and tenant.remetente_canal:
+                remetente = tenant.remetente_canal
 
         texto = mensagem.strip() or self._mensagem_padrao(aviso)
         for telefone in alvos:

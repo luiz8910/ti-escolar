@@ -40,6 +40,12 @@ class TenantORM(Base):
     whatsapp_numero: Mapped[str] = mapped_column(
         String(30), default="", server_default="", index=True
     )
+    # ``phone_number_id`` do número da escola na Meta: origem do outbound (URL da Graph API)
+    # e chave de roteamento do inbound (value.metadata.phone_number_id). Indexado e único
+    # entre escolas — o índice parcial da migration 0024 permite várias escolas com "".
+    meta_phone_number_id: Mapped[str] = mapped_column(
+        String(64), default="", server_default="", index=True
+    )
     # Telefone de contato (E.164) público da escola — informativo (secretaria). Sem índice
     # nem unicidade: não roteia mensagens.
     telefone_contato: Mapped[str] = mapped_column(String(30), default="", server_default="")
