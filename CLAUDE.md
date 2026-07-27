@@ -993,3 +993,92 @@ enum `StatusMedida` em `entities.py`.
   **ADMINISTRAÇÃO**, ao lado de "Escolas".
 - **Testes:** `backend/tests/test_seguranca.py` cobre a validação de assinatura (incluindo
   corpo adulterado e segredo errado) e a classificação das medidas.
+
+---
+
+## 15. Checklist de pré-deploy
+
+Baseado no [pre-deployment checklist do cookbook](https://github.com/moalsayed95/cookbook/blob/main/topics/pre-deployment-checklist/README.md),
+auditado contra o código em **27/jul/2026**. Complementa a §14 (que mede a **configuração** em
+execução); esta seção mede o **código**. Legenda: ✅ feito · ⚠️ parcial · ❌ não feito.
+
+### 1. ⚠️ Autorização — cada usuário preso aos próprios dados
+
+Os guardas existem e são consistentes: `_exige_acesso_tenant` (403 fora do tenant),
+`_exige_super_admin`, `_exige_tenant_ativo` e `usuario_autenticado`/`professor_autenticado`
+revalidando no banco. **18 dos 20 routers** exigem autenticação em todas as rotas.
+
+**Furos abertos** (rotas públicas que não deveriam ser):
+- ❌ **`POST /api/broadcasts`** — **sem nenhuma autenticação**. Recebe `tenant_id` no corpo e
+  dispara. Quem souber a URL e um `tenant_id` **envia WhatsApp aos pais de qualquer escola**,
+  pelo número dela, queimando a cota diária. Tem `_exige_tenant_ativo` (barra escola suspensa),
+  mas isso não é identidade. É o furo mais grave do sistema hoje.
+- ❌ **`GET /api/broadcasts/quota/{tenant_id}`** — sem auth; vaza consumo por escola.
+- ❌ **`POST /api/chat/mensagens` e `WS /api/chat/ws/{tenant_id}/{contato}`** — sem auth. É o
+  demo do WhatsApp, público por desenho, mas em produção **consome LLM** e **grava na conversa
+  real** do tenant informado.
+
+### 2. ⬜ Expiração de link de redefinição de senha
+
+**Não aplicável hoje: não existe fluxo de redefinição.** Senha é definida pelo super admin
+(admins) ou pela secretaria (professores). Vira **obrigatório** no dia em que o reset existir —
+token de uso único e TTL curto, nunca link permanente.
+
+### 3. ✅ Validação de entrada — SQL injection e XSS
+
+- **SQLi:** nenhuma query em SQL cru; tudo passa pelo SQLAlchemy 2.0, que parametriza.
+- **Entrada:** DTOs Pydantic v2 em toda a borda HTTP (tipos, UUID, enums).
+- **XSS:** React escapa por padrão e **não há nenhum `dangerouslySetInnerHTML`** no painel.
+
+### 4. ✅ CORS restrito ao próprio domínio
+
+Lista explícita em `BACKEND_CORS_ORIGINS`. O curinga `*` é aceito só como escape hatch e
+**desabilita `allow_credentials`** (o painel usa Bearer no header, não cookie). O painel de §14
+sinaliza quando está liberado. Falta **confirmar o valor em produção** no Render.
+
+### 5. ❌ Rate limiting
+
+Não existe em lugar nenhum. Os três pontos que importam:
+- **`POST /api/admin/login`** — brute force livre contra as senhas de admin. PBKDF2 encarece
+  cada tentativa, mas não limita o número delas.
+- **Webhook inbound** — um número em loop consome a cota de LLM da escola (só há
+  `MENSAGEM_PAI_MAX_CHARS`, que corta mensagem longa).
+- **Chat demo** — aberto e caro.
+
+### 6. ❌ Tratamento de erro — telas próprias
+
+- **Front:** não existem `app/error.tsx`, `app/global-error.tsx` nem `app/not-found.tsx`. Erro
+  de runtime cai na tela padrão do Next.
+- **Back:** nenhum `exception_handler` custom; exceção não tratada devolve o 500 padrão do
+  FastAPI (sem stack trace ao cliente, mas sem correlação de erro para suporte).
+
+### 7. ✅ Índices no banco
+
+53 colunas com `index=True` nos modelos, cobrindo os `tenant_id` e as FKs quentes. Não é gargalo
+conhecido; refinar com **índices compostos** (ex.: `(tenant_id, criado_em)` nas listagens
+paginadas) é otimização, não pendência.
+
+### 8. ⚠️ Logging e monitoramento
+
+Existe **auditoria de negócio** (§13: quem fez o quê, incluindo a LLM) e loggers por módulo. Não
+existe **logging estruturado** (sem `basicConfig`/`dictConfig`), nem **alerta de falha crítica**,
+nem coletor de exceções (Sentry ou equivalente). Hoje uma falha em produção só aparece se alguém
+abrir os logs do Render.
+
+### 9. ⚠️ Estratégia de rollback
+
+O Render mantém deploys anteriores e permite **rollback de aplicação** com um clique, mas isso
+**nunca foi testado** e não é blue-green. Ponto de atenção específico deste projeto: **rollback
+de aplicação não desfaz migration**. A `0023_remover_content_sid` faz `DROP COLUMN`; voltar o
+código sem rodar o `downgrade` deixa o schema à frente da aplicação.
+
+### Ordem sugerida
+
+1. **Autenticar `POST /api/broadcasts` e a rota de quota** (item 1) — é exposição ativa, não
+   dívida técnica.
+2. **Rate limit no login e no inbound** (item 5).
+3. **Telas de erro + handler com id de correlação** (item 6).
+4. **Logging estruturado + alerta** (item 8).
+5. Decidir o destino do **chat demo** em produção: autenticar, isolar num tenant de vitrine ou
+   desligar por env.
+6. **Testar o rollback** do Render uma vez, com migration envolvida (item 9).
