@@ -58,9 +58,9 @@ class Tenant:
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     # Número de WhatsApp (E.164) da escola: por onde ela atende/dispara. Roteia o inbound
-    # (o ``To`` recebido) para o tenant certo e é o remetente (``From``) do outbound. Vazio
-    # = usa o número padrão do canal (ex.: número único do Sandbox Twilio). É um número
-    # **dedicado** à plataforma (a escola adquire um novo, deixando o número antigo livre).
+    # para o tenant certo e é o remetente do outbound. Vazio = usa o número padrão do canal.
+    # É um número **dedicado** à plataforma (a escola adquire um novo, deixando o número
+    # antigo da secretaria livre para o atendimento manual).
     whatsapp_numero: str = ""
     # Telefone de contato (E.164) público da escola — o número que a secretaria já usa no
     # dia a dia. É apenas **informativo** (referência de contato): não roteia inbound, não é
@@ -835,10 +835,6 @@ class MessageTemplate:
     corpo: str  # com placeholders {{1}}, {{2}}...
     id: UUID = field(default_factory=_new_id)
     status: StatusTemplate = StatusTemplate.RASCUNHO
-    # Id do template aprovado no provedor (Twilio Content API: ``HX...``). Quando presente,
-    # o canal envia via template aprovado (obrigatório fora da janela de 24h); vazio =
-    # texto livre (Sandbox / dentro da janela de 24h).
-    content_sid: str = ""
 
 
 class StatusEntrega(str, enum.Enum):
@@ -1326,3 +1322,63 @@ DOCUMENTOS_MATRICULA_EXIGIDOS: tuple[str, ...] = (
     "Histórico escolar ou declaração de escolaridade",
     "RG e CPF do responsável legal",
 )
+
+
+# ---------------------------------------------------------------------------
+# Postura de segurança — auditoria interna do super admin
+# ---------------------------------------------------------------------------
+
+
+class StatusMedida(str, enum.Enum):
+    """Situação de uma medida protetiva.
+
+    ``ATENCAO`` é deliberadamente distinto de ``ATIVA``: a medida existe no código, mas a
+    configuração em uso a enfraquece (segredo default, CORS liberado). Uma auditoria que
+    só respondesse "implementado sim/não" esconderia exatamente esse caso.
+    """
+
+    ATIVA = "ativa"
+    ATENCAO = "atencao"
+    PENDENTE = "pendente"
+
+
+@dataclass(frozen=True)
+class MedidaSeguranca:
+    """Uma medida protetiva e o risco concreto que ela cobre."""
+
+    chave: str
+    titulo: str
+    categoria: str
+    # O que a medida faz.
+    descricao: str
+    # O que aconteceria sem ela — é o que dá sentido à auditoria.
+    risco: str
+    status: StatusMedida
+    # Observação sobre a configuração vigente (por que está ATENCAO/PENDENTE).
+    detalhe: str = ""
+    # Onde a medida vive no código ou na documentação.
+    referencia: str = ""
+
+
+@dataclass(frozen=True)
+class PosturaSeguranca:
+    """Retrato das medidas protetivas da plataforma num dado momento."""
+
+    medidas: list[MedidaSeguranca] = field(default_factory=list)
+
+    @property
+    def total_ativas(self) -> int:
+        return sum(1 for m in self.medidas if m.status is StatusMedida.ATIVA)
+
+    @property
+    def total_atencao(self) -> int:
+        return sum(1 for m in self.medidas if m.status is StatusMedida.ATENCAO)
+
+    @property
+    def total_pendentes(self) -> int:
+        return sum(1 for m in self.medidas if m.status is StatusMedida.PENDENTE)
+
+    @property
+    def pronto_para_producao(self) -> bool:
+        """Só quando nenhuma medida está pendente ou enfraquecida."""
+        return not self.total_atencao and not self.total_pendentes

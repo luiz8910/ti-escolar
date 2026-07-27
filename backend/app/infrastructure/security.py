@@ -1,8 +1,9 @@
-"""Hash de senha e tokens JWT (somente stdlib — sem dependência extra).
+"""Hash de senha, tokens JWT e assinatura de webhook (somente stdlib — sem dependência extra).
 
 - Senha: PBKDF2-SHA256, formato ``pbkdf2_sha256$<iteracoes>$<salt_b64>$<hash_b64>``.
 - Token: JWT compacto assinado com HS256 (HMAC-SHA256), usado na autenticação
   por ``Authorization: Bearer <token>`` do painel administrativo.
+- Webhook: validação do ``X-Hub-Signature-256`` da Meta (HMAC-SHA256 do corpo bruto).
 """
 
 from __future__ import annotations
@@ -88,3 +89,23 @@ def decodificar_token(token: str, *, segredo: str) -> dict[str, Any] | None:
     if not isinstance(exp, (int, float)) or exp < time.time():
         return None
     return payload
+
+
+def validar_assinatura_meta(*, corpo: bytes, cabecalho: str | None, app_secret: str) -> bool:
+    """Valida o ``X-Hub-Signature-256`` de um webhook da Meta.
+
+    A Meta assina o **corpo bruto** da requisição com HMAC-SHA256, usando o *app secret*
+    como chave, e envia o resultado no formato ``sha256=<hex>``. O ``corpo`` precisa ser
+    exatamente os bytes recebidos (``await request.body()``): reserializar o JSON muda os
+    bytes (espaços, ordem das chaves) e invalida a assinatura.
+
+    A comparação é feita em tempo constante para não vazar, pelo tempo de resposta, quantos
+    bytes do prefixo da assinatura estavam corretos.
+    """
+    if not app_secret or not cabecalho:
+        return False
+    prefixo, _, recebido = cabecalho.partition("=")
+    if prefixo != "sha256" or not recebido:
+        return False
+    esperado = hmac.new(app_secret.encode(), corpo, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(esperado, recebido)

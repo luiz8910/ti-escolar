@@ -19,6 +19,7 @@ import {
   CloseIcon,
   SparkIcon,
   PrintIcon,
+  ShieldIcon,
 } from "../ui/icons";
 
 interface NavItem {
@@ -194,6 +195,11 @@ export function Sidebar({
               <NavLink
                 item={{ href: "/admin/escolas", label: "Escolas", icon: BuildingIcon, badge: "super" }}
                 active={isActive("/admin/escolas")}
+                onNavigate={onClose}
+              />
+              <NavLink
+                item={{ href: "/admin/seguranca", label: "Segurança", icon: ShieldIcon, badge: "super" }}
+                active={isActive("/admin/seguranca")}
                 onNavigate={onClose}
               />
             </>

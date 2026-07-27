@@ -149,7 +149,8 @@ ti-escolar/
   `0011_tenant_telefone_contato` → `0012_respostas_rapidas` → `0013_avisos_temporizados` →
   `0014_solicitacoes_impressao` → `0015_mural_professor` → `0016_solicitacoes_internas` →
   `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo` →
-  `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula`.
+  `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula` →
+  `0023_remover_content_sid`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -317,13 +318,14 @@ ti-escolar/
   (`ObterConversaDaEscola`) e **broadcasts** de cada escola.
 - **Número de WhatsApp por escola (`Tenant.whatsapp_numero`, E.164):** cada escola atende/dispara
   pelo seu próprio número (multi-tenant). `CriarEscola`/`AtualizarEscola` recebem o número,
-  **normalizam** para E.164 (`normalizar_whatsapp`, aceita DDI internacional — ex.: o número do
-  Sandbox `+14155238886`) e **validam a unicidade** entre escolas (`TenantRepository.por_whatsapp`;
-  dois tenants com o mesmo número tornariam o inbound ambíguo). Vazio = usa o número padrão do canal
-  (`TWILIO_WHATSAPP_FROM`). Migration `0009_tenant_whatsapp`. **Roteamento:** o webhook Twilio
-  resolve o tenant pelo número de destino (`To`) e o outbound (`EnviarBroadcast`) sai do número da
-  própria escola — ver §9c. **Modelo operacional:** cada escola **adquire um número dedicado** à
-  plataforma (o número antigo da secretaria segue livre para atendimento manual).
+  **normalizam** para E.164 (`normalizar_whatsapp`, aceita DDI internacional) e **validam a
+  unicidade** entre escolas (`TenantRepository.por_whatsapp`; dois tenants com o mesmo número
+  tornariam o inbound ambíguo). Vazio = usa o número padrão do canal (`META_PHONE_NUMBER_ID`).
+  Migration `0009_tenant_whatsapp`. **Roteamento:** o outbound (`EnviarBroadcast`) sai do número
+  da própria escola; o roteamento do inbound por escola depende do `meta_phone_number_id` — ver
+  §9e.1. **Modelo operacional:** cada escola opera com um **número dedicado** à plataforma,
+  **adquirido e registrado por nós** (o número antigo da secretaria segue livre para o
+  atendimento manual) — ver §9e.3.
 - **Telefone de contato por escola (`Tenant.telefone_contato`, E.164):** o número **público** que
   a secretaria já usa no dia a dia — apenas **informativo** (referência de contato). É
   **obrigatório** no cadastro/edição (`CriarEscola`/`AtualizarEscola` via
@@ -595,48 +597,36 @@ crítico que passou despercebido).
   (`?apos_minutos=`), guardado por `_exige_acesso_tenant`. O **painel** depende do histórico de
   broadcasts no admin da escola — ver §12a (**[Roadmap]**).
 
-### 9c. Canal Twilio WhatsApp (inbound + outbound)
+### 9c. Canal Meta WhatsApp Cloud API (implementação atual)
 
-Adaptador alternativo à Meta, selecionável por `MESSAGE_CHANNEL=twilio`. O **Sandbox de
-WhatsApp** do Twilio funciona **sem verificação de empresa**, útil para testar envio e
-recebimento de imediato (o usuário entra no Sandbox com `join <palavra>`).
+Adaptador oficial, selecionável por `MESSAGE_CHANNEL=meta`. É o **único canal real** do
+produto: a Twilio, que existiu como atalho para operar sem a verificação de empresa da Meta,
+foi **removida do código em 27/jul/2026** quando a verificação foi aprovada — ver §9e.
 
-- **Outbound** (`app/infrastructure/channel/twilio_channel.py`): `TwilioMessageChannel`
-  implementa `MessageChannel` via a API REST (`/2010-04-01/Accounts/{sid}/Messages.json`,
-  auth básica `AccountSid:AuthToken`, `From=whatsapp:<numero>`). Retorna o `MessageSid`
-  como id externo (mesmo papel do `wamid` da Meta). O Sandbox **não usa templates HSM**:
-  dentro da janela de 24h o corpo do template é enviado como **texto livre** (templates reais
-  usam o Content API — `ContentSid`, roadmap). Cota/throttling continuam nos casos de uso.
-- **From por escola (multi-tenant):** os métodos de `MessageChannel` recebem um parâmetro
-  opcional `remetente` (E.164); quando informado, o Twilio envia a partir dele, senão usa o
-  `TWILIO_WHATSAPP_FROM` padrão. `EnviarBroadcast` resolve o `Tenant.whatsapp_numero` da escola
-  (via `TenantRepository`) e o passa como `remetente`, de modo que o **outbound sai do número
-  da própria escola**. Meta/demo aceitam o parâmetro por conformidade (a Meta fixa a origem no
-  `phone_number_id`, então ignora).
-- **Webhook** (`app/interfaces/api/webhook_twilio.py`, `POST /api/webhook/twilio`): o Twilio
-  envia **form-urlencoded** (parseado com a stdlib, sem `python-multipart`) e espera **TwiML**
-  como resposta. Trata **status de entrega** (`MessageStatus` → `StatusEntrega` via
-  `broadcasts.registrar_status`, pelo `MessageSid`) **e mensagens recebidas** (`Body`/`From` →
-  `ReceberMensagemRecebida`, respondendo em TwiML) — **fechando o inbound real** (o webhook da
-  Meta ainda só trata status). O inbound é **roteado pelo número de destino** (`To` → escola via
-  `TenantRepository.por_whatsapp`); quando nenhum tenant casa com o `To` (ex.: número único do
-  Sandbox), cai no `TWILIO_DEFAULT_TENANT_ID` (default = tenant demo). A resposta em TwiML sai
-  automaticamente pelo mesmo número que recebeu. Valida `X-Twilio-Signature` (HMAC-SHA1, só
-  stdlib) quando `TWILIO_VALIDATE_SIGNATURE=true`.
-- **Config** (`.env`): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
-  (ex.: `whatsapp:+14155238886`), `TWILIO_STATUS_CALLBACK_URL` (opcional),
-  `TWILIO_DEFAULT_TENANT_ID` (opcional), `TWILIO_VALIDATE_SIGNATURE` (default `false`).
-  A fábrica `criar_canal` (`app/infrastructure/factories.py`) escolhe o adaptador pelo
-  `MESSAGE_CHANNEL` (`demo` | `meta` | `twilio`).
-- **Template aprovado (Content API):** `MessageTemplate.content_sid` (migration
-  `0010_template_content_sid`) guarda o `ContentSid` (`HX...`) do template aprovado no Twilio.
-  `TwilioMessageChannel.enviar_template` envia via `ContentSid` + `ContentVariables` quando o
-  `content_sid` está presente (produção, obrigatório fora da janela de 24h) e cai em **texto
-  livre** quando vazio (Sandbox / dentro das 24h). Falta apenas **preencher** o `content_sid`
-  por tenant (seed/DB ou a futura tela de templates).
-- **Go-live em produção:** `docs/producao-whatsapp.md` traz o checklist completo (self
-  sign-up/Embedded Signup do Twilio, aprovação de templates, número por escola, webhooks,
-  limites/tiers e Business Verification).
+- **Outbound** (`app/infrastructure/channel/meta_channel.py`): `MetaMessageChannel` implementa
+  `MessageChannel` sobre a Graph API (`/{phone_number_id}/messages`, `Authorization: Bearer`).
+  Retorna o `wamid` como id externo, que é o que liga o envio ao status de entrega (§9b).
+  Cobre texto livre (só dentro da janela de 24h), **template** (`nome` + `idioma` + parâmetros
+  de body) e documento. Cota e throttling ficam nos casos de uso, não no adaptador.
+- **Webhook** (`app/interfaces/api/webhook.py`, `/api/webhook/meta`): o `GET` responde ao
+  handshake (`hub.challenge`) conferindo o `hub.verify_token`; o `POST` recebe os eventos e
+  aplica os **status de entrega** aos destinatários dos broadcasts via `RegistrarStatusEntrega`.
+  O **inbound de mensagens ainda não está implementado** — ver §9e.1.
+- **Autenticidade do webhook:** todo `POST` é validado pelo **`X-Hub-Signature-256`**
+  (HMAC-SHA256 do **corpo bruto** com o app secret, comparação em tempo constante — só stdlib,
+  `app/infrastructure/security.py · validar_assinatura_meta`) quando
+  `META_VALIDATE_SIGNATURE=true`. Assinatura ausente/ inválida → **403 seco**, sem processar e
+  sem revelar a causa. Ver §9e.2 para o porquê disso ser bloqueante.
+- **Config** (`.env`): `META_PHONE_NUMBER_ID` (fallback), `META_WABA_ID`, `META_ACCESS_TOKEN`
+  (token de **usuário do sistema** — o da tela de Configuração da API expira em 24h),
+  `META_WEBHOOK_VERIFY_TOKEN`, `META_DAILY_TIER_LIMIT`, `META_APP_SECRET` e
+  `META_VALIDATE_SIGNATURE`. A fábrica `criar_canal` (`app/infrastructure/factories.py`)
+  escolhe o adaptador pelo `MESSAGE_CHANNEL` (`demo` | `meta`).
+- **Templates:** identificados por `nome` + `idioma`, que precisam bater com o template
+  aprovado no WhatsApp Manager. Não há mais `content_sid` (era o `ContentSid` da Content API da
+  Twilio; removido na migration `0023_remover_content_sid`).
+- **Go-live em produção:** `docs/producao-whatsapp.md` traz o checklist completo (WABA de
+  produção, número por escola, token permanente, webhooks, templates, limites/tiers).
 
 ---
 
@@ -669,6 +659,125 @@ os projetos.
   Exige o projeto Pages criado (`ti-escolar-site`) e os secrets `CLOUDFLARE_API_TOKEN` /
   `CLOUDFLARE_ACCOUNT_ID`; sem eles o workflow só valida o build. Ver `site/README.md`.
 
+### 9e. Migração para a Meta Cloud API direta — **[Roadmap: em execução]**
+
+**Decisão (27/jul/2026):** com a **verificação da empresa aprovada** na Meta (portfólio
+TiEscolar, business_id 940840332344260), o canal do produto passa a ser a **Meta Cloud API
+direta**. A Twilio existia por um único motivo — o Sandbox operava **sem** a verificação de
+empresa; com a verificação aprovada, o BSP intermediário só acrescentaria margem sobre o preço
+da Meta. Por isso a Twilio foi **removida por inteiro** do código, da config e da documentação
+nesta data (adaptador, webhook, testes, variáveis `TWILIO_*` e a coluna `templates.content_sid`,
+que era o `ContentSid` da Content API deles — migration `0023_remover_content_sid`).
+
+**Topologia multi-tenant escolhida:** **uma única WABA nossa** (não uma por escola), com o
+**número de cada escola registrado como um `phone_number_id` distinto** dentro dela. Cada número
+tem seu próprio **nome de exibição** (o nome da escola), sua própria **qualidade** e seu próprio
+**tier de envio** — de modo que uma escola não contamina o limite da outra. Templates, cobrança e
+credenciais ficam centralizados sob nossa conta, o que casa com o modelo de plano mensal/anual
+por escola (§6e). A alternativa (Embedded Signup, cada escola dona da própria WABA) foi
+descartada: transferiria a cobrança para a escola e inviabilizaria o onboarding assistido.
+
+#### 9e.1 Mudanças necessárias para o multi-tenant funcionar
+
+O adaptador atual é **single-tenant**: `MetaMessageChannel`
+(`app/infrastructure/channel/meta_channel.py`) fixa o `phone_number_id` vindo da env no
+construtor e **ignora o parâmetro `remetente`** da porta `MessageChannel` (o comentário no código
+declara isso: na Meta a origem é fixada pela credencial). Com várias escolas, todo envio sairia
+pelo número errado. São necessárias, nesta ordem:
+
+1. **`Tenant.meta_phone_number_id`** (novo campo, migration `0024_tenant_meta_phone_number_id`
+   encadeada no head `0023_remover_content_sid`): o identificador do número **na Meta**, que é
+   o que a API exige na URL de envio. Não confundir com `Tenant.whatsapp_numero`, que é o E.164
+   legível — os dois passam a coexistir, o E.164 para exibição/roteamento humano e o
+   `phone_number_id` para a chamada da API. Deve ser **único entre escolas** (dois tenants com o
+   mesmo id tornariam o inbound ambíguo), à semelhança do que `TenantRepository.por_whatsapp` já
+   garante para o E.164.
+2. **`MessageChannel.remetente` passa a ser honrado na Meta:** o `MetaMessageChannel` deixa de
+   guardar um `phone_number_id` fixo e passa a **montar a URL por envio**
+   (`/{phone_number_id}/messages`), usando o `remetente` recebido e caindo no
+   `META_PHONE_NUMBER_ID` da env apenas como fallback. `EnviarBroadcast` **já** resolve o
+   `Tenant` e repassa o remetente — a mudança é só do lado do adaptador, sem tocar em domínio
+   ou casos de uso.
+3. **Novo `TenantRepository.por_meta_phone_number_id`** para o roteamento inbound (ver abaixo).
+4. **Inbound real no webhook da Meta** (hoje inexistente — `app/interfaces/api/webhook.py` só
+   chama `RegistrarStatusEntrega`, e mensagens recebidas são descartadas). **É o que derruba o
+   chatbot inteiro**: sem ele o produto só dispara, não atende. Pontos de atenção da API:
+   - o payload é **JSON aninhado** (`entry[].changes[].value.messages[]`);
+   - a Meta exige **`200 OK` imediato**; a resposta ao responsável **não vai no corpo do HTTP** e
+     precisa ser **enviada ativamente** por uma segunda chamada à API, via
+     `MessageChannel.enviar_texto` com o `remetente` da escola;
+   - o **roteamento do tenant** sai de `value.metadata.phone_number_id`, resolvido pelo novo
+     `por_meta_phone_number_id`. **Sem tenant de fallback:** número desconhecido deve ser
+     **descartado com log**, nunca cair num tenant default (vazaria a conversa de uma escola
+     para outra);
+   - o mesmo POST carrega **mensagens e status de entrega** no mesmo envelope; os dois caminhos
+     convivem no handler.
+5. **Config** (`app/config.py`): `META_PHONE_NUMBER_ID` passa a ser **fallback**, não a fonte da
+   verdade; `META_ACCESS_TOKEN` deve ser um token de **usuário do sistema** (o token da tela de
+   Configuração da API expira em 24h e não serve para produção).
+
+#### 9e.2 Autenticidade do webhook — ✅ implementado (27/jul/2026)
+
+**A lacuna que existia:** o `POST /api/webhook/meta` **aceitava qualquer requisição**, sem
+nenhuma verificação de origem. Com o endpoint público no Render a URL é descobrível, e qualquer
+terceiro podia:
+
+- **forjar status de entrega**, corrompendo a confirmação de recebimento (§9b) — uma não-entrega
+  real mascarada como `delivered` **desliga justamente o alarme** que avisa a escola de que um
+  aviso crítico não chegou;
+- **forjar mensagens inbound** (assim que o item 4 acima existir), injetando conversas falsas em
+  nome de qualquer telefone, poluindo o histórico/auditoria (§13) e **consumindo cota de LLM** de
+  um tenant arbitrário.
+
+**Como ficou** (`validar_assinatura_meta` em `app/infrastructure/security.py`, aplicado em
+`app/interfaces/api/webhook.py`, coberto por `tests/test_seguranca.py`):
+
+- valida o **`X-Hub-Signature-256`**: HMAC-SHA256 no formato `sha256=<hex>`, com o **app secret**
+  da Meta como chave;
+- calcula sobre os **bytes exatos** recebidos (`await request.body()`), **antes de qualquer parse
+  de JSON** — reserializar o payload muda os bytes e invalidaria o HMAC. É o erro clássico dessa
+  implementação;
+- compara em **tempo constante** (`hmac.compare_digest`), nunca com `==`, para não vazar pelo
+  tempo de resposta quantos bytes do prefixo estavam certos;
+- só stdlib (`hmac`/`hashlib`), como o resto de `security.py`;
+- configs **`META_APP_SECRET`** + **`META_VALIDATE_SIGNATURE`** (default `false` em dev,
+  **`true` obrigatório em produção**);
+- assinatura ausente ou inválida → **403 seco**, sem processar nada e **sem revelar a causa**
+  (distinguir "faltou o cabeçalho" de "HMAC não bateu" ajudaria quem estivesse sondando).
+
+O `GET` de verificação (`hub.challenge`) já compara o `hub.verify_token` com
+`META_WEBHOOK_VERIFY_TOKEN` e está correto — mas o default `"changeme"` em `config.py`
+**precisa ser trocado por um valor forte** em produção, senão o handshake é reproduzível por
+qualquer um. O painel de §14 sinaliza esse caso.
+
+#### 9e.3 Onboarding de uma nova escola (operação)
+
+**Modelo adotado: a escola não configura nada.** Nós compramos o chip, colocamos num aparelho
+nosso, recebemos o código de verificação e conduzimos todo o registro pelo nosso Business
+Manager. A escola só recebe o número já operante. Isso elimina o principal ponto de atrito do
+onboarding (depender da secretaria para ler um código que expira em minutos) e mantém a posse
+do número — e portanto do canal — com a plataforma.
+
+- **Uma escola nova NÃO exige uma WABA nova:** é mais um número na WABA existente. O limite
+  documentado é de **20 números por WABA**; ao esgotar, cria-se **outra WABA sob o mesmo
+  portfólio empresarial** (o portfólio comporta várias), sem trocar de conta nem refazer a
+  verificação da empresa. Confira o limite vigente na documentação antes de planejar acima
+  disso.
+- **Qualidade e tier de envio são por número**, não por WABA: uma escola que gere bloqueios não
+  derruba o limite das outras. É o que torna a WABA compartilhada segura.
+- **Requisito duro do chip:** o número **não pode estar ativo em nenhum WhatsApp** (comum ou
+  Business) no momento do registro, e depois de registrado na Cloud API **não volta** a
+  funcionar no aplicativo. Por isso o chip é sempre **novo e dedicado**.
+- **Caminho crítico do prazo:** o **nome de exibição** de cada número (o nome da escola, que os
+  pais veem) passa por **revisão da Meta**, que é assíncrona. Dispare esse passo no início do
+  onboarding, não no fim.
+- **Automação (roadmap):** o registro de número é automatizável pela Graph API — criar/registrar
+  o número na WABA, disparar o código de verificação e confirmá-lo, definir nome de exibição e
+  assinar o webhook são todos endpoints da API, com o token de usuário do sistema. O que **não**
+  é automatizável é o insumo físico: obter o chip e ler o SMS/ligação. Ou seja, dá para reduzir
+  o onboarding a "cadastrar a escola no painel + digitar o código recebido", mas não a zero
+  toque.
+
 ## 10. Desenvolvimento com Docker — **[Roadmap: compose]**
 
 Tudo roda sob Docker. Serviços previstos no `docker-compose.yml`:
@@ -700,12 +809,24 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] Scaffold do back-end (camadas hexagonais, FastAPI, SQLAlchemy/Alembic, pgvector).
 - [ ] Scaffold do demo Next.js (UI estilo WhatsApp + REST/WebSocket).
 - [ ] `docker-compose.yml` com `db` / `backend` / `web` + migrations + seed.
-- [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e fila.
-- [x] **Canal Twilio WhatsApp** (inbound + outbound), alternativa à Meta que funciona sem
-  verificação de empresa (Sandbox). Ver §9c (`app/infrastructure/channel/twilio_channel.py`,
-  `app/interfaces/api/webhook_twilio.py`).
-- [~] Inbound real do WhatsApp: **feito via Twilio** (`POST /api/webhook/twilio` roteia para
-  `ReceberMensagemRecebida`); via **webhook da Meta** ainda pendente (só trata status).
+- [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e **fila**
+  (throttling, retry com backoff e agendamento — §9a).
+- [~] **Migração para a Meta Cloud API direta** (canal único desde 27/jul/2026, com a verificação
+  da empresa aprovada). Ver §9e:
+  - [x] **Validação de `X-Hub-Signature-256`** no webhook (§9e.2) — era **bloqueante para o
+    go-live**: o endpoint aceitava qualquer POST, permitindo forjar status de entrega e
+    (após o inbound) conversas falsas.
+  - [x] Remoção completa da Twilio (adaptador, webhook, testes, `TWILIO_*`, `content_sid`).
+  - [ ] `Tenant.meta_phone_number_id` + migration `0024` e
+    `TenantRepository.por_meta_phone_number_id`.
+  - [ ] `MetaMessageChannel` honrando o `remetente` (URL por envio) — hoje é single-tenant.
+  - [ ] **Inbound** no `POST /api/webhook/meta` (hoje só trata status; o chatbot não atende)
+    com resposta ativa e roteamento por `metadata.phone_number_id`.
+  - [ ] Automação do registro de número na WABA pela Graph API (§9e.3).
+- [x] **Canal Meta WhatsApp Cloud API** como canal único do produto, com a **assinatura
+  `X-Hub-Signature-256`** validada no webhook. Ver §9c e §9e.2.
+- [ ] **Inbound real do WhatsApp** pelo webhook da Meta (hoje só trata status de entrega) —
+  sem ele o produto dispara mas não atende. Ver §9e.1.
 - [ ] Integrações reais de `DocumentSource` (substituir mocks).
 - [x] **Base de conhecimento por tenant** (upload de documentos → RAG) e **system prompt
   personalizado por escola** (um "CLAUDE.md" do tenant), com painel em `web/app/admin/`.
@@ -835,3 +956,40 @@ sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escop
   `RegistrarAuditoria`/`ListarAuditoria` (`app/application/auditoria_use_cases.py`); auditar é
   **tolerante a falhas** (nunca derruba a ação auditada).
   Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
+
+---
+
+## 14. Postura de segurança (auditoria interna do super admin)
+
+Painel **exclusivo do super admin** (`/admin/seguranca`) que lista as **medidas protetivas** da
+plataforma e o **status real de cada uma no ambiente em execução**. É material de **auditoria
+interna** (sócios) — não é conteúdo para a escola nem peça de venda, e por isso a página
+redireciona quem não é super admin.
+
+- **Três status, não dois.** `ATIVA` (existe no código e a configuração não a enfraquece),
+  `ATENCAO` (existe, mas está desligada ou com segredo default) e `PENDENTE` (ainda não
+  implementada). A distinção é o ponto da tela: um relatório que só respondesse
+  "implementado sim/não" esconderia exatamente o caso perigoso — a medida que existe no
+  código e está desligada em produção.
+- **Honestidade obrigatória.** Medida planejada e não implementada aparece como `PENDENTE`.
+  Um painel de auditoria que dourasse a pílula não serviria para auditar nada. Hoje o
+  `rate_limit_inbound` (limite de taxa por remetente no webhook) está nesse estado.
+- **Cada medida declara o risco que cobre**, não só o que faz — é o que permite priorizar.
+- **Nenhum segredo é exposto:** a API devolve apenas *se* um segredo continua com o valor de
+  exemplo (`JWT_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`), nunca o valor.
+
+**Arquitetura.** O caso de uso `AvaliarPosturaSeguranca`
+(`app/application/seguranca_use_cases.py`) **não lê variáveis de ambiente**: recebe um
+`ConfiguracaoSeguranca` com sinais booleanos, montado na camada de interface a partir das
+`Settings`. Assim a regra que classifica cada medida fica testável sem tocar em config, e o
+domínio segue sem conhecer o framework. Value objects `MedidaSeguranca`/`PosturaSeguranca` +
+enum `StatusMedida` em `entities.py`.
+
+- **Endpoint:** `GET /api/admin/seguranca` (`app/interfaces/api/seguranca.py`, guarda
+  `_exige_super_admin`).
+- **Painel:** `web/app/admin/seguranca/` — contadores por status, faixa de veredito
+  (`pronto_para_producao`) e as medidas agrupadas por categoria (Integridade de dados,
+  Autenticação, Isolamento, Rastreabilidade, Exposição). Entrada na sidebar sob
+  **ADMINISTRAÇÃO**, ao lado de "Escolas".
+- **Testes:** `backend/tests/test_seguranca.py` cobre a validação de assinatura (incluindo
+  corpo adulterado e segredo errado) e a classificação das medidas.

@@ -24,8 +24,8 @@ from app.interfaces.api import (
     professor,
     progressao,
     respostas_rapidas,
+    seguranca,
     webhook,
-    webhook_twilio,
 )
 
 settings = get_settings()
@@ -73,8 +73,8 @@ app.include_router(faltas.router)
 app.include_router(exportacao.router)
 app.include_router(fichas.router)
 app.include_router(matricula.router)
+app.include_router(seguranca.router)
 app.include_router(webhook.router)
-app.include_router(webhook_twilio.router)
 
 
 @app.get("/health", tags=["infra"])

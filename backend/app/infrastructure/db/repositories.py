@@ -161,7 +161,6 @@ class SqlTemplateRepository:
             idioma=row.idioma,
             corpo=row.corpo,
             status=StatusTemplate(row.status),
-            content_sid=row.content_sid,
         )
 
 

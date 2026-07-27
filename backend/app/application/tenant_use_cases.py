@@ -57,9 +57,9 @@ def slugify(texto: str) -> str:
 def normalizar_whatsapp(bruto: str) -> str:
     """Normaliza o número de WhatsApp para E.164 (``+<dígitos>``); "" quando vazio.
 
-    Aceita internacional (ex.: número do Sandbox Twilio ``+14155238886``), então não força
-    DDI do Brasil. Remove o prefixo ``whatsapp:`` e qualquer separador (espaços, traços,
-    parênteses). Valida um formato E.164 plausível (8 a 15 dígitos após o ``+``).
+    Aceita DDI internacional, então não força o do Brasil. Remove o prefixo ``whatsapp:``
+    e qualquer separador (espaços, traços, parênteses). Valida um formato E.164 plausível
+    (8 a 15 dígitos após o ``+``).
     """
     bruto = (bruto or "").strip()
     if not bruto:
