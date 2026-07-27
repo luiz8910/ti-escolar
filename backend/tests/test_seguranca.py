@@ -146,3 +146,72 @@ def test_constantes_de_default_batem_com_o_env_example():
     padrao = Settings(_env_file=None)
     assert padrao.jwt_secret == JWT_SECRET_PADRAO
     assert padrao.meta_webhook_verify_token == META_VERIFY_TOKEN_PADRAO
+
+
+# --------------------------------------------------------------------------- #
+# Checklist de pré-deploy (fonte externa)
+# --------------------------------------------------------------------------- #
+
+
+def _item(postura, numero: int):
+    return next(i for i in postura.checklist if i.numero == numero)
+
+
+def test_checklist_traz_os_nove_itens_na_numeracao_da_fonte():
+    """A conferência com a lista de origem é 1:1 — numeração e ordem não podem escorregar."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    assert [i.numero for i in postura.checklist] == list(range(1, 10))
+    assert postura.checklist_fonte.startswith("https://")
+
+
+def test_todo_item_declara_exigencia_e_situacao():
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    for i in postura.checklist:
+        assert i.titulo and i.exigencia and i.situacao
+
+
+def test_itens_nao_implementados_aparecem_como_pendentes():
+    """Rate limiting e telas de erro não existem — o painel tem que dizer isso."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    assert _item(postura, 5).status is StatusMedida.PENDENTE  # rate limiting
+    assert _item(postura, 6).status is StatusMedida.PENDENTE  # telas de erro
+
+
+def test_reset_de_senha_e_nao_aplicavel_e_nao_conta_como_divida():
+    """Não existe fluxo de reset: marcar como pendente seria alarme falso."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    item = _item(postura, 2)
+    assert item.status is StatusMedida.NAO_APLICAVEL
+    assert postura.checklist_pendentes == sum(
+        1
+        for i in postura.checklist
+        if i.status in (StatusMedida.ATENCAO, StatusMedida.PENDENTE)
+    )
+    assert item not in [
+        i
+        for i in postura.checklist
+        if i.status in (StatusMedida.ATENCAO, StatusMedida.PENDENTE)
+    ]
+
+
+def test_cors_liberado_rebaixa_o_item_do_checklist():
+    """O item 4 acompanha a configuração real, não uma resposta fixa."""
+    seguro = AvaliarPosturaSeguranca().executar(config=_config())
+    aberto = AvaliarPosturaSeguranca().executar(config=_config(cors_liberado=True))
+    assert _item(seguro, 4).status is StatusMedida.ATIVA
+    assert _item(aberto, 4).status is StatusMedida.ATENCAO
+
+
+def test_medidas_relacionadas_apontam_para_chaves_existentes():
+    """Referência quebrada tornaria o cruzamento item↔medida inútil no painel."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    chaves = {m.chave for m in postura.medidas}
+    for i in postura.checklist:
+        for chave in i.medidas_relacionadas:
+            assert chave in chaves, f"item {i.numero} referencia medida inexistente: {chave}"
+
+
+def test_checklist_pendente_impede_pronto_para_producao():
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    assert postura.checklist_pendentes > 0
+    assert not postura.pronto_para_producao

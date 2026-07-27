@@ -13,7 +13,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.domain.entities import MedidaSeguranca, PosturaSeguranca, StatusMedida
+from app.domain.entities import (
+    ItemChecklist,
+    MedidaSeguranca,
+    PosturaSeguranca,
+    StatusMedida,
+)
+
+# Fonte externa do checklist de pré-deploy (§15 do CLAUDE.md).
+CHECKLIST_FONTE = (
+    "https://github.com/moalsayed95/cookbook/blob/main/topics/pre-deployment-checklist"
+)
 
 
 @dataclass(frozen=True)
@@ -50,8 +60,129 @@ class AvaliarPosturaSeguranca:
                 *self._isolamento(),
                 *self._rastreabilidade(),
                 *self._exposicao(config),
-            ]
+            ],
+            checklist=self._checklist_pre_deploy(config),
+            checklist_fonte=CHECKLIST_FONTE,
         )
+
+    # -- Checklist de pré-deploy (fonte externa) ---------------------------
+
+    def _checklist_pre_deploy(self, c: ConfiguracaoSeguranca) -> list[ItemChecklist]:
+        """Os 9 itens da lista de origem, auditados contra o código.
+
+        Mantido em ordem e com a numeração original para conferência 1:1 — quem audita
+        precisa conseguir cruzar item a item com a fonte, sem reinterpretar.
+        """
+        return [
+            ItemChecklist(
+                numero=1,
+                titulo="Autorização — cada usuário preso aos próprios dados",
+                exigencia="Todo endpoint verifica a identidade e o escopo de quem chama.",
+                status=StatusMedida.ATIVA,
+                situacao=(
+                    "Guardas _exige_acesso_tenant, _exige_super_admin e _exige_tenant_ativo em "
+                    "todas as rotas administrativas, com o usuário revalidado no banco a cada "
+                    "requisição. Em 27/jul/2026 fecharam-se os furos de POST /api/broadcasts e "
+                    "da consulta de cota, que recebiam tenant_id sem exigir login."
+                ),
+                medidas_relacionadas=["multi_tenant", "papeis", "jwt_sessao"],
+            ),
+            ItemChecklist(
+                numero=2,
+                titulo="Link de redefinição de senha expira",
+                exigencia="Token de uso único e TTL curto no reset de senha.",
+                status=StatusMedida.NAO_APLICAVEL,
+                situacao=(
+                    "Não existe fluxo de redefinição: a senha é definida pelo super admin "
+                    "(administradores) ou pela secretaria (professores). Não há link a expirar. "
+                    "Vira obrigatório no dia em que o autoatendimento de senha existir."
+                ),
+            ),
+            ItemChecklist(
+                numero=3,
+                titulo="Validação de entrada — SQL injection e XSS",
+                exigencia="Queries parametrizadas e saída escapada.",
+                status=StatusMedida.ATIVA,
+                situacao=(
+                    "Nenhuma query em SQL cru — tudo passa pelo SQLAlchemy, que parametriza. "
+                    "DTOs Pydantic validam toda a borda HTTP. No painel, React escapa por "
+                    "padrão e não há nenhum dangerouslySetInnerHTML."
+                ),
+            ),
+            ItemChecklist(
+                numero=4,
+                titulo="CORS restrito ao próprio domínio",
+                exigencia="Sem curinga em produção.",
+                status=(StatusMedida.ATENCAO if c.cors_liberado else StatusMedida.ATIVA),
+                situacao=(
+                    "BACKEND_CORS_ORIGINS está com '*': qualquer origem é aceita. O curinga "
+                    "desabilita allow_credentials, mas ainda expõe a API a qualquer página."
+                    if c.cors_liberado
+                    else "Lista explícita de origens; o curinga só é aceito como escape hatch."
+                ),
+                medidas_relacionadas=["cors"],
+            ),
+            ItemChecklist(
+                numero=5,
+                titulo="Rate limiting",
+                exigencia="Limite em login, reset, cadastro e operações caras.",
+                status=StatusMedida.PENDENTE,
+                situacao=(
+                    "Não existe em lugar nenhum. O ponto mais grave é POST /api/admin/login: "
+                    "brute force livre contra as senhas de administrador (o PBKDF2 encarece "
+                    "cada tentativa, mas não limita quantas). Faltam também teto no webhook "
+                    "inbound e no chat demo, ambos caros por acionarem a LLM."
+                ),
+                medidas_relacionadas=["rate_limit_inbound"],
+            ),
+            ItemChecklist(
+                numero=6,
+                titulo="Tratamento de erro — telas próprias",
+                exigencia="Sem stack trace visível; erro com identificação para suporte.",
+                status=StatusMedida.PENDENTE,
+                situacao=(
+                    "O painel não tem app/error.tsx, app/global-error.tsx nem app/not-found.tsx "
+                    "— erro de runtime cai na tela padrão do Next. No back-end não há "
+                    "exception_handler próprio: a exceção vira o 500 do FastAPI, sem stack "
+                    "trace ao cliente, mas também sem id de correlação para rastrear."
+                ),
+            ),
+            ItemChecklist(
+                numero=7,
+                titulo="Índices nas consultas quentes",
+                exigencia="Colunas frequentemente filtradas indexadas.",
+                status=StatusMedida.ATIVA,
+                situacao=(
+                    "53 colunas com index=True nos modelos, cobrindo os tenant_id e as chaves "
+                    "estrangeiras quentes. Índices compostos (ex.: tenant_id + criado_em nas "
+                    "listagens) são otimização futura, não pendência."
+                ),
+            ),
+            ItemChecklist(
+                numero=8,
+                titulo="Logging e monitoramento",
+                exigencia="Log estruturado somado a alerta de falha crítica.",
+                status=StatusMedida.ATENCAO,
+                situacao=(
+                    "Existe auditoria de negócio (quem fez o quê, incluindo a LLM) e loggers "
+                    "por módulo. Faltam logging estruturado, coletor de exceções e alerta: hoje "
+                    "uma falha em produção só aparece se alguém abrir os logs do Render."
+                ),
+                medidas_relacionadas=["auditoria"],
+            ),
+            ItemChecklist(
+                numero=9,
+                titulo="Estratégia de rollback",
+                exigencia="Capacidade de reverter testada (blue-green ou equivalente).",
+                status=StatusMedida.ATENCAO,
+                situacao=(
+                    "O Render permite rollback de aplicação com um clique, mas isso nunca foi "
+                    "testado e não é blue-green. Ponto específico deste projeto: rollback de "
+                    "aplicação NÃO desfaz migration — voltar o código sem rodar o downgrade "
+                    "deixa o schema à frente da aplicação."
+                ),
+            ),
+        ]
 
     # -- Integridade dos eventos externos ---------------------------------
 

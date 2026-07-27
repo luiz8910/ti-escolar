@@ -1340,6 +1340,10 @@ class StatusMedida(str, enum.Enum):
     ATIVA = "ativa"
     ATENCAO = "atencao"
     PENDENTE = "pendente"
+    # Item que não se aplica ao produto como ele é hoje (ex.: expirar link de redefinição
+    # de senha, quando não existe fluxo de redefinição). Distinto de PENDENTE para não
+    # gerar alarme falso — mas com a nota registrando quando ele passa a valer.
+    NAO_APLICAVEL = "nao_aplicavel"
 
 
 @dataclass(frozen=True)
@@ -1361,10 +1365,34 @@ class MedidaSeguranca:
 
 
 @dataclass(frozen=True)
+class ItemChecklist:
+    """Um item do checklist de pré-deploy, auditado contra o código.
+
+    Diferente de ``MedidaSeguranca`` (que descreve o que a plataforma faz), o item de
+    checklist descreve o que uma **fonte externa exige** — por isso carrega o ``numero``
+    original, para conferência 1:1 contra a lista de origem.
+    """
+
+    numero: int
+    titulo: str
+    # O que a fonte exige.
+    exigencia: str
+    status: StatusMedida
+    # O que o código faz hoje sobre isso, incluindo o que falta.
+    situacao: str
+    # Chaves de ``MedidaSeguranca`` que sustentam este item (quando há).
+    medidas_relacionadas: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class PosturaSeguranca:
     """Retrato das medidas protetivas da plataforma num dado momento."""
 
     medidas: list[MedidaSeguranca] = field(default_factory=list)
+    # Checklist de pré-deploy auditado contra o código (fonte externa).
+    checklist: list[ItemChecklist] = field(default_factory=list)
+    # De onde veio o checklist — mostrado no painel para permitir a conferência.
+    checklist_fonte: str = ""
 
     @property
     def total_ativas(self) -> int:
@@ -1379,6 +1407,19 @@ class PosturaSeguranca:
         return sum(1 for m in self.medidas if m.status is StatusMedida.PENDENTE)
 
     @property
+    def checklist_ok(self) -> int:
+        return sum(1 for i in self.checklist if i.status is StatusMedida.ATIVA)
+
+    @property
+    def checklist_pendentes(self) -> int:
+        """Itens que exigem ação — ``NAO_APLICAVEL`` não conta como dívida."""
+        return sum(
+            1
+            for i in self.checklist
+            if i.status in (StatusMedida.ATENCAO, StatusMedida.PENDENTE)
+        )
+
+    @property
     def pronto_para_producao(self) -> bool:
-        """Só quando nenhuma medida está pendente ou enfraquecida."""
-        return not self.total_atencao and not self.total_pendentes
+        """Só quando nenhuma medida e nenhum item de checklist exige ação."""
+        return not self.total_atencao and not self.total_pendentes and not self.checklist_pendentes

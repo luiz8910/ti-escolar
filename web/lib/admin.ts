@@ -1514,7 +1514,7 @@ export async function inativarResponsaveis(): Promise<ResponsavelInativado[]> {
 }
 
 // --------------------- postura de segurança (super admin) ------------------ //
-export type StatusMedida = "ativa" | "atencao" | "pendente";
+export type StatusMedida = "ativa" | "atencao" | "pendente" | "nao_aplicavel";
 
 export interface MedidaSeguranca {
   chave: string;
@@ -1527,11 +1527,24 @@ export interface MedidaSeguranca {
   referencia: string;
 }
 
+export interface ItemChecklist {
+  numero: number;
+  titulo: string;
+  exigencia: string;
+  status: StatusMedida;
+  situacao: string;
+  medidas_relacionadas: string[];
+}
+
 export interface PosturaSeguranca {
   medidas: MedidaSeguranca[];
   total_ativas: number;
   total_atencao: number;
   total_pendentes: number;
+  checklist: ItemChecklist[];
+  checklist_fonte: string;
+  checklist_ok: number;
+  checklist_pendentes: number;
   pronto_para_producao: boolean;
   ambiente: string;
   canal: string;

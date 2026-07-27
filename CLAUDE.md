@@ -966,11 +966,13 @@ plataforma e o **status real de cada uma no ambiente em execução**. É materia
 interna** (sócios) — não é conteúdo para a escola nem peça de venda, e por isso a página
 redireciona quem não é super admin.
 
-- **Três status, não dois.** `ATIVA` (existe no código e a configuração não a enfraquece),
-  `ATENCAO` (existe, mas está desligada ou com segredo default) e `PENDENTE` (ainda não
-  implementada). A distinção é o ponto da tela: um relatório que só respondesse
-  "implementado sim/não" esconderia exatamente o caso perigoso — a medida que existe no
-  código e está desligada em produção.
+- **Quatro status, não dois.** `ATIVA` (existe no código e a configuração não a enfraquece),
+  `ATENCAO` (existe, mas está desligada ou com segredo default), `PENDENTE` (ainda não
+  implementada) e `NAO_APLICAVEL` (não faz sentido no produto como ele é hoje — ex.: expirar
+  link de redefinição de senha quando não há fluxo de redefinição; conta separado para não
+  virar alarme falso). A distinção `ATIVA`×`ATENCAO` é o ponto da tela: um relatório que só
+  respondesse "implementado sim/não" esconderia exatamente o caso perigoso — a medida que
+  existe no código e está desligada em produção.
 - **Honestidade obrigatória.** Medida planejada e não implementada aparece como `PENDENTE`.
   Um painel de auditoria que dourasse a pílula não serviria para auditar nada. Hoje o
   `rate_limit_inbound` (limite de taxa por remetente no webhook) está nesse estado.
@@ -988,9 +990,15 @@ enum `StatusMedida` em `entities.py`.
 - **Endpoint:** `GET /api/admin/seguranca` (`app/interfaces/api/seguranca.py`, guarda
   `_exige_super_admin`).
 - **Painel:** `web/app/admin/seguranca/` — contadores por status, faixa de veredito
-  (`pronto_para_producao`) e as medidas agrupadas por categoria (Integridade de dados,
-  Autenticação, Isolamento, Rastreabilidade, Exposição). Entrada na sidebar sob
-  **ADMINISTRAÇÃO**, ao lado de "Escolas".
+  (`pronto_para_producao`), o **checklist de pré-deploy** (abaixo) e as medidas agrupadas por
+  categoria (Integridade de dados, Autenticação, Isolamento, Rastreabilidade, Exposição).
+  Entrada na sidebar sob **ADMINISTRAÇÃO**, ao lado de "Escolas".
+- **Checklist de pré-deploy embutido:** os 9 itens da §15 são servidos pelo mesmo endpoint
+  (`ItemChecklist`, com `numero`/`exigencia`/`situacao` e as `medidas_relacionadas`), com a
+  **numeração e a ordem da fonte preservadas** para conferência 1:1 — quem audita precisa
+  cruzar item a item sem reinterpretar. O item 4 (CORS) deriva da configuração viva; os demais
+  são fatos sobre o código. O painel linka a fonte original. `pronto_para_producao` só é
+  verdadeiro quando **nem as medidas nem o checklist** exigem ação.
 - **Testes:** `backend/tests/test_seguranca.py` cobre a validação de assinatura (incluindo
   corpo adulterado e segredo errado) e a classificação das medidas.
 
@@ -999,8 +1007,14 @@ enum `StatusMedida` em `entities.py`.
 ## 15. Checklist de pré-deploy
 
 Baseado no [pre-deployment checklist do cookbook](https://github.com/moalsayed95/cookbook/blob/main/topics/pre-deployment-checklist/README.md),
-auditado contra o código em **27/jul/2026**. Complementa a §14 (que mede a **configuração** em
-execução); esta seção mede o **código**. Legenda: ✅ feito · ⚠️ parcial · ❌ não feito.
+auditado contra o código em **27/jul/2026**. Legenda: ✅ feito · ⚠️ parcial · ❌ não feito ·
+⬜ não aplicável.
+
+> Estes 9 itens também aparecem **dentro do painel** `/admin/seguranca` (§14), servidos pelo
+> endpoint com a numeração da fonte preservada. Esta seção é a versão narrativa; o painel é a
+> versão viva, que reflete a configuração do ambiente em execução. **Ao mexer aqui, mexa
+> também em `_checklist_pre_deploy`** (`app/application/seguranca_use_cases.py`), senão os dois
+> divergem.
 
 ### 1. ✅ Autorização — cada usuário preso aos próprios dados
 

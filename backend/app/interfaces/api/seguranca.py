@@ -23,7 +23,11 @@ from app.config import Settings
 from app.domain.entities import Usuario
 from app.interfaces.api.admin import _exige_super_admin, usuario_autenticado
 from app.interfaces.deps import get_settings_dep
-from app.interfaces.dto import MedidaSegurancaSaida, PosturaSegurancaSaida
+from app.interfaces.dto import (
+    ItemChecklistSaida,
+    MedidaSegurancaSaida,
+    PosturaSegurancaSaida,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -69,6 +73,20 @@ async def obter_postura_seguranca(
         total_ativas=postura.total_ativas,
         total_atencao=postura.total_atencao,
         total_pendentes=postura.total_pendentes,
+        checklist=[
+            ItemChecklistSaida(
+                numero=i.numero,
+                titulo=i.titulo,
+                exigencia=i.exigencia,
+                status=i.status.value,
+                situacao=i.situacao,
+                medidas_relacionadas=list(i.medidas_relacionadas),
+            )
+            for i in postura.checklist
+        ],
+        checklist_fonte=postura.checklist_fonte,
+        checklist_ok=postura.checklist_ok,
+        checklist_pendentes=postura.checklist_pendentes,
         pronto_para_producao=postura.pronto_para_producao,
         ambiente=settings.app_env,
         canal=settings.message_channel,

@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   getSessao,
+  ItemChecklist,
   logout,
   MedidaSeguranca,
   obterPosturaSeguranca,
@@ -26,15 +27,24 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { cn } from "@/components/ui/cn";
-import { AlertIcon, CheckIcon, ShieldIcon } from "@/components/ui/icons";
+import { AlertIcon, CheckIcon, ExternalIcon, ShieldIcon } from "@/components/ui/icons";
 
 const STATUS: Record<
   StatusMedida,
-  { rotulo: string; tone: "success" | "warning" | "danger"; barra: string }
+  { rotulo: string; tone: "success" | "warning" | "danger" | "neutral"; barra: string }
 > = {
   ativa: { rotulo: "Ativa", tone: "success", barra: "bg-success" },
   atencao: { rotulo: "Atenção", tone: "warning", barra: "bg-accent" },
   pendente: { rotulo: "Pendente", tone: "danger", barra: "bg-danger" },
+  nao_aplicavel: { rotulo: "Não se aplica", tone: "neutral", barra: "bg-n-300" },
+};
+
+// No checklist o rótulo "Ativa" não cabe — o item ou está atendido, ou não.
+const STATUS_CHECKLIST: Record<StatusMedida, string> = {
+  ativa: "Atendido",
+  atencao: "Parcial",
+  pendente: "Não atendido",
+  nao_aplicavel: "Não se aplica",
 };
 
 function formatar(data: string): string {
@@ -88,6 +98,9 @@ export default function SegurancaPage() {
     if (!categorias.includes(m.categoria)) categorias.push(m.categoria);
   }
 
+  const alertasMedidas = (postura?.total_atencao ?? 0) + (postura?.total_pendentes ?? 0);
+  const pendencias = alertasMedidas + (postura?.checklist_pendentes ?? 0);
+
   return (
     <AppShell
       title="Segurança"
@@ -139,23 +152,51 @@ export default function SegurancaPage() {
               )}
               <p>
                 {postura.pronto_para_producao ? (
-                  <>Todas as medidas estão ativas neste ambiente.</>
+                  <>Todas as medidas estão ativas e o checklist está atendido neste ambiente.</>
                 ) : (
                   <>
                     <b>
-                      {postura.total_atencao + postura.total_pendentes}{" "}
-                      {postura.total_atencao + postura.total_pendentes === 1
-                        ? "medida exige"
-                        : "medidas exigem"}{" "}
-                      ação
+                      {pendencias}{" "}
+                      {pendencias === 1 ? "ponto exige" : "pontos exigem"} ação
                     </b>{" "}
-                    antes de tratar este ambiente como produção. Itens em <b>Atenção</b> existem no
-                    código mas estão desligados ou com configuração fraca; itens{" "}
-                    <b>Pendentes</b> ainda não foram implementados.
+                    antes de tratar este ambiente como produção — {alertasMedidas} nas medidas e{" "}
+                    {postura.checklist_pendentes} no checklist. <b>Atenção</b> é o que existe no
+                    código mas está desligado ou com configuração fraca; <b>Pendente</b> é o que
+                    ainda não foi implementado.
                   </>
                 )}
               </p>
             </div>
+
+            <section className="flex flex-col gap-2.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
+                <h3 className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-n-400">
+                  Checklist de pré-deploy
+                </h3>
+                <span className="text-[11.5px] text-n-400">
+                  {postura.checklist_ok} de {postura.checklist.length} atendidos ·{" "}
+                  {postura.checklist_pendentes} exigem ação
+                </span>
+              </div>
+              <Card className="p-0">
+                <div className="flex flex-col">
+                  {postura.checklist.map((item) => (
+                    <ItemDoChecklist key={item.numero} item={item} />
+                  ))}
+                </div>
+              </Card>
+              {postura.checklist_fonte && (
+                <a
+                  href={postura.checklist_fonte}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-1 text-[11.5px] font-semibold text-brand-600 hover:underline"
+                >
+                  Conferir contra a lista de origem
+                  <ExternalIcon size={12} />
+                </a>
+              )}
+            </section>
 
             {categorias.map((categoria) => (
               <section key={categoria} className="flex flex-col gap-2.5">
@@ -203,6 +244,38 @@ function Tile({
         {valor}
       </span>
     </Card>
+  );
+}
+
+function ItemDoChecklist({ item }: { item: ItemChecklist }) {
+  const s = STATUS[item.status] ?? STATUS.pendente;
+  return (
+    <div className="border-t border-n-100 px-5 py-3.5 first:border-t-0">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex items-baseline gap-2.5">
+          <span className="font-mono text-[11px] font-bold text-n-400">
+            {String(item.numero).padStart(2, "0")}
+          </span>
+          <div>
+            <h4 className="text-[13px] font-bold text-n-900">{item.titulo}</h4>
+            <p className="mt-0.5 text-[12px] text-n-500">{item.exigencia}</p>
+          </div>
+        </div>
+        <Badge tone={s.tone} dot={item.status !== "nao_aplicavel"}>
+          {STATUS_CHECKLIST[item.status]}
+        </Badge>
+      </div>
+      <p
+        className={cn(
+          "mt-2 text-[12.5px] leading-relaxed",
+          item.status === "ativa" || item.status === "nao_aplicavel"
+            ? "text-n-600"
+            : "text-[#92600a]",
+        )}
+      >
+        {item.situacao}
+      </p>
+    </div>
   );
 }
 
