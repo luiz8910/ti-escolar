@@ -1512,3 +1512,47 @@ export async function inativarResponsaveis(): Promise<ResponsavelInativado[]> {
   });
   return jsonOuErro(resp, "inativar responsáveis");
 }
+
+// --------------------- postura de segurança (super admin) ------------------ //
+export type StatusMedida = "ativa" | "atencao" | "pendente" | "nao_aplicavel";
+
+export interface MedidaSeguranca {
+  chave: string;
+  titulo: string;
+  categoria: string;
+  descricao: string;
+  risco: string;
+  status: StatusMedida;
+  detalhe: string;
+  referencia: string;
+}
+
+export interface ItemChecklist {
+  numero: number;
+  titulo: string;
+  exigencia: string;
+  status: StatusMedida;
+  situacao: string;
+  medidas_relacionadas: string[];
+}
+
+export interface PosturaSeguranca {
+  medidas: MedidaSeguranca[];
+  total_ativas: number;
+  total_atencao: number;
+  total_pendentes: number;
+  checklist: ItemChecklist[];
+  checklist_fonte: string;
+  checklist_ok: number;
+  checklist_pendentes: number;
+  pronto_para_producao: boolean;
+  ambiente: string;
+  canal: string;
+  gerado_em: string;
+}
+
+export async function obterPosturaSeguranca(): Promise<PosturaSeguranca> {
+  const resp = await apiFetch(`${API_URL}/api/admin/seguranca`, { headers: authHeaders() });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar a postura de segurança`);
+  return resp.json();
+}

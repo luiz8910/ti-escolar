@@ -1004,3 +1004,38 @@ class MatriculaStatusEntrada(BaseModel):
     tenant_id: UUID
     status: str
     observacao: str | None = None
+
+
+class MedidaSegurancaSaida(BaseModel):
+    chave: str
+    titulo: str
+    categoria: str
+    descricao: str
+    risco: str
+    status: str  # "ativa" | "atencao" | "pendente"
+    detalhe: str = ""
+    referencia: str = ""
+
+
+class ItemChecklistSaida(BaseModel):
+    numero: int
+    titulo: str
+    exigencia: str
+    status: str  # "ativa" | "atencao" | "pendente" | "nao_aplicavel"
+    situacao: str
+    medidas_relacionadas: list[str] = []
+
+
+class PosturaSegurancaSaida(BaseModel):
+    medidas: list[MedidaSegurancaSaida]
+    total_ativas: int
+    total_atencao: int
+    total_pendentes: int
+    checklist: list[ItemChecklistSaida] = []
+    checklist_fonte: str = ""
+    checklist_ok: int = 0
+    checklist_pendentes: int = 0
+    pronto_para_producao: bool
+    ambiente: str
+    canal: str
+    gerado_em: datetime

@@ -58,9 +58,9 @@ class Tenant:
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     # Número de WhatsApp (E.164) da escola: por onde ela atende/dispara. Roteia o inbound
-    # (o ``To`` recebido) para o tenant certo e é o remetente (``From``) do outbound. Vazio
-    # = usa o número padrão do canal (ex.: número único do Sandbox Twilio). É um número
-    # **dedicado** à plataforma (a escola adquire um novo, deixando o número antigo livre).
+    # para o tenant certo e é o remetente do outbound. Vazio = usa o número padrão do canal.
+    # É um número **dedicado** à plataforma (a escola adquire um novo, deixando o número
+    # antigo da secretaria livre para o atendimento manual).
     whatsapp_numero: str = ""
     # Telefone de contato (E.164) público da escola — o número que a secretaria já usa no
     # dia a dia. É apenas **informativo** (referência de contato): não roteia inbound, não é
@@ -835,10 +835,6 @@ class MessageTemplate:
     corpo: str  # com placeholders {{1}}, {{2}}...
     id: UUID = field(default_factory=_new_id)
     status: StatusTemplate = StatusTemplate.RASCUNHO
-    # Id do template aprovado no provedor (Twilio Content API: ``HX...``). Quando presente,
-    # o canal envia via template aprovado (obrigatório fora da janela de 24h); vazio =
-    # texto livre (Sandbox / dentro da janela de 24h).
-    content_sid: str = ""
 
 
 class StatusEntrega(str, enum.Enum):
@@ -1326,3 +1322,104 @@ DOCUMENTOS_MATRICULA_EXIGIDOS: tuple[str, ...] = (
     "Histórico escolar ou declaração de escolaridade",
     "RG e CPF do responsável legal",
 )
+
+
+# ---------------------------------------------------------------------------
+# Postura de segurança — auditoria interna do super admin
+# ---------------------------------------------------------------------------
+
+
+class StatusMedida(str, enum.Enum):
+    """Situação de uma medida protetiva.
+
+    ``ATENCAO`` é deliberadamente distinto de ``ATIVA``: a medida existe no código, mas a
+    configuração em uso a enfraquece (segredo default, CORS liberado). Uma auditoria que
+    só respondesse "implementado sim/não" esconderia exatamente esse caso.
+    """
+
+    ATIVA = "ativa"
+    ATENCAO = "atencao"
+    PENDENTE = "pendente"
+    # Item que não se aplica ao produto como ele é hoje (ex.: expirar link de redefinição
+    # de senha, quando não existe fluxo de redefinição). Distinto de PENDENTE para não
+    # gerar alarme falso — mas com a nota registrando quando ele passa a valer.
+    NAO_APLICAVEL = "nao_aplicavel"
+
+
+@dataclass(frozen=True)
+class MedidaSeguranca:
+    """Uma medida protetiva e o risco concreto que ela cobre."""
+
+    chave: str
+    titulo: str
+    categoria: str
+    # O que a medida faz.
+    descricao: str
+    # O que aconteceria sem ela — é o que dá sentido à auditoria.
+    risco: str
+    status: StatusMedida
+    # Observação sobre a configuração vigente (por que está ATENCAO/PENDENTE).
+    detalhe: str = ""
+    # Onde a medida vive no código ou na documentação.
+    referencia: str = ""
+
+
+@dataclass(frozen=True)
+class ItemChecklist:
+    """Um item do checklist de pré-deploy, auditado contra o código.
+
+    Diferente de ``MedidaSeguranca`` (que descreve o que a plataforma faz), o item de
+    checklist descreve o que uma **fonte externa exige** — por isso carrega o ``numero``
+    original, para conferência 1:1 contra a lista de origem.
+    """
+
+    numero: int
+    titulo: str
+    # O que a fonte exige.
+    exigencia: str
+    status: StatusMedida
+    # O que o código faz hoje sobre isso, incluindo o que falta.
+    situacao: str
+    # Chaves de ``MedidaSeguranca`` que sustentam este item (quando há).
+    medidas_relacionadas: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PosturaSeguranca:
+    """Retrato das medidas protetivas da plataforma num dado momento."""
+
+    medidas: list[MedidaSeguranca] = field(default_factory=list)
+    # Checklist de pré-deploy auditado contra o código (fonte externa).
+    checklist: list[ItemChecklist] = field(default_factory=list)
+    # De onde veio o checklist — mostrado no painel para permitir a conferência.
+    checklist_fonte: str = ""
+
+    @property
+    def total_ativas(self) -> int:
+        return sum(1 for m in self.medidas if m.status is StatusMedida.ATIVA)
+
+    @property
+    def total_atencao(self) -> int:
+        return sum(1 for m in self.medidas if m.status is StatusMedida.ATENCAO)
+
+    @property
+    def total_pendentes(self) -> int:
+        return sum(1 for m in self.medidas if m.status is StatusMedida.PENDENTE)
+
+    @property
+    def checklist_ok(self) -> int:
+        return sum(1 for i in self.checklist if i.status is StatusMedida.ATIVA)
+
+    @property
+    def checklist_pendentes(self) -> int:
+        """Itens que exigem ação — ``NAO_APLICAVEL`` não conta como dívida."""
+        return sum(
+            1
+            for i in self.checklist
+            if i.status in (StatusMedida.ATENCAO, StatusMedida.PENDENTE)
+        )
+
+    @property
+    def pronto_para_producao(self) -> bool:
+        """Só quando nenhuma medida e nenhum item de checklist exige ação."""
+        return not self.total_atencao and not self.total_pendentes and not self.checklist_pendentes

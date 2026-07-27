@@ -143,3 +143,18 @@ export const SparkIcon = ({ size = 18, ...rest }: IconProps) => (
     <path d="M12 3l2 5 5 1-3.5 3.5L16 18l-4-2.5L8 18l.5-5.5L5 9l5-1 2-5Z" />
   </svg>
 );
+
+export const ShieldIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 3l7 3v5.5c0 4.2-2.9 7.6-7 8.5-4.1-.9-7-4.3-7-8.5V6l7-3Z" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+);
+
+export const AlertIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 4 2.7 20h18.6L12 4Z" />
+    <path d="M12 10v4" />
+    <path d="M12 17.2v.1" />
+  </svg>
+);

@@ -149,10 +149,6 @@ class TemplateORM(Base):
     idioma: Mapped[str] = mapped_column(String(10))
     corpo: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20))
-    # Id do template aprovado no provedor (Twilio Content API: HX...); vazio = texto livre.
-    content_sid: Mapped[str] = mapped_column(
-        String(64), default="", server_default=""
-    )
 
 
 class BroadcastORM(Base):

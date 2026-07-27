@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     jwt_secret: str = "troque-este-segredo-jwt"
     jwt_expira_minutos: int = 480  # 8 horas
 
+    # Chat demo (simulador do WhatsApp, público por desenho — sem autenticação).
+    # Ele grava conversa real e consome LLM do tenant informado no corpo, então fica
+    # **restrito ao tenant de vitrine**: apontá-lo para uma escola real seria poluir o
+    # histórico dela e queimar a cota de LLM de graça.
+    chat_demo_habilitado: bool = True
+    chat_demo_tenant_id: str = "00000000-0000-0000-0000-000000000001"
+
     # Inbound / UX das mensagens dos pais (§G1)
     # Limite de caracteres da mensagem do responsável; acima disso o bot pede objetividade
     # sem acionar a LLM. 0 desativa o limite.
@@ -73,24 +80,20 @@ class Settings(BaseSettings):
     email_from: str = "no-reply@tiescolar.test"
 
     # Meta WhatsApp Cloud API
+    # Número remetente PADRÃO (fallback): usado quando a escola não tem o seu próprio
+    # phone_number_id cadastrado. Em produção multi-tenant cada escola tem o seu — ver §9e.
     meta_phone_number_id: str | None = None
     meta_waba_id: str | None = None
+    # Token de USUÁRIO DO SISTEMA (o token da tela de Configuração da API expira em 24h).
     meta_access_token: str | None = None
+    # Token do handshake GET do webhook (hub.verify_token). TROQUE em produção.
     meta_webhook_verify_token: str = "changeme"
     meta_daily_tier_limit: int = 1000
-
-    # Twilio WhatsApp (alternativa à Meta; Sandbox funciona sem verificação de empresa)
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    # Número remetente do WhatsApp no Twilio (ex.: "whatsapp:+14155238886" — o Sandbox).
-    twilio_whatsapp_from: str | None = None
-    # URL pública (opcional) para receber callbacks de status de entrega dos envios.
-    twilio_status_callback_url: str | None = None
-    # Tenant que recebe as mensagens inbound do número único do Twilio (Sandbox tem 1 número).
-    # Se vazio, cai no tenant demo (00000000-0000-0000-0000-000000000001).
-    twilio_default_tenant_id: str | None = None
-    # Valida a assinatura X-Twilio-Signature dos webhooks (recomendado em produção).
-    twilio_validate_signature: bool = False
+    # App secret usado para validar a assinatura X-Hub-Signature-256 dos webhooks.
+    meta_app_secret: str | None = None
+    # Valida a assinatura dos webhooks da Meta. OBRIGATÓRIO em produção: sem isso o
+    # endpoint aceita qualquer POST, permitindo forjar status de entrega e mensagens.
+    meta_validate_signature: bool = False
 
     @property
     def cors_origins(self) -> list[str]:

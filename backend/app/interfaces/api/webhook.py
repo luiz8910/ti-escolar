@@ -4,11 +4,18 @@
 - ``POST``: recebe eventos. Os **status de entrega** (sent/delivered/read/failed) são
   aplicados aos destinatários dos broadcasts (base da confirmação de recebimento /
   não-entrega reativa). O roteamento de **mensagens inbound** reais para
-  ``ReceberMensagemRecebida`` segue no roadmap.
+  ``ReceberMensagemRecebida`` segue no roadmap (§9e.1).
+
+**Autenticidade:** o endpoint é público, então todo ``POST`` é validado pelo
+``X-Hub-Signature-256`` (HMAC-SHA256 do corpo bruto com o app secret) quando
+``META_VALIDATE_SIGNATURE`` está ligado. Sem isso, qualquer um que descubra a URL pode
+forjar status de entrega — mascarando como ``delivered`` um aviso que a escola precisa
+saber que não chegou (§9b).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -16,6 +23,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from app.application.use_cases import RegistrarStatusEntrega
 from app.config import get_settings
 from app.infrastructure.db.repositories import SqlBroadcastRepository
+from app.infrastructure.security import validar_assinatura_meta
 from app.interfaces.deps import get_broadcast_repo
 
 logger = logging.getLogger("webhook.meta")
@@ -33,12 +41,32 @@ async def verificar(request: Request) -> Response:
     return Response(status_code=status.HTTP_403_FORBIDDEN)
 
 
-@router.post("")
+@router.post("", response_model=None)
 async def receber_evento(
     request: Request,
     broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
-) -> dict:
-    payload = await request.json()
+) -> Response | dict:
+    settings = get_settings()
+    # Lê os BYTES BRUTOS: o HMAC é calculado sobre eles, antes de qualquer parse. Fazer
+    # json.loads e reserializar mudaria os bytes e invalidaria a assinatura.
+    corpo = await request.body()
+
+    if settings.meta_validate_signature and not validar_assinatura_meta(
+        corpo=corpo,
+        cabecalho=request.headers.get("X-Hub-Signature-256"),
+        app_secret=settings.meta_app_secret or "",
+    ):
+        # 403 seco: não revela se faltou o cabeçalho, se o segredo está ausente ou se o
+        # HMAC não bateu — a diferença ajudaria quem está sondando o endpoint.
+        logger.warning("Webhook Meta recusado: assinatura X-Hub-Signature-256 inválida")
+        return Response(status_code=status.HTTP_403_FORBIDDEN)
+
+    try:
+        payload = json.loads(corpo)
+    except json.JSONDecodeError:
+        logger.warning("Webhook Meta recusado: corpo não é JSON válido")
+        return Response(status_code=status.HTTP_400_BAD_REQUEST)
+
     # Aplica os status de entrega aos destinatários (sent/delivered/read/failed).
     atualizados = await RegistrarStatusEntrega(broadcasts=broadcasts).executar(payload=payload)
     logger.info(

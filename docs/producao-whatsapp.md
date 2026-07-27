@@ -1,221 +1,204 @@
-# Produção — WhatsApp (Twilio) — Checklist de go-live
+# Produção — WhatsApp (Meta Cloud API) — Checklist de go-live
 
-> Guia operacional para tirar o TI-Escolar do **Sandbox** e colocar o WhatsApp em
-> **produção real** com números próprios das escolas, via **Twilio como BSP**.
-> WhatsApp é o **único canal** do produto — não há fallback (SMS/e-mail) previsto.
-
----
-
-## 0. O que a Meta exige (o que é inevitável × o que dá para adiar)
-
-WhatsApp é da Meta; **qualquer** caminho (Twilio, Meta Cloud API, 360dialog…) passa por ela.
-São **três coisas distintas** — não confundir "aprovação" com uma coisa só:
-
-| Etapa | Precisa? | Trava o lançamento? |
-|---|---|---|
-| **Registrar o número como WhatsApp Sender** (cria/usa um WABA) | Sempre | Não — é o *self sign-up*, ~minutos |
-| **Aprovação de _templates_** (cada modelo de mensagem) | Sim, p/ enviar fora da janela de 24h | Rápido (minutos a horas) — **não** é "aprovar a empresa" |
-| **Business Verification** (Meta verifica o CNPJ/empresa) | Só p/ **escalar** volume e nº de números | **Não** — vai ao ar sem ela, com limites |
-
-**Resumo:** dá para ir para produção **sem esperar a verificação do negócio**, usando o
-*self sign-up* do Twilio, aceitando os limites de negócio **não verificado** (ver §6).
-O que **não** dá para evitar: registrar o número e ter templates aprovados.
+> Guia operacional para colocar o TI-Escolar em **produção real** na **Meta Cloud API direta**,
+> com um número dedicado por escola. WhatsApp é o **único canal** do produto — não há fallback
+> (SMS/e-mail) previsto.
+>
+> **Histórico:** até jul/2026 este documento descrevia o caminho via **Twilio como BSP**, que
+> existia por um único motivo — o Sandbox operava **sem** a verificação de empresa da Meta. Com a
+> **verificação aprovada em 27/jul/2026**, o intermediário só acrescentaria margem sobre o preço
+> da Meta, e a Twilio foi removida do produto. Ver CLAUDE.md §9e.
 
 ---
 
-## 1. Pré-requisitos (antes de começar)
+## 0. Onde estamos
 
-- [ ] **Conta Twilio** paga (upgrade da conta trial) com método de pagamento ativo.
-- [ ] **Meta Business Account** (Facebook Business Manager — `business.facebook.com`) da
-      empresa que opera a plataforma. Anote o **Business Manager ID**.
-- [ ] Uma **conta pessoal do Facebook** com papel de **admin** no Business Manager (o
-      *self sign-up* abre um pop-up que exige login no Facebook).
-- [ ] **Um número de telefone por escola** que você controle e que:
-  - **não** esteja ativo no **WhatsApp/WhatsApp Business** (app do celular). Se estiver,
-    **apague a conta do WhatsApp** naquele número antes;
-  - consiga **receber o código de verificação** por **SMS ou ligação** (pode ser fixo);
-  - não precisa ser um número Twilio — pode ser um número da escola.
-- [ ] **Domínio público com HTTPS** para o backend (o webhook do Twilio precisa alcançá-lo).
-      No deploy atual do Render isso já existe.
-- [ ] **Nome de exibição (display name)** por escola que **cumpra as regras da Meta**
-      (ex.: "Colégio São José") — nada de termos genéricos/enganosos.
+| Etapa | Situação |
+|---|---|
+| **Verificação da empresa** (Meta cruza CNPJ, site e dados do portfólio) | ✅ **Aprovada** (27/jul/2026) — portfólio TiEscolar, business_id `940840332344260` |
+| **WABA de produção** com número real | ⬜ Pendente — só existe a *Test WhatsApp Business Account* |
+| **Forma de pagamento** na WABA de produção | ⬜ Pendente |
+| **Templates aprovados** | ⬜ Pendente |
+| **Inbound do webhook** (chatbot atendendo) | ⬜ **Não implementado** — ver CLAUDE.md §9e.1 |
+| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada — falta **ligar** em produção |
+
+> ⚠️ **O produto ainda não atende pela Meta.** O webhook trata apenas **status de entrega**;
+> mensagens recebidas são descartadas. Broadcasts funcionam; o chatbot, não. Isso é
+> pré-requisito de qualquer go-live com escola real.
 
 ---
 
-## 2. Self sign-up (Embedded Signup) — passo a passo
+## 1. Pré-requisitos
 
-O *self sign-up* é o fluxo do Twilio que registra um número WhatsApp **sem abrir ticket**:
-o Twilio entra como **Tech Provider/BSP** e o número é ligado ao **seu** Meta Business.
-
-1. **Twilio Console → Messaging → Senders → WhatsApp senders**
-   (os rótulos do console mudam de tempos em tempos; o âncora é *WhatsApp senders*).
-2. Clique em **Create new sender** / **Connect a WhatsApp number**.
-3. No pop-up **"Continue with Facebook"**, faça login com a conta pessoal que é **admin**
-   do Business Manager.
-4. **Selecione (ou crie) o Meta Business Account** e o **WhatsApp Business Account (WABA)**.
-   - Dica: use **um WABA** para a plataforma e vá **adicionando os números das escolas**
-     nele (respeitando o limite de números — ver §6).
-5. **Adicione o número de telefone** da escola e informe o **display name**.
-6. **Verifique o número** com o **código OTP** (SMS ou ligação) que a Meta envia.
-7. Ao concluir, o número aparece como **WhatsApp Sender** no Twilio, com um `From`
-   no formato `whatsapp:+55...`.
-8. A Meta revisa o **display name** (pode levar de minutos a ~1 dia). Enviar já funciona;
-   o nome "pendente" não bloqueia o funcionamento técnico.
-
-> Repita os passos 2–7 **para cada escola/número**. Cada número vira um Sender independente
-> e recebe seu próprio webhook (§4).
+- [ ] **Meta Business Account** verificada (feito) e uma **conta pessoal do Facebook** com papel
+      de **admin** no portfólio.
+- [ ] **App** em `developers.facebook.com` com o produto **WhatsApp** adicionado
+      (app id `314094235296120`).
+- [ ] **Um chip novo por escola**, que:
+  - **não** esteja ativo no **WhatsApp/WhatsApp Business**. Se estiver, apague a conta naquele
+    número antes — isso **destrói o histórico** dele;
+  - consiga receber o código de verificação por **SMS ou ligação** (fixo serve, a Meta dita o
+    código por voz);
+  - depois de registrado na Cloud API, **não volta** a funcionar no app comum.
+- [ ] **Domínio público com HTTPS** para o backend (o webhook precisa alcançá-lo). O deploy no
+      Render já atende.
+- [ ] **Nome de exibição** por escola que cumpra as regras da Meta (ex.: "EM Rosa Cury") — nada
+      genérico ou enganoso. **Passa por revisão assíncrona: dispare cedo, é o caminho crítico.**
 
 ---
 
-## 3. Templates (mensagens fora da janela de 24h)
+## 2. Criar a WABA de produção e registrar o número
 
-Todo disparo **iniciado pela escola** (broadcast/aviso) fora da janela de 24h exige um
-**template aprovado**. Dentro da janela de 24h (resposta a uma mensagem do pai) pode ser
-texto livre.
+O modelo é **uma WABA nossa com o número de cada escola dentro dela** (até 20 números por WABA;
+ao esgotar, cria-se outra sob o mesmo portfólio). Qualidade e tier de envio são **por número**,
+então uma escola não derruba o limite das outras.
 
-- [ ] Criar os templates no **Twilio Content Template Builder** (Content API) — cada um gera
-      um **`ContentSid`** (ex.: `HXxxxxxxxx`).
-- [ ] Escolher a **categoria** certa:
-  - **utility** → avisos, lembretes, boletim, reunião (melhor entrega/preço, aprovação fácil) —
-    **use isto para a maioria dos casos da escola**;
-  - **marketing** → divulgação/captação (mais restrito);
-  - **authentication** → OTP (não é o caso aqui).
-- [ ] Definir as **variáveis** do template (`{{1}}`, `{{2}}`…) e um **exemplo** de preenchimento.
-- [ ] Submeter e aguardar **aprovação da Meta** (normalmente minutos a horas).
-- [ ] Escrever em **pt-BR, tom institucional** (padrão do produto).
+1. `developers.facebook.com` → app **Ti-Escolar** → **WhatsApp → Configuração da API**.
+2. No seletor "De", **Adicionar número de telefone**. É esse fluxo que cria a WABA real ao lado
+   da de teste.
+3. Preencher **nome de exibição**, categoria e descrição do negócio.
+4. **Verificar o número** por SMS ou ligação. Nós compramos o chip, colocamos num aparelho nosso
+   e lemos o código — a escola não participa (CLAUDE.md §9e.3).
+5. Anotar o **`phone_number_id`** do número: é ele que vai para o cadastro da escola, não o E.164.
 
 ---
 
-## 4. Configuração no TI-Escolar
+## 3. Forma de pagamento
 
-### 4.1 Variáveis de ambiente (produção)
+Adicionar cartão **na WABA de produção** (a de teste não gera cobrança e não precisa).
 
-```env
-MESSAGE_CHANNEL=twilio
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-# Número PADRÃO (fallback quando a escola não tem número próprio cadastrado):
-TWILIO_WHATSAPP_FROM=whatsapp:+55...
-# Callback público de status de entrega (mesmo endpoint do webhook):
-TWILIO_STATUS_CALLBACK_URL=https://SEU_DOMINIO/api/webhook/twilio
-# Tenant de fallback do inbound quando o "To" não casa com nenhuma escola:
-TWILIO_DEFAULT_TENANT_ID=<uuid-da-escola-fallback>
-# LIGAR em produção (valida X-Twilio-Signature nos webhooks):
-TWILIO_VALIDATE_SIGNATURE=true
+- Cobrança em **USD**: no fluxo atual da Meta o Real não é ofertado, então a fatura vem em dólar
+  e o cartão brasileiro soma IOF de compra internacional + spread do emissor. Considere isso na
+  precificação do plano por escola.
+- Conferir **razão social, endereço e fuso** (`America/Sao_Paulo`) nas informações comerciais —
+  devem bater com o Cartão CNPJ usado na verificação.
+
+---
+
+## 4. Token permanente (usuário do sistema)
+
+O token exibido na tela de Configuração da API **expira em 24h** e não serve para produção.
+
+1. Business Manager → **Usuários do sistema** → criar um system user com papel **admin**.
+2. Atribuir a ele o **app** e a **WABA de produção**, com controle total.
+3. Gerar token com as permissões **`whatsapp_business_messaging`** e
+   **`whatsapp_business_management`**.
+4. Guardar na hora — o valor não é exibido de novo. Vai para `META_ACCESS_TOKEN` no Render.
+
+---
+
+## 5. Webhook
+
+Em **WhatsApp → Configuração → Webhooks**:
+
+- **Callback URL**: `https://<backend-no-render>/api/webhook/meta`
+- **Verify token**: o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN`
+- **Assinar o campo `messages`** — traz mensagens recebidas *e* status de entrega no mesmo
+  envelope.
+
+O `GET` de verificação já está implementado e responde ao `hub.challenge`.
+
+**Segurança (obrigatório):** copiar o **app secret** (Meta for Developers → Configurações →
+Básico) para `META_APP_SECRET` e ligar `META_VALIDATE_SIGNATURE=true`. Sem isso o endpoint
+aceita qualquer POST e um terceiro pode forjar status de entrega — mascarando como `delivered`
+um aviso que a escola precisa saber que **não** chegou. Ver CLAUDE.md §9e.2.
+
+---
+
+## 6. Configuração no TI-Escolar
+
+### 6.1 Variáveis de ambiente (produção)
+
+```bash
+MESSAGE_CHANNEL=meta
+
+META_PHONE_NUMBER_ID=          # fallback; cada escola tem o seu
+META_WABA_ID=
+META_ACCESS_TOKEN=             # token do usuário do sistema (§4)
+META_WEBHOOK_VERIFY_TOKEN=     # valor forte, NÃO "changeme"
+META_DAILY_TIER_LIMIT=1000     # tier inicial de negócio verificado
+
+META_APP_SECRET=               # app secret (§5)
+META_VALIDATE_SIGNATURE=true   # OBRIGATÓRIO em produção
+
+JWT_SECRET=                    # valor forte, NÃO o do .env.example
+APP_ENV=production
 ```
 
-- [ ] Preencher todas as variáveis acima no ambiente de produção (Render).
-- [ ] **`TWILIO_VALIDATE_SIGNATURE=true`** em produção (o webhook rejeita chamadas sem
-      assinatura HMAC válida).
+Confira o resultado em **`/admin/seguranca`** no painel (super admin): a página lê a configuração
+em execução e sinaliza segredo default, assinatura desligada e CORS liberado (CLAUDE.md §14).
 
-### 4.2 Número por escola (multi-tenant)
+### 6.2 Número por escola (multi-tenant)
 
-- [ ] No painel do super admin (**Escolas → cadastrar/editar**), preencher o
-      **WhatsApp (E.164)** de cada escola com o número registrado no Sender (§2), ex.:
-      `+5511999998888`.
-  - O sistema **normaliza** para E.164 e **impede número duplicado** entre escolas.
-  - **Vazio** = a escola usa o `TWILIO_WHATSAPP_FROM` padrão.
-- Efeito automático (já implementado):
-  - **Inbound:** o webhook roteia pelo número de destino (`To`) → a escola dona daquele número
-    (`Tenant.whatsapp_numero`); sem correspondência, cai no `TWILIO_DEFAULT_TENANT_ID`.
-  - **Outbound:** o broadcast sai do **número da própria escola** (`From`).
+Cada escola tem o seu número em `Tenant.whatsapp_numero` (E.164, único entre escolas).
 
-### 4.3 Webhook de cada Sender no Twilio
-
-Para **cada** WhatsApp Sender, no Twilio Console (Sender → Configuration):
-
-- [ ] **Incoming message** → `https://SEU_DOMINIO/api/webhook/twilio` (HTTP **POST**).
-- [ ] **Status callback** → `https://SEU_DOMINIO/api/webhook/twilio` (HTTP **POST**).
-
-O endpoint já trata **mensagens recebidas** (responde em TwiML) **e status de entrega**
-(`sent`/`delivered`/`read`/`failed`, casando pelo `MessageSid`).
+> ⚠️ **Falta o `Tenant.meta_phone_number_id`**: a API da Meta envia por `phone_number_id`, não
+> por E.164, e o `MetaMessageChannel` ainda fixa um único id vindo da env. Enquanto isso não for
+> implementado (CLAUDE.md §9e.1), **todo envio sai pelo mesmo número** — o multi-tenant real de
+> outbound não funciona.
 
 ---
 
-## 5. Envio por template aprovado (`ContentSid`) — ✅ implementado
+## 7. Templates (mensagens fora da janela de 24h)
 
-A Meta **rejeita texto livre** em mensagens **iniciadas pela escola fora da janela de 24h**;
-é obrigatório usar **template aprovado** via **Content API** do Twilio.
+Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Manager**:
 
-**Já feito no código:** `MessageTemplate` carrega `content_sid` (migration
-`0010_template_content_sid`) e `TwilioMessageChannel.enviar_template`:
-- **com `content_sid`** → envia via `ContentSid` + `ContentVariables` ({{1}},{{2}}… viram
-  `{"1":…,"2":…}`) — caminho de **produção**;
-- **sem `content_sid`** → renderiza o corpo como **texto livre** — Sandbox / dentro das 24h.
-
-**O que ainda falta (dado, não lógica de envio):**
-- [ ] **Cadastrar o `content_sid`** de cada template aprovado no registro do `MessageTemplate`
-      do tenant. Hoje não há tela de administração de templates (roadmap), então isso é feito
-      via **seed/atualização no banco** — ou pela futura tela de templates. Sem o `content_sid`
-      preenchido, o disparo cai em texto livre (que a Meta bloqueia fora das 24h).
-
-> Estado atual: **inbound e respostas dentro de 24h funcionam**; para broadcast em produção
-> basta **preencher o `content_sid`** do template aprovado — a lógica de envio já está pronta.
+- categoria **utility** para avisos escolares (marketing é mais caro e tem opt-out mais
+  agressivo);
+- o **nome** do template no WhatsApp Manager precisa bater com `MessageTemplate.nome` no banco,
+  e o idioma com `MessageTemplate.idioma` — é assim que `enviar_template` o identifica;
+- parâmetros posicionais (`{{1}}`, `{{2}}`…) mapeiam para a lista `parametros` do caso de uso.
 
 ---
 
-## 6. Limites, tiers e Business Verification
+## 8. Limites, tiers e qualidade
 
-- **Negócio NÃO verificado** (dá para ir ao ar assim):
-  - ~**250** conversas iniciadas pela escola / 24h por número;
-  - até **2 números** de telefone no WABA.
-- **Negócio verificado** (Business Verification na Meta):
-  - libera os tiers **1K → 10K → 100K → ilimitado** de destinatários únicos/24h, escalando
-    conforme a **qualidade** do número;
-  - permite **mais números** por WABA (necessário se você quer **um número por escola** em
-    escala — com 2 números só dá para poucas escolas).
-- [ ] Como o produto é **um número por escola**, planejar a **Business Verification** cedo
-      (é o que destrava ter muitos Senders).
-- [ ] Ajustar `META_DAILY_TIER_LIMIT` (cota diária usada por `MessageQuota`/`QuotaPolicy`)
-      ao tier real do número.
-- [ ] Cuidar da **qualidade do número** (evitar spam/altas taxas de bloqueio) — a Meta rebaixa
-      o tier automaticamente se a qualidade cai.
+- O limite é de **destinatários únicos por 24h**, **por número**: 1K → 10K → 100K → ilimitado.
+- Empresa **verificada** (nosso caso) começa em **1.000/24h**; a escala é automática conforme a
+  **qualidade** do número.
+- Qualidade cai com bloqueios e denúncias dos pais — por isso opt-in, conteúdo útil e frequência
+  moderada são requisito operacional, não boas maneiras.
+- `META_DAILY_TIER_LIMIT` precisa refletir o tier real; a cota é aplicada nos casos de uso
+  (`QuotaPolicy`), que enfileiram ou recusam ao atingir o limite.
 
 ---
 
-## 7. Teste de fumaça pós go-live (por escola)
+## 9. Teste de fumaça pós go-live (por escola)
 
-- [ ] Enviar uma mensagem **do celular de um pai** para o número da escola → deve chegar uma
-      **resposta do bot** e a conversa aparecer no **Histórico → Conversas** daquela escola
-      (roteamento por `To` correto).
-- [ ] Disparar um **broadcast** de teste (template aprovado) para 1–2 contatos → conferir
-      status `sent`/`delivered`/`read` no **Histórico → Mensagens em massa**.
-- [ ] Confirmar que o broadcast saiu **com o número da própria escola** como remetente.
-- [ ] Forçar uma **não-entrega** (número inválido) e conferir o relatório de não-entregues.
-- [ ] Validar que uma chamada ao webhook **sem assinatura** é **rejeitada** (403).
+1. `GET /health` responde `{"canal": "meta"}`.
+2. Enviar um **broadcast de teste** para um número próprio → chega pelo número **da escola**.
+3. Conferir em `/admin/historico/disparos` o status evoluindo para `delivered`/`read`.
+4. Forçar um webhook com assinatura inválida → deve responder **403** (valida §5).
+5. Responder pelo WhatsApp → **hoje a mensagem é descartada** (inbound não implementado). Quando
+   §9e.1 estiver pronto, a resposta do bot deve chegar e aparecer em
+   `/admin/historico/conversas`.
 
 ---
 
-## 8. Checklist consolidado (resumo)
+## 10. Checklist consolidado
 
-**Operacional (Twilio/Meta)**
-- [ ] Conta Twilio paga + Meta Business Account + admin no Facebook.
-- [ ] Um número por escola (sem WhatsApp app ativo) + OTP.
-- [ ] Self sign-up de cada número (Sender criado).
-- [ ] Display name aprovado por escola.
-- [ ] Templates (utility) criados e aprovados, com `ContentSid`.
-- [ ] (Planejar) Business Verification para escalar números/volume.
-
-**Configuração (TI-Escolar)**
-- [ ] Env de produção preenchida (`MESSAGE_CHANNEL=twilio`, credenciais, callbacks).
-- [ ] `TWILIO_VALIDATE_SIGNATURE=true`.
-- [ ] `whatsapp_numero` cadastrado em cada escola.
-- [ ] Webhook (incoming + status) apontado para o domínio em cada Sender.
-
-**Código / dados (bloqueante para broadcast)**
-- [x] Envio por `ContentSid` (Content API) no `TwilioMessageChannel` + campo `MessageTemplate.content_sid`.
-- [ ] `content_sid` do template aprovado **preenchido** no tenant (seed/DB ou futura tela de templates).
-
-**Validação**
-- [ ] Teste de fumaça de inbound e outbound por escola (§7).
+- [x] Verificação da empresa aprovada
+- [ ] WABA de produção criada
+- [ ] Número da escola registrado e verificado (chip nosso)
+- [ ] Nome de exibição aprovado
+- [ ] Forma de pagamento na WABA de produção
+- [ ] Token de usuário do sistema gerado e no Render
+- [ ] Webhook configurado e campo `messages` assinado
+- [ ] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true`
+- [ ] `JWT_SECRET` e `META_WEBHOOK_VERIFY_TOKEN` trocados
+- [ ] `/admin/seguranca` sem itens em Atenção
+- [ ] Templates aprovados com nome/idioma batendo com o banco
+- [ ] **`Tenant.meta_phone_number_id` implementado** (multi-tenant de outbound)
+- [ ] **Inbound do webhook implementado** (chatbot atendendo)
+- [ ] Teste de fumaça por escola
 
 ---
 
 ## Referências
 
-- Twilio — WhatsApp senders / self sign-up (Embedded Signup) e Content Template Builder.
-- Meta — WhatsApp Business Platform: business verification, messaging limits (tiers), políticas
-  de template e de nome de exibição.
-
-> Nota: os rótulos exatos do Twilio Console e os números de limite podem mudar; confirme
-> sempre na documentação oficial no momento do go-live.
+- Cloud API — Introdução: <https://developers.facebook.com/docs/whatsapp/cloud-api>
+- Webhooks e assinatura de payload:
+  <https://developers.facebook.com/docs/graph-api/webhooks/getting-started>
+- Limites de mensagens e qualidade:
+  <https://developers.facebook.com/docs/whatsapp/messaging-limits>
+- Templates: <https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates>
