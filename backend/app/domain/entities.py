@@ -62,6 +62,14 @@ class Tenant:
     # É um número **dedicado** à plataforma (a escola adquire um novo, deixando o número
     # antigo da secretaria livre para o atendimento manual).
     whatsapp_numero: str = ""
+    # Identificador do número da escola **na Meta** (``phone_number_id``): é o que a Graph
+    # API exige na URL de envio (``/{phone_number_id}/messages``) e o que o webhook devolve
+    # em ``value.metadata.phone_number_id`` para rotear o inbound. Não confundir com
+    # ``whatsapp_numero``, que é o mesmo número em E.164 legível — os dois coexistem, o
+    # E.164 para exibição e o id para falar com a API. Único entre escolas (dois tenants com
+    # o mesmo id tornariam o roteamento do inbound ambíguo). Vazio = usa o número padrão da
+    # env (``META_PHONE_NUMBER_ID``).
+    meta_phone_number_id: str = ""
     # Telefone de contato (E.164) público da escola — o número que a secretaria já usa no
     # dia a dia. É apenas **informativo** (referência de contato): não roteia inbound, não é
     # remetente do outbound e não exige unicidade entre escolas. Ver ``whatsapp_numero`` para
@@ -79,6 +87,17 @@ class Tenant:
     # Cancelamento (churn): quando a escola deixou a plataforma e por quê.
     cancelado_em: datetime | None = None
     motivo_cancelamento: str = ""
+
+    @property
+    def remetente_canal(self) -> str:
+        """Identificador do número da escola **para o canal de mensagens** (o ``remetente``).
+
+        Na Meta Cloud API a origem de um envio é o ``phone_number_id`` — a URL
+        ``/{phone_number_id}/messages`` não aceita o E.164. Por isso o id da Meta tem
+        precedência; o ``whatsapp_numero`` fica como fallback para canais que roteiam pelo
+        número (demo) e para escolas ainda sem id cadastrado. Vazio = número padrão do canal.
+        """
+        return self.meta_phone_number_id.strip() or self.whatsapp_numero.strip()
 
     @property
     def bloqueado(self) -> bool:

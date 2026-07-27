@@ -16,6 +16,7 @@ from app.application.tenant_use_cases import (
     ListarConversasDaEscola,
     ObterConversaDaEscola,
     RemoverEscola,
+    normalizar_meta_phone_number_id,
     normalizar_telefone_contato,
     normalizar_whatsapp,
     slugify,
@@ -70,6 +71,14 @@ class FakeTenantRepo:
         if not numero:
             return None
         return next((t for t in self.tenants.values() if t.whatsapp_numero == numero), None)
+
+    async def por_meta_phone_number_id(self, phone_number_id):
+        if not phone_number_id:
+            return None
+        return next(
+            (t for t in self.tenants.values() if t.meta_phone_number_id == phone_number_id),
+            None,
+        )
 
     async def listar(self):
         return list(self.tenants.values())
@@ -230,6 +239,92 @@ async def test_atualizar_mantem_proprio_whatsapp():
         telefone_contato=_CONTATO,
     )
     assert atualizada.whatsapp_numero == "+14155238886"
+
+
+# --------------------------------------------------------------------------- #
+# phone_number_id da Meta por escola (roteamento do inbound — §9e.1)
+# --------------------------------------------------------------------------- #
+def test_normalizar_meta_phone_number_id():
+    assert normalizar_meta_phone_number_id("") == ""
+    assert normalizar_meta_phone_number_id("  123456789012345 ") == "123456789012345"
+    # É um id numérico da Meta, não o telefone: um E.164 aqui montaria uma URL inválida.
+    with pytest.raises(ValueError, match="apenas dígitos"):
+        normalizar_meta_phone_number_id("+5511988887777")
+    with pytest.raises(ValueError, match="tamanho"):
+        normalizar_meta_phone_number_id("12")
+
+
+async def test_cria_escola_com_meta_phone_number_id():
+    repo = FakeTenantRepo()
+    escola = await CriarEscola(tenants=repo).executar(
+        criador=_super(),
+        nome="Colégio A",
+        whatsapp_numero="+5511988887777",
+        meta_phone_number_id=" 123456789012345 ",
+        telefone_contato=_CONTATO,
+    )
+    assert escola.meta_phone_number_id == "123456789012345"
+    assert await repo.por_meta_phone_number_id("123456789012345") is escola
+
+
+async def test_meta_phone_number_id_duplicado_entre_escolas_falha():
+    """Duplicado, o inbound não teria como saber de qual escola é a mensagem."""
+    repo = FakeTenantRepo()
+    await CriarEscola(tenants=repo).executar(
+        criador=_super(),
+        nome="Escola 1",
+        meta_phone_number_id="123456789012345",
+        telefone_contato=_CONTATO,
+    )
+    with pytest.raises(ValueError, match="já está vinculado a outra escola"):
+        await CriarEscola(tenants=repo).executar(
+            criador=_super(),
+            nome="Escola 2",
+            meta_phone_number_id="123456789012345",
+            telefone_contato=_CONTATO,
+        )
+
+
+async def test_varias_escolas_sem_meta_phone_number_id_convivem():
+    """O id vazio é o default de quem ainda não registrou o número — não pode conflitar."""
+    repo = FakeTenantRepo()
+    for nome in ("Escola A", "Escola B"):
+        await CriarEscola(tenants=repo).executar(
+            criador=_super(), nome=nome, telefone_contato=_CONTATO
+        )
+    assert len(repo.tenants) == 2
+    assert await repo.por_meta_phone_number_id("") is None
+
+
+async def test_atualizar_mantem_proprio_meta_phone_number_id():
+    repo = FakeTenantRepo()
+    escola = await CriarEscola(tenants=repo).executar(
+        criador=_super(),
+        nome="Escola",
+        meta_phone_number_id="123456789012345",
+        telefone_contato=_CONTATO,
+    )
+    atualizada = await AtualizarEscola(tenants=repo).executar(
+        criador=_super(),
+        tenant_id=escola.id,
+        nome="Escola Renomeada",
+        meta_phone_number_id="123456789012345",
+        telefone_contato=_CONTATO,
+    )
+    assert atualizada.meta_phone_number_id == "123456789012345"
+
+
+def test_remetente_canal_prefere_o_id_da_meta():
+    """A Graph API exige o phone_number_id na URL; o E.164 é só o fallback legível."""
+    com_id = Tenant(
+        nome="A", slug="a", whatsapp_numero="+5511988887777", meta_phone_number_id="999888777"
+    )
+    assert com_id.remetente_canal == "999888777"
+
+    sem_id = Tenant(nome="B", slug="b", whatsapp_numero="+5511988887777")
+    assert sem_id.remetente_canal == "+5511988887777"
+
+    assert Tenant(nome="C", slug="c").remetente_canal == ""
 
 
 # --------------------------------------------------------------------------- #

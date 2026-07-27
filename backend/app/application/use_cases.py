@@ -517,11 +517,13 @@ class EnviarBroadcast:
         if template is None:
             raise ValueError("Template não encontrado para o tenant.")
 
-        # Número de WhatsApp da própria escola como remetente (multi-tenant); vazio = padrão.
+        # Número da própria escola como remetente (multi-tenant); vazio = padrão do canal.
+        # ``remetente_canal`` entrega o ``meta_phone_number_id`` (o que a Graph API exige na
+        # URL de envio) e cai no E.164 quando a escola ainda não tem id na Meta.
         remetente: str | None = None
         if self._tenants is not None:
             escola = await self._tenants.obter(broadcast.tenant_id)
-            remetente = (escola.whatsapp_numero or None) if escola else None
+            remetente = (escola.remetente_canal or None) if escola else None
         if template.status != StatusTemplate.APROVADO:
             raise ValueError(
                 "O template precisa estar APROVADO pela Meta para disparo fora da janela de 24h."

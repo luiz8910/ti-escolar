@@ -19,12 +19,18 @@
 | **WABA de produção** com número real | ⬜ Pendente — só existe a *Test WhatsApp Business Account* |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
 | **Templates aprovados** | ⬜ Pendente |
-| **Inbound do webhook** (chatbot atendendo) | ⬜ **Não implementado** — ver CLAUDE.md §9e.1 |
+| **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
+| **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
 | **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada — falta **ligar** em produção |
 
-> ⚠️ **O produto ainda não atende pela Meta.** O webhook trata apenas **status de entrega**;
-> mensagens recebidas são descartadas. Broadcasts funcionam; o chatbot, não. Isso é
-> pré-requisito de qualquer go-live com escola real.
+> ✅ **O produto atende e dispara pela Meta.** O webhook trata os dois caminhos do envelope:
+> status de entrega e **mensagens recebidas**, roteadas para a escola dona do
+> `phone_number_id` e respondidas pelo número dela.
+>
+> ⚠️ **Consequência operacional:** uma escola **sem `meta_phone_number_id` cadastrado** tem o
+> inbound **descartado** — é proposital (não existe tenant de fallback, que jogaria a conversa
+> de uma escola na outra), mas significa que cadastrar o id é parte obrigatória do onboarding.
+> A lista de escolas no painel marca com ⚠ quem está nesse estado.
 
 ---
 
@@ -59,7 +65,9 @@ então uma escola não derruba o limite das outras.
 3. Preencher **nome de exibição**, categoria e descrição do negócio.
 4. **Verificar o número** por SMS ou ligação. Nós compramos o chip, colocamos num aparelho nosso
    e lemos o código — a escola não participa (CLAUDE.md §9e.3).
-5. Anotar o **`phone_number_id`** do número: é ele que vai para o cadastro da escola, não o E.164.
+5. Anotar o **`phone_number_id`** do número e **cadastrá-lo na escola** (painel do super admin →
+   Escolas → campo *phone_number_id da Meta*). É ele — não o E.164 — que a API usa para enviar e
+   que roteia o WhatsApp recebido para a escola certa. **Sem ele a escola não recebe mensagens.**
 
 ---
 
@@ -130,12 +138,17 @@ em execução e sinaliza segredo default, assinatura desligada e CORS liberado (
 
 ### 6.2 Número por escola (multi-tenant)
 
-Cada escola tem o seu número em `Tenant.whatsapp_numero` (E.164, único entre escolas).
+Cada escola tem **dois** campos de número, e eles não são intercambiáveis:
 
-> ⚠️ **Falta o `Tenant.meta_phone_number_id`**: a API da Meta envia por `phone_number_id`, não
-> por E.164, e o `MetaMessageChannel` ainda fixa um único id vindo da env. Enquanto isso não for
-> implementado (CLAUDE.md §9e.1), **todo envio sai pelo mesmo número** — o multi-tenant real de
-> outbound não funciona.
+| Campo | O que é | Para que serve |
+|---|---|---|
+| `Tenant.whatsapp_numero` | o número em **E.164** (`+5515333330000`) | exibição e referência humana |
+| `Tenant.meta_phone_number_id` | o **id do número na Meta** (só dígitos) | **envia** (URL da Graph API) e **roteia o inbound** |
+
+Ambos são únicos entre escolas. O `MetaMessageChannel` monta a URL de envio por mensagem, com o
+id da escola resolvido por `Tenant.remetente_canal`; o `META_PHONE_NUMBER_ID` da env é apenas
+**fallback** para quem ainda não tem id cadastrado (nesse caso o log do backend avisa que o
+disparo saiu pelo número padrão).
 
 ---
 
@@ -169,9 +182,12 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 2. Enviar um **broadcast de teste** para um número próprio → chega pelo número **da escola**.
 3. Conferir em `/admin/historico/disparos` o status evoluindo para `delivered`/`read`.
 4. Forçar um webhook com assinatura inválida → deve responder **403** (valida §5).
-5. Responder pelo WhatsApp → **hoje a mensagem é descartada** (inbound não implementado). Quando
-   §9e.1 estiver pronto, a resposta do bot deve chegar e aparecer em
-   `/admin/historico/conversas`.
+5. Mandar uma mensagem **para o número da escola** pelo WhatsApp → a resposta do bot deve chegar
+   em segundos e a conversa aparecer em `/admin/historico/conversas`, **no tenant certo**.
+6. Repetir o passo 5 a partir do número de **outra** escola e conferir que cada conversa ficou na
+   sua — é o teste que pega um `phone_number_id` cadastrado na escola errada.
+7. Nos logs, `webhook.meta` não deve mostrar `Inbound Meta descartado`; se mostrar, o
+   `phone_number_id` daquele número não está cadastrado em nenhuma escola.
 
 ---
 
@@ -188,8 +204,9 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [ ] `JWT_SECRET` e `META_WEBHOOK_VERIFY_TOKEN` trocados
 - [ ] `/admin/seguranca` sem itens em Atenção
 - [ ] Templates aprovados com nome/idioma batendo com o banco
-- [ ] **`Tenant.meta_phone_number_id` implementado** (multi-tenant de outbound)
-- [ ] **Inbound do webhook implementado** (chatbot atendendo)
+- [x] **`Tenant.meta_phone_number_id` implementado** (multi-tenant de envio + roteamento inbound)
+- [x] **Inbound do webhook implementado** (chatbot atendendo)
+- [ ] **`phone_number_id` cadastrado na escola** (por escola — sem ele o inbound é descartado)
 - [ ] Teste de fumaça por escola
 
 ---

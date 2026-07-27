@@ -97,6 +97,8 @@ export interface Escola {
   nome: string;
   slug: string;
   whatsapp_numero: string;
+  /** phone_number_id do número da escola na Meta: origem do outbound e roteamento do inbound. */
+  meta_phone_number_id: string;
   telefone_contato: string;
   criado_em: string;
   total_conversas: number;
@@ -382,7 +384,8 @@ export async function criarEscola(
   nome: string,
   slug: string,
   whatsappNumero = "",
-  telefoneContato = ""
+  telefoneContato = "",
+  metaPhoneNumberId = ""
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas`, {
     method: "POST",
@@ -392,6 +395,7 @@ export async function criarEscola(
       slug,
       whatsapp_numero: whatsappNumero,
       telefone_contato: telefoneContato,
+      meta_phone_number_id: metaPhoneNumberId,
     }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar escola`);
@@ -403,7 +407,8 @@ export async function atualizarEscola(
   nome: string,
   slug: string,
   whatsappNumero = "",
-  telefoneContato = ""
+  telefoneContato = "",
+  metaPhoneNumberId = ""
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, {
     method: "PUT",
@@ -413,6 +418,7 @@ export async function atualizarEscola(
       slug,
       whatsapp_numero: whatsappNumero,
       telefone_contato: telefoneContato,
+      meta_phone_number_id: metaPhoneNumberId,
     }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao atualizar escola`);

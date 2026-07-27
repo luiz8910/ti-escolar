@@ -70,8 +70,8 @@ class EnviarMensagemAoResponsavel:
         remetente: str | None = None
         if self._tenants is not None:
             tenant = await self._tenants.obter(tenant_id)
-            if tenant is not None and tenant.whatsapp_numero.strip():
-                remetente = tenant.whatsapp_numero.strip()
+            if tenant is not None and tenant.remetente_canal:
+                remetente = tenant.remetente_canal
 
         contato_nome = ""
         if self._contatos is not None:

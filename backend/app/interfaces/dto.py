@@ -135,6 +135,9 @@ class EscolaEntrada(BaseModel):
     # Número de WhatsApp da escola (E.164) operado pela plataforma. Vazio = usa o número
     # padrão do canal.
     whatsapp_numero: str = ""
+    # ``phone_number_id`` do número da escola na Meta (só dígitos). É o que a Graph API usa
+    # na URL de envio e o que roteia o inbound do webhook. Vazio = número padrão da env.
+    meta_phone_number_id: str = ""
     # Telefone de contato público (E.164) da escola — **obrigatório**, apenas informativo.
     telefone_contato: str = ""
 
@@ -161,6 +164,7 @@ class EscolaSaida(BaseModel):
     nome: str
     slug: str
     whatsapp_numero: str = ""
+    meta_phone_number_id: str = ""
     telefone_contato: str = ""
     criado_em: datetime
     licenca: LicencaSaida
@@ -171,6 +175,7 @@ class EscolaResumoSaida(BaseModel):
     nome: str
     slug: str
     whatsapp_numero: str = ""
+    meta_phone_number_id: str = ""
     telefone_contato: str = ""
     criado_em: datetime
     total_conversas: int
