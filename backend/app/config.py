@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     jwt_secret: str = "troque-este-segredo-jwt"
     jwt_expira_minutos: int = 480  # 8 horas
 
+    # Chat demo (simulador do WhatsApp, público por desenho — sem autenticação).
+    # Ele grava conversa real e consome LLM do tenant informado no corpo, então fica
+    # **restrito ao tenant de vitrine**: apontá-lo para uma escola real seria poluir o
+    # histórico dela e queimar a cota de LLM de graça.
+    chat_demo_habilitado: bool = True
+    chat_demo_tenant_id: str = "00000000-0000-0000-0000-000000000001"
+
     # Inbound / UX das mensagens dos pais (§G1)
     # Limite de caracteres da mensagem do responsável; acima disso o bot pede objetividade
     # sem acionar a LLM. 0 desativa o limite.

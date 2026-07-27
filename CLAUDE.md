@@ -1002,21 +1002,27 @@ Baseado no [pre-deployment checklist do cookbook](https://github.com/moalsayed95
 auditado contra o código em **27/jul/2026**. Complementa a §14 (que mede a **configuração** em
 execução); esta seção mede o **código**. Legenda: ✅ feito · ⚠️ parcial · ❌ não feito.
 
-### 1. ⚠️ Autorização — cada usuário preso aos próprios dados
+### 1. ✅ Autorização — cada usuário preso aos próprios dados
 
 Os guardas existem e são consistentes: `_exige_acesso_tenant` (403 fora do tenant),
 `_exige_super_admin`, `_exige_tenant_ativo` e `usuario_autenticado`/`professor_autenticado`
-revalidando no banco. **18 dos 20 routers** exigem autenticação em todas as rotas.
+revalidando no banco.
 
-**Furos abertos** (rotas públicas que não deveriam ser):
-- ❌ **`POST /api/broadcasts`** — **sem nenhuma autenticação**. Recebe `tenant_id` no corpo e
-  dispara. Quem souber a URL e um `tenant_id` **envia WhatsApp aos pais de qualquer escola**,
-  pelo número dela, queimando a cota diária. Tem `_exige_tenant_ativo` (barra escola suspensa),
-  mas isso não é identidade. É o furo mais grave do sistema hoje.
-- ❌ **`GET /api/broadcasts/quota/{tenant_id}`** — sem auth; vaza consumo por escola.
-- ❌ **`POST /api/chat/mensagens` e `WS /api/chat/ws/{tenant_id}/{contato}`** — sem auth. É o
-  demo do WhatsApp, público por desenho, mas em produção **consome LLM** e **grava na conversa
-  real** do tenant informado.
+**Furos fechados em 27/jul/2026** (eram rotas públicas que recebiam `tenant_id` no corpo/URL):
+- ✅ **`POST /api/broadcasts`** — passou a exigir `usuario_autenticado` +
+  `_exige_acesso_tenant`. Antes, quem soubesse a URL e um `tenant_id` **enviava WhatsApp aos
+  responsáveis de qualquer escola**, pelo número dela, queimando a cota diária. A checagem de
+  escola suspensa também foi trocada pelo guarda `_exige_tenant_ativo`, porque a versão inline
+  só olhava `bloqueado` e **deixava passar escola cancelada**.
+- ✅ **`GET /api/broadcasts/quota/{tenant_id}`** — mesma dupla de guardas (a cota revela o
+  consumo da escola). O painel já mandava o token nessa chamada, então nada quebrou.
+- ✅ **`POST /api/chat/mensagens` e `WS /api/chat/ws/{tenant_id}/{contato}`** — seguem
+  **públicas por desenho** (o demo é a vitrine e não tem login), mas agora **presas ao tenant de
+  vitrine** (`CHAT_DEMO_TENANT_ID`) e desligáveis com `CHAT_DEMO_HABILITADO=false`. Configuração
+  inválida **fecha** em vez de abrir. O WebSocket é recusado antes do `accept`.
+
+Cobertura em `backend/tests/test_rotas_publicas.py` (testes de borda HTTP, únicos da suíte —
+o que se verifica é justamente o que o roteador exige antes do caso de uso).
 
 ### 2. ⬜ Expiração de link de redefinição de senha
 
@@ -1043,7 +1049,7 @@ Não existe em lugar nenhum. Os três pontos que importam:
   cada tentativa, mas não limita o número delas.
 - **Webhook inbound** — um número em loop consome a cota de LLM da escola (só há
   `MENSAGEM_PAI_MAX_CHARS`, que corta mensagem longa).
-- **Chat demo** — aberto e caro.
+- **Chat demo** — público; hoje limitado ao tenant de vitrine (item 1), mas sem teto de uso.
 
 ### 6. ❌ Tratamento de erro — telas próprias
 
@@ -1074,11 +1080,10 @@ código sem rodar o `downgrade` deixa o schema à frente da aplicação.
 
 ### Ordem sugerida
 
-1. **Autenticar `POST /api/broadcasts` e a rota de quota** (item 1) — é exposição ativa, não
-   dívida técnica.
-2. **Rate limit no login e no inbound** (item 5).
+1. ~~Autenticar `POST /api/broadcasts` e a rota de quota~~ · ~~decidir o destino do chat
+   demo~~ — **feitos** em 27/jul/2026 (item 1).
+2. **Rate limit no login e no inbound** (item 5) — hoje o maior risco aberto: brute force
+   contra as senhas de admin.
 3. **Telas de erro + handler com id de correlação** (item 6).
 4. **Logging estruturado + alerta** (item 8).
-5. Decidir o destino do **chat demo** em produção: autenticar, isolar num tenant de vitrine ou
-   desligar por env.
-6. **Testar o rollback** do Render uma vez, com migration envolvida (item 9).
+5. **Testar o rollback** do Render uma vez, com migration envolvida (item 9).
