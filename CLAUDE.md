@@ -844,7 +844,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e **fila**
   (throttling, retry com backoff e agendamento — §9a).
 - [~] **Migração para a Meta Cloud API direta** (canal único desde 27/jul/2026, com a verificação
-  da empresa aprovada). Ver §9e:
+  da empresa aprovada). **O código está pronto; o que falta é operação na Meta** — a lista
+  ordenada dos próximos passos para o WhatsApp funcionar 100% está em
+  `docs/producao-whatsapp.md` §10 (publicar o app → WABA de produção → pagamento → token →
+  webhook → `phone_number_id` por escola → templates → teste de fumaça). Ver §9e:
   - [x] **Validação de `X-Hub-Signature-256`** no webhook (§9e.2) — era **bloqueante para o
     go-live**: o endpoint aceitava qualquer POST, permitindo forjar status de entrega e
     (após o inbound) conversas falsas.
