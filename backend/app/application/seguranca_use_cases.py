@@ -209,10 +209,26 @@ class AvaliarPosturaSeguranca:
                 exigencia="Capacidade de reverter testada (blue-green ou equivalente).",
                 status=StatusMedida.ATENCAO,
                 situacao=(
-                    "O Render permite rollback de aplicação com um clique, mas isso nunca foi "
-                    "testado e não é blue-green. Ponto específico deste projeto: rollback de "
-                    "aplicação NÃO desfaz migration — voltar o código sem rodar o downgrade "
-                    "deixa o schema à frente da aplicação."
+                    "O procedimento está documentado passo a passo em docs/runbook-rollback.md "
+                    "(Render, Vercel, Cloudflare, downgrade de migration e restauração via "
+                    "Neon), mas NUNCA FOI EXECUTADO — segue em ATENÇÃO até o ensaio. Ponto "
+                    "específico deste projeto: rollback de aplicação não desfaz migration, e o "
+                    "CMD do container reaplica `alembic upgrade head` a cada restart."
+                ),
+            ),
+            ItemChecklist(
+                numero=10,
+                titulo="Política de backup (extra ao checklist de origem)",
+                exigencia="Cópia fora do provedor do dado, com restauração testada.",
+                status=StatusMedida.PENDENTE,
+                situacao=(
+                    "Existe apenas o point-in-time recovery do Neon, que cobre erro de operação "
+                    "recente mas mora dentro do mesmo provedor: perda de conta ou corrupção "
+                    "descoberta depois da janela de retenção não têm de onde voltar. A política "
+                    "proposta (dump diário para armazenamento externo, com teste trimestral de "
+                    "restauração) está em docs/backup.md, aguardando decisão. Pesa mais aqui do "
+                    "que num sistema comum: a base guarda ficha de matrícula de menor, com "
+                    "dado sensível que só existe aqui."
                 ),
             ),
         ]

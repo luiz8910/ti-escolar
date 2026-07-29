@@ -181,11 +181,22 @@ def _item(postura, numero: int):
     return next(i for i in postura.checklist if i.numero == numero)
 
 
-def test_checklist_traz_os_nove_itens_na_numeracao_da_fonte():
-    """A conferência com a lista de origem é 1:1 — numeração e ordem não podem escorregar."""
+def test_checklist_preserva_a_numeracao_da_fonte_e_acrescenta_no_fim():
+    """Os 9 itens da lista de origem mantêm numeração e ordem — quem audita precisa cruzar
+    1:1 com a fonte. Itens nossos (10+) só podem vir depois, nunca intercalados."""
     postura = AvaliarPosturaSeguranca().executar(config=_config())
-    assert [i.numero for i in postura.checklist] == list(range(1, 10))
+    numeros = [i.numero for i in postura.checklist]
+    assert numeros[:9] == list(range(1, 10))
+    assert numeros == sorted(numeros)
     assert postura.checklist_fonte.startswith("https://")
+
+
+def test_backup_aparece_como_pendente_ate_a_politica_existir():
+    """O painel não pode dourar a pílula: PITR do provedor não é política de backup."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    item = _item(postura, 10)
+    assert item.status is StatusMedida.PENDENTE
+    assert not postura.pronto_para_producao
 
 
 def test_todo_item_declara_exigencia_e_situacao():
