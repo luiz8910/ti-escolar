@@ -287,7 +287,6 @@ function ExcluirSalaModal({
 }) {
   const toast = useToast();
   const [alunos, setAlunos] = useState<Aluno[] | null>(null); // null = carregando
-  const [estrategia, setEstrategia] = useState<"mover" | "excluir">("mover");
   const [destinoId, setDestinoId] = useState("");
   const [novaSerie, setNovaSerie] = useState("");
   const [salvando, setSalvando] = useState(false);
@@ -308,8 +307,7 @@ function ExcluirSalaModal({
   async function confirmar() {
     setSalvando(true);
     try {
-      if (total === 0 || estrategia === "excluir") {
-        // Série vazia ou opção de excluir os alunos junto.
+      if (total === 0) {
         await removerSala(sala.id);
       } else {
         // Mover os alunos para outra série (criando-a se necessário).
@@ -370,50 +368,32 @@ function ExcluirSalaModal({
       ) : (
         <div className="flex flex-col gap-3 text-[13px]">
           <p className="text-n-600">
-            A série “{sala.nome}” tem <strong>{total} aluno(s)</strong>. O que fazer com eles?
+            A série “{sala.nome}” tem <strong>{total} aluno(s)</strong>. Eles precisam ir
+            para outra série — <b>alunos nunca são apagados</b>, porque o registro de que
+            estudaram aqui sustenta histórico escolar e declarações. Para tirar um aluno da
+            escola, use <b>Desativar</b> na tela de Alunos.
           </p>
 
-          <label className="flex items-start gap-2 font-semibold text-n-700">
-            <input
-              type="radio"
-              className="mt-1"
-              checked={estrategia === "mover"}
-              onChange={() => setEstrategia("mover")}
-            />
-            <span>Mover os alunos para outra série</span>
-          </label>
-
-          {estrategia === "mover" && (
-            <div className="flex flex-col gap-2 pl-6">
-              <Select value={destinoId} onChange={(e) => setDestinoId(e.target.value)}>
-                <option value="">Selecione a série destino…</option>
-                {outras.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.nome}
-                  </option>
-                ))}
-                <option value="__nova__">+ Criar nova série…</option>
-              </Select>
-              {criandoSerie && (
-                <Input
-                  autoFocus
-                  value={novaSerie}
-                  onChange={(e) => setNovaSerie(e.target.value)}
-                  placeholder="Nome da nova série (ex.: 6ª série A)"
-                />
-              )}
-            </div>
-          )}
-
-          <label className="flex items-start gap-2 font-semibold text-n-700">
-            <input
-              type="radio"
-              className="mt-1"
-              checked={estrategia === "excluir"}
-              onChange={() => setEstrategia("excluir")}
-            />
-            <span>Excluir os {total} aluno(s) junto com a série</span>
-          </label>
+          <div className="flex flex-col gap-2">
+            <span className="font-semibold text-n-700">Mover os alunos para:</span>
+            <Select value={destinoId} onChange={(e) => setDestinoId(e.target.value)}>
+              <option value="">Selecione a série destino…</option>
+              {outras.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.nome}
+                </option>
+              ))}
+              <option value="__nova__">+ Criar nova série…</option>
+            </Select>
+            {criandoSerie && (
+              <Input
+                autoFocus
+                value={novaSerie}
+                onChange={(e) => setNovaSerie(e.target.value)}
+                placeholder="Nome da nova série (ex.: 6ª série A)"
+              />
+            )}
+          </div>
         </div>
       )}
     </Modal>

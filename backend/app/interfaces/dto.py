@@ -439,7 +439,10 @@ class AlunoSaida(BaseModel):
     id: UUID
     nome: str
     matricula: str
+    # ativo=False é ex-aluno: o registro permanece (soft delete), com data e motivo.
     ativo: bool
+    desativado_em: datetime | None = None
+    motivo_desativacao: str = ""
     sala_id: UUID
     sala_nome: str = ""
     responsaveis: list[PaiSaida] = []

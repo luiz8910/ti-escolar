@@ -10,6 +10,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -402,11 +403,20 @@ class AlunoORM(Base):
     nome: Mapped[str] = mapped_column(String(200))
     matricula: Mapped[str] = mapped_column(String(50), default="")
     # Série/turma do aluno (1:1, obrigatória). A exclusão de uma série é mediada pelos
-    # casos de uso (excluir os alunos ou movê-los), por isso a FK é restritiva.
+    # casos de uso (que exigem uma série destino para os alunos), por isso a FK é
+    # restritiva: nenhum caminho pode deixar aluno órfão nem apagá-lo em cascata.
     sala_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("salas.id"), nullable=False, index=True
     )
+    # Soft delete: o aluno nunca é apagado pelo painel — o registro de que ele estudou
+    # aqui é o lastro da escola (histórico, declarações). ativo=False é a "exclusão".
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    desativado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    motivo_desativacao: Mapped[str] = mapped_column(
+        String(200), default="", server_default=""
+    )
     criado_em: Mapped[datetime] = mapped_column()
 
     sala: Mapped["SalaORM | None"] = relationship()

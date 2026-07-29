@@ -137,13 +137,15 @@ class AtualizarSala:
 
 
 class RemoverSala:
-    """Remove uma série/sala decidindo o destino dos alunos.
+    """Remove uma série/sala, transferindo os alunos dela.
 
-    Como ``Aluno.sala_id`` é obrigatório, a exclusão precisa de uma estratégia explícita:
-    - ``mover_para=None`` → **exclui** os alunos da série junto com ela;
-    - ``mover_para=<sala_id>`` → **transfere** os alunos para outra série e então remove a
-      série original. A série destino deve existir no tenant e ser diferente da removida
-      (crie-a antes, se necessário, via ``CriarSala``).
+    Como ``Aluno.sala_id`` é obrigatório, a exclusão precisa de um destino explícito:
+    ``mover_para=<sala_id>`` **transfere** os alunos para outra série (que deve existir no
+    tenant e ser diferente da removida) e só então remove a original.
+
+    **Uma série com alunos não pode ser removida sem destino.** Antes, ``mover_para=None``
+    apagava os alunos junto — o caminho mais fácil da tela destruía o histórico de quem
+    estudou na escola. Série vazia continua removível sem cerimônia.
     """
 
     def __init__(self, *, salas: SalaRepository, alunos: AlunoRepository) -> None:
@@ -158,6 +160,12 @@ class RemoverSala:
             return False
 
         alunos_da_sala = await self._alunos.listar(tenant_id=tenant_id, sala_id=sala_id)
+        if alunos_da_sala and mover_para is None:
+            raise ValueError(
+                f"A série tem {len(alunos_da_sala)} aluno(s). Informe a série destino para "
+                "transferi-los — alunos não são apagados junto com a série, porque o "
+                "registro de que estudaram aqui precisa ser preservado."
+            )
         if mover_para is not None:
             if mover_para == sala_id:
                 raise ValueError("A série destino deve ser diferente da que está sendo removida.")
@@ -165,9 +173,6 @@ class RemoverSala:
             for aluno in alunos_da_sala:
                 aluno.sala_id = mover_para
                 await self._alunos.atualizar(aluno)
-        else:
-            for aluno in alunos_da_sala:
-                await self._alunos.remover(tenant_id=tenant_id, aluno_id=aluno.id)
 
         return await self._salas.remover(tenant_id=tenant_id, sala_id=sala_id)
 
@@ -358,9 +363,13 @@ class ListarAlunos:
         self._alunos = alunos
 
     async def executar(
-        self, *, tenant_id: UUID, sala_id: UUID | None = None
+        self, *, tenant_id: UUID, sala_id: UUID | None = None,
+        apenas_ativos: bool | None = None,
     ) -> list[Aluno]:
-        return await self._alunos.listar(tenant_id=tenant_id, sala_id=sala_id)
+        """``apenas_ativos=None`` traz matriculados e ex-alunos; ``True``/``False`` filtra."""
+        return await self._alunos.listar(
+            tenant_id=tenant_id, sala_id=sala_id, apenas_ativos=apenas_ativos
+        )
 
 
 class ObterAluno:
@@ -400,12 +409,40 @@ class AtualizarAluno:
         return await self._alunos.atualizar(atual)
 
 
-class RemoverAluno:
+class DesativarAluno:
+    """"Exclusão" de aluno pelo painel — que é sempre **soft delete**.
+
+    O aluno nunca é apagado: o registro de que ele estudou aqui é o lastro da escola
+    (histórico escolar, declarações, prestação de contas). Marcar como ex-aluno preserva
+    esse rastro, os vínculos com responsáveis e a ficha de matrícula, e ainda permite
+    desfazer o clique errado (``ReativarAluno``).
+    """
+
     def __init__(self, *, alunos: AlunoRepository) -> None:
         self._alunos = alunos
 
-    async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> bool:
-        return await self._alunos.remover(tenant_id=tenant_id, aluno_id=aluno_id)
+    async def executar(
+        self, *, tenant_id: UUID, aluno_id: UUID, motivo: str = ""
+    ) -> Aluno | None:
+        aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
+        if aluno is None:
+            return None
+        aluno.desativar(motivo=motivo)
+        return await self._alunos.atualizar(aluno)
+
+
+class ReativarAluno:
+    """Volta o ex-aluno à condição de matriculado (rematrícula ou correção)."""
+
+    def __init__(self, *, alunos: AlunoRepository) -> None:
+        self._alunos = alunos
+
+    async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno | None:
+        aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
+        if aluno is None:
+            return None
+        aluno.reativar()
+        return await self._alunos.atualizar(aluno)
 
 
 class VincularResponsavelAoAluno:

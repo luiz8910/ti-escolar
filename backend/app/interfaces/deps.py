@@ -56,9 +56,13 @@ from app.infrastructure.db.repositories_onda3 import (
 )
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
-from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
+from app.infrastructure.factories import (
+    criar_canal,
+    criar_email_sender,
+    criar_embedder,
+    criar_llm,
+)
 from app.infrastructure.atendimento import SqlRegistroAtendimento
-from app.infrastructure.messaging.email import LogEmailSender
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
 from app.infrastructure.rate_limit import SqlControleTaxa
 
@@ -192,7 +196,7 @@ def get_notificar_licencas(
     return NotificarLicencasAVencer(
         tenants=SqlTenantRepository(session),
         usuarios=SqlUsuarioRepository(session),
-        emails=LogEmailSender(remetente=settings.email_from),
+        emails=criar_email_sender(settings),
     )
 
 

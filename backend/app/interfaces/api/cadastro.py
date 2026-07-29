@@ -34,7 +34,8 @@ from app.application.cadastro_use_cases import (
     ObterProfessor,
     ObterSala,
     RelatorioPaisDaSala,
-    RemoverAluno,
+    DesativarAluno,
+    ReativarAluno,
     RemoverPai,
     RemoverProfessor,
     RemoverProfessorDaSala,
@@ -146,6 +147,8 @@ def _aluno_saida(a: Aluno) -> AlunoSaida:
         nome=a.nome,
         matricula=a.matricula,
         ativo=a.ativo,
+        desativado_em=a.desativado_em,
+        motivo_desativacao=a.motivo_desativacao,
         sala_id=a.sala_id,
         sala_nome=a.sala_nome,
         responsaveis=[_pai_saida(c) for c in a.responsaveis],
@@ -506,11 +509,15 @@ async def cadastrar_aluno(
 async def listar_alunos(
     tenant_id: UUID,
     sala_id: UUID | None = None,
+    apenas_ativos: bool | None = None,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
 ) -> list[AlunoSaida]:
+    """``apenas_ativos``: omitido = todos; ``true`` = matriculados; ``false`` = ex-alunos."""
     _exige_acesso_tenant(usuario, tenant_id)
-    encontrados = await ListarAlunos(alunos=alunos).executar(tenant_id=tenant_id, sala_id=sala_id)
+    encontrados = await ListarAlunos(alunos=alunos).executar(
+        tenant_id=tenant_id, sala_id=sala_id, apenas_ativos=apenas_ativos
+    )
     return [_aluno_saida(a) for a in encontrados]
 
 
@@ -552,17 +559,42 @@ async def atualizar_aluno(
     return _aluno_saida(aluno)
 
 
-@router.delete("/alunos/{aluno_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remover_aluno(
+@router.delete("/alunos/{aluno_id}", response_model=AlunoSaida)
+async def desativar_aluno(
+    aluno_id: UUID,
+    tenant_id: UUID,
+    motivo: str = "",
+    usuario: Usuario = Depends(usuario_autenticado),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+) -> AlunoSaida:
+    """Desativa o aluno (**soft delete**) e devolve o registro atualizado.
+
+    O verbo é ``DELETE`` porque é a "exclusão" do ponto de vista de quem usa o painel, mas
+    nada é apagado: o aluno vira ex-aluno. Apagar destruiria o registro de que ele estudou
+    na escola — histórico, declarações, prestação de contas.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    aluno = await DesativarAluno(alunos=alunos).executar(
+        tenant_id=tenant_id, aluno_id=aluno_id, motivo=motivo
+    )
+    if aluno is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado")
+    return _aluno_saida(aluno)
+
+
+@router.post("/alunos/{aluno_id}/reativar", response_model=AlunoSaida)
+async def reativar_aluno(
     aluno_id: UUID,
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-) -> None:
+) -> AlunoSaida:
+    """Rematrícula do ex-aluno — ou desfaz uma desativação feita por engano."""
     _exige_acesso_tenant(usuario, tenant_id)
-    removido = await RemoverAluno(alunos=alunos).executar(tenant_id=tenant_id, aluno_id=aluno_id)
-    if not removido:
+    aluno = await ReativarAluno(alunos=alunos).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+    if aluno is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado")
+    return _aluno_saida(aluno)
 
 
 @router.post("/alunos/{aluno_id}/responsaveis", status_code=status.HTTP_204_NO_CONTENT)

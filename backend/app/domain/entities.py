@@ -395,8 +395,11 @@ class Aluno:
 
     Pertence **obrigatoriamente** a uma série/turma (``sala_id`` — relação 1:1 com
     ``Sala``) e tem **N** responsáveis (``Contato``s, N:N via ``aluno_responsaveis``).
-    ``ativo=False`` marca um ex-aluno (base para a futura transferência/promoção de
-    série). ``sala_nome`` é denormalizado só para exibição.
+    ``ativo=False`` marca um ex-aluno. **O aluno nunca é apagado**: o registro de que ele
+    estudou aqui é o lastro que a escola precisa preservar (histórico escolar, declarações,
+    prestação de contas). Desativar é a única forma de "remover" um aluno pelo painel —
+    ``desativado_em`` e ``motivo_desativacao`` guardam quando e por quê.
+    ``sala_nome`` é denormalizado só para exibição.
     """
 
     tenant_id: UUID
@@ -404,10 +407,27 @@ class Aluno:
     sala_id: UUID
     matricula: str = ""
     ativo: bool = True
+    desativado_em: datetime | None = None
+    motivo_desativacao: str = ""
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     responsaveis: list[Contato] = field(default_factory=list)
     sala_nome: str = ""
+
+    def desativar(self, *, motivo: str = "", quando: datetime | None = None) -> None:
+        """Marca como ex-aluno, preservando o registro. Idempotente: repetir não reescreve
+        a data original — o que interessa é quando ele **saiu**, não o último clique."""
+        if not self.ativo:
+            return
+        self.ativo = False
+        self.desativado_em = quando or _now()
+        self.motivo_desativacao = motivo.strip()
+
+    def reativar(self) -> None:
+        """Desfaz a desativação (rematrícula, ou correção de um clique errado)."""
+        self.ativo = True
+        self.desativado_em = None
+        self.motivo_desativacao = ""
 
     @property
     def tem_contato(self) -> bool:

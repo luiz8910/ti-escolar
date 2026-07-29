@@ -796,6 +796,8 @@ def _to_aluno(row: AlunoORM) -> Aluno:
         matricula=row.matricula,
         sala_id=row.sala_id,
         ativo=row.ativo,
+        desativado_em=row.desativado_em,
+        motivo_desativacao=row.motivo_desativacao,
         criado_em=row.criado_em,
         responsaveis=[_to_contato(c) for c in row.responsaveis],
         sala_nome=row.sala.nome if row.sala else "",
@@ -838,8 +840,11 @@ class SqlAlunoRepository:
         return _to_aluno(row) if row else None
 
     async def listar(
-        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID | None = None
+        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID | None = None,
+        apenas_ativos: bool | None = None,
     ) -> list[Aluno]:
+        """``apenas_ativos=None`` traz todos; ``True`` só os matriculados; ``False`` só
+        os ex-alunos (a lista de quem já passou pela escola)."""
         stmt = (
             select(AlunoORM)
             .where(AlunoORM.tenant_id == tenant_id)
@@ -848,6 +853,8 @@ class SqlAlunoRepository:
         )
         if sala_id is not None:
             stmt = stmt.where(AlunoORM.sala_id == sala_id)
+        if apenas_ativos is not None:
+            stmt = stmt.where(AlunoORM.ativo.is_(apenas_ativos))
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_aluno(r) for r in rows]
 
@@ -859,6 +866,8 @@ class SqlAlunoRepository:
         row.matricula = aluno.matricula
         row.sala_id = aluno.sala_id
         row.ativo = aluno.ativo
+        row.desativado_em = aluno.desativado_em
+        row.motivo_desativacao = aluno.motivo_desativacao
         await self._s.flush()
         await self._s.refresh(row, attribute_names=["sala"])
         return _to_aluno(row)

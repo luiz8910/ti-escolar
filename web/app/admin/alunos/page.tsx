@@ -18,7 +18,8 @@ import {
   logout,
   Pai,
   previaImportacaoAlunos,
-  removerAluno,
+  desativarAluno,
+  reativarAluno,
   Sala,
   Usuario,
   vincularResponsavelAoAluno,
@@ -29,7 +30,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field } from "@/components/ui/form";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
-import { Modal, ConfirmDialog } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon } from "@/components/ui/icons";
 
@@ -441,37 +442,68 @@ function ListaAlunos({
   onFiltrar: (v: string) => void;
   onMudou: () => Promise<void>;
 }) {
+  // Ex-alunos acumulam ano após ano; a lista abre nos matriculados e o filtro traz o
+  // resto quando alguém precisa consultar quem já passou pela escola.
+  const [situacao, setSituacao] = useState<"ativos" | "ex" | "todos">("ativos");
   const toast = useToast();
   const [editando, setEditando] = useState<Aluno | null>(null);
   const [gerenciando, setGerenciando] = useState<Aluno | null>(null);
-  const [excluindo, setExcluindo] = useState<Aluno | null>(null);
+  // "Excluir" aqui é desativar: o aluno vira ex-aluno e o registro permanece.
+  const [desativando, setDesativando] = useState<Aluno | null>(null);
+  const [motivo, setMotivo] = useState("");
 
-  async function confirmarExclusao() {
-    if (!excluindo) return;
+  async function confirmarDesativacao() {
+    if (!desativando) return;
     try {
-      await removerAluno(excluindo.id);
-      setExcluindo(null);
+      await desativarAluno(desativando.id, motivo.trim());
+      setDesativando(null);
+      setMotivo("");
       await onMudou();
-      toast({ tone: "success", title: "Aluno excluído." });
+      toast({ tone: "success", title: "Aluno marcado como ex-aluno." });
     } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao desativar." });
     }
   }
+
+  async function reativar(aluno: Aluno) {
+    try {
+      await reativarAluno(aluno.id);
+      await onMudou();
+      toast({ tone: "success", title: "Aluno reativado." });
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao reativar." });
+    }
+  }
+
+  const visiveis = alunos.filter((a) =>
+    situacao === "todos" ? true : situacao === "ativos" ? a.ativo : !a.ativo,
+  );
 
   return (
     <Card>
       <CardHeader
         title="Alunos cadastrados"
-        count={alunos.length}
+        count={visiveis.length}
         action={
-          <Select className="w-48" value={filtroSala} onChange={(e) => onFiltrar(e.target.value)}>
-            <option value="">Todas as séries</option>
-            {salas.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.nome}
-              </option>
-            ))}
-          </Select>
+          <div className="flex gap-2">
+            <Select
+              className="w-40"
+              value={situacao}
+              onChange={(e) => setSituacao(e.target.value as "ativos" | "ex" | "todos")}
+            >
+              <option value="ativos">Matriculados</option>
+              <option value="ex">Ex-alunos</option>
+              <option value="todos">Todos</option>
+            </Select>
+            <Select className="w-48" value={filtroSala} onChange={(e) => onFiltrar(e.target.value)}>
+              <option value="">Todas as séries</option>
+              {salas.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
         }
       />
 
@@ -488,7 +520,7 @@ function ListaAlunos({
             </tr>
           </thead>
           <tbody>
-            {alunos.map((a) => (
+            {visiveis.map((a) => (
               <Tr key={a.id}>
                 <Td className="font-medium">{a.nome}</Td>
                 <Td className="font-mono text-xs text-n-500">{a.matricula || "—"}</Td>
@@ -506,6 +538,18 @@ function ListaAlunos({
                     className={
                       "rounded-full px-2 py-0.5 text-[11px] font-bold " +
                       (a.ativo ? "bg-[#e8f7f1] text-[#0d8a78]" : "bg-n-100 text-n-500")
+                    }
+                    title={
+                      a.ativo
+                        ? undefined
+                        : [
+                            a.desativado_em
+                              ? `Desde ${new Date(a.desativado_em).toLocaleDateString("pt-BR")}`
+                              : "",
+                            a.motivo_desativacao,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
                     }
                   >
                     {a.ativo ? "Ativo" : "Ex-aluno"}
@@ -525,20 +569,33 @@ function ListaAlunos({
                     >
                       Editar
                     </button>
-                    <button
-                      onClick={() => setExcluindo(a)}
-                      className="text-xs font-semibold text-danger hover:underline"
-                    >
-                      Excluir
-                    </button>
+                    {a.ativo ? (
+                      <button
+                        onClick={() => setDesativando(a)}
+                        className="text-xs font-semibold text-danger hover:underline"
+                        title="Marca como ex-aluno; o histórico é preservado"
+                      >
+                        Desativar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => reativar(a)}
+                        className="text-xs font-semibold text-brand-600 hover:underline"
+                        title="Volta o aluno à condição de matriculado"
+                      >
+                        Reativar
+                      </button>
+                    )}
                   </span>
                 </Td>
               </Tr>
             ))}
-            {alunos.length === 0 && (
+            {visiveis.length === 0 && (
               <Tr>
                 <Td colSpan={6} className="text-n-400">
-                  Nenhum aluno cadastrado ainda.
+                  {situacao === "ex"
+                    ? "Nenhum ex-aluno registrado."
+                    : "Nenhum aluno cadastrado ainda."}
                 </Td>
               </Tr>
             )}
@@ -564,13 +621,46 @@ function ListaAlunos({
         />
       )}
 
-      <ConfirmDialog
-        open={!!excluindo}
-        onClose={() => setExcluindo(null)}
-        onConfirm={confirmarExclusao}
-        title="Excluir aluno"
-        message={`Excluir o aluno "${excluindo?.nome}"? Os responsáveis continuam cadastrados.`}
-      />
+      {desativando && (
+        <Modal
+          open
+          onClose={() => {
+            setDesativando(null);
+            setMotivo("");
+          }}
+          title="Desativar aluno"
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-[13px] leading-relaxed text-n-600">
+              <b>{desativando.nome}</b> passa a constar como <b>ex-aluno</b>. O cadastro{" "}
+              <b>não é apagado</b>: o registro de que estudou aqui é o que sustenta
+              histórico escolar, declarações e prestação de contas. Dá para reativar
+              depois.
+            </p>
+            <Field label="Motivo (opcional)">
+              <Input
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="Ex.: transferido para outra escola"
+              />
+            </Field>
+            <div className="mt-1 flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDesativando(null);
+                  setMotivo("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button variant="danger" onClick={confirmarDesativacao}>
+                Desativar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </Card>
   );
 }

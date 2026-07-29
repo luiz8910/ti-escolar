@@ -767,14 +767,24 @@ export interface Aluno {
   id: string;
   nome: string;
   matricula: string;
+  /** false = ex-aluno. O registro nunca é apagado (soft delete). */
   ativo: boolean;
+  desativado_em: string | null;
+  motivo_desativacao: string;
   sala_id: string;
   sala_nome: string;
   responsaveis: Pai[];
 }
 
-export async function listarAlunos(salaId?: string): Promise<Aluno[]> {
-  const qs = salaId ? `?sala_id=${salaId}` : "";
+/** `apenasAtivos`: undefined = todos; true = matriculados; false = ex-alunos. */
+export async function listarAlunos(
+  salaId?: string,
+  apenasAtivos?: boolean,
+): Promise<Aluno[]> {
+  const params = new URLSearchParams();
+  if (salaId) params.set("sala_id", salaId);
+  if (apenasAtivos !== undefined) params.set("apenas_ativos", String(apenasAtivos));
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const resp = await apiFetch(
     `${API_URL}/api/admin/alunos/tenant/${tenantEmFoco()}${qs}`,
     { headers: authHeaders() }
@@ -823,15 +833,29 @@ export async function atualizarAluno(
   return jsonOuErro(resp, "atualizar aluno");
 }
 
-export async function removerAluno(alunoId: string): Promise<void> {
+/**
+ * Desativa o aluno — **soft delete**. Nada é apagado: o registro de que ele estudou na
+ * escola é o lastro que o histórico escolar e as declarações exigem.
+ */
+export async function desativarAluno(alunoId: string, motivo = ""): Promise<Aluno> {
+  const params = new URLSearchParams({ tenant_id: tenantEmFoco() });
+  if (motivo) params.set("motivo", motivo);
   const resp = await apiFetch(
-    `${API_URL}/api/admin/alunos/${alunoId}?tenant_id=${tenantEmFoco()}`,
+    `${API_URL}/api/admin/alunos/${alunoId}?${params.toString()}`,
     { method: "DELETE", headers: authHeaders() }
   );
-  if (!resp.ok && resp.status !== 204) {
-    const erro = await resp.json().catch(() => ({}));
-    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover aluno`);
-  }
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao desativar aluno`);
+  return resp.json();
+}
+
+/** Rematrícula do ex-aluno — ou desfaz uma desativação feita por engano. */
+export async function reativarAluno(alunoId: string): Promise<Aluno> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/${alunoId}/reativar?tenant_id=${tenantEmFoco()}`,
+    { method: "POST", headers: authHeaders() }
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao reativar aluno`);
+  return resp.json();
 }
 
 export async function vincularResponsavelAoAluno(

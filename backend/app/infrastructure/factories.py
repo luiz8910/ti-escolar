@@ -6,7 +6,7 @@ Mantêm a seleção de provedor fora do domínio e das interfaces.
 from __future__ import annotations
 
 from app.config import Settings
-from app.domain.ports import Embedder, LLMProvider, MessageChannel
+from app.domain.ports import EmailSender, Embedder, LLMProvider, MessageChannel
 from app.infrastructure.channel.demo_channel import DemoMessageChannel
 from app.infrastructure.llm.fake_provider import FakeEmbedder, FakeLLMProvider
 
@@ -64,3 +64,21 @@ def criar_canal(settings: Settings) -> MessageChannel:
 
 def canal_demo() -> DemoMessageChannel:
     return _demo_channel
+
+
+def criar_email_sender(settings: Settings) -> EmailSender:
+    """Escolhe o adaptador de e-mail por ``EMAIL_PROVIDER`` (``log`` | ``resend``).
+
+    Sem chave configurada, cai no adaptador de log em vez de falhar: um deploy sem
+    RESEND_API_KEY não deve derrubar a aplicação inteira por causa do aviso de licença —
+    mas o painel de segurança sinaliza a situação, para não passar despercebida.
+    """
+    if settings.email_provider == "resend" and settings.resend_api_key:
+        from app.infrastructure.messaging.email import ResendEmailSender
+
+        return ResendEmailSender(
+            remetente=settings.email_from, api_key=settings.resend_api_key
+        )
+    from app.infrastructure.messaging.email import LogEmailSender
+
+    return LogEmailSender(remetente=settings.email_from)

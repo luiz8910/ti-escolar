@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     license_warning_days: int = 30
     # Remetente dos e-mails administrativos (adaptador atual é mock/log).
     email_from: str = "no-reply@tiescolar.test"
+    # Provedor de e-mail: "log" (mock, só registra) | "resend" (envio real via API HTTP).
+    email_provider: str = "log"
+    # Chave da API do resend.com. Vazia = cai no adaptador de log.
+    resend_api_key: str | None = None
 
     # Meta WhatsApp Cloud API
     # Número remetente PADRÃO (fallback): usado quando a escola não tem o seu próprio

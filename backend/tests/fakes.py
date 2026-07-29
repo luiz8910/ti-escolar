@@ -605,11 +605,13 @@ class FakeAlunoRepo:
         a = self.alunos.get(aluno_id)
         return a if a and a.tenant_id == tenant_id else None
 
-    async def listar(self, *, tenant_id, sala_id=None):
+    async def listar(self, *, tenant_id, sala_id=None, apenas_ativos=None):
         return [
             a
             for a in self.alunos.values()
-            if a.tenant_id == tenant_id and (sala_id is None or a.sala_id == sala_id)
+            if a.tenant_id == tenant_id
+            and (sala_id is None or a.sala_id == sala_id)
+            and (apenas_ativos is None or a.ativo is apenas_ativos)
         ]
 
     async def atualizar(self, aluno):
