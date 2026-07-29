@@ -17,8 +17,10 @@ Três pontos definem o desenho:
   ativamente** por uma segunda chamada à API — daqui, via ``MessageChannel.enviar_texto``,
   a partir do número da própria escola.
 - **Reentrega.** A Meta reenvia o evento quando não recebe o ``200`` a tempo. O
-  ``CacheIdempotencia`` descarta a repetição pelo ``id`` (wamid) da mensagem, para o mesmo
-  recado não ser atendido (nem cobrado na LLM) duas vezes.
+  ``RegistroAtendimento`` **reserva** a mensagem pelo ``id`` (wamid) numa tabela do
+  Postgres antes de chamar a LLM, e a reentrega encontra a dúvida ou *em atendimento* ou
+  já *sanada* — em qualquer dos casos, não é atendida (nem cobrada) de novo. A reserva
+  está no banco, e não em memória, porque a duplicata costuma cair em outra réplica.
 """
 
 from __future__ import annotations
@@ -27,10 +29,11 @@ import logging
 from dataclasses import dataclass
 
 from app.application.use_cases import ReceberMensagemRecebida
+from app.domain.entities import EstadoAtendimento
 from app.domain.ports import (
-    CacheIdempotencia,
     ControleTaxa,
     MessageChannel,
+    RegistroAtendimento,
     TenantRepository,
 )
 
@@ -76,7 +79,7 @@ class ProcessarInboundMeta:
         tenants: TenantRepository,
         receber: ReceberMensagemRecebida,
         canal: MessageChannel,
-        idempotencia: CacheIdempotencia | None = None,
+        atendimentos: RegistroAtendimento | None = None,
         controle_taxa: ControleTaxa | None = None,
         limite_por_remetente: int = 0,
         janela_taxa_segundos: int = 60,
@@ -84,7 +87,7 @@ class ProcessarInboundMeta:
         self._tenants = tenants
         self._receber = receber
         self._canal = canal
-        self._idempotencia = idempotencia
+        self._atendimentos = atendimentos
         self._controle_taxa = controle_taxa
         self._limite_por_remetente = limite_por_remetente
         self._janela_taxa_segundos = janela_taxa_segundos
@@ -126,6 +129,11 @@ class ProcessarInboundMeta:
         for mensagem in mensagens:
             await self._processar_mensagem(mensagem, escola, resultado)
 
+    async def _liberar(self, wamid: str, reservado: bool, motivo: str) -> None:
+        """Devolve a reserva quando o atendimento não aconteceu."""
+        if reservado and self._atendimentos is not None:
+            await self._atendimentos.falhar(chave=wamid, erro=motivo)
+
     async def _dentro_do_limite(self, origem: str) -> bool:
         """Franquia de mensagens por remetente na janela configurada.
 
@@ -157,15 +165,39 @@ class ProcessarInboundMeta:
             )
             return
 
-        if self._idempotencia is not None and wamid:
-            if not await self._idempotencia.registrar(wamid):
+        # Reserva a mensagem ANTES da LLM. A reentrega da Meta chega justamente durante a
+        # espera pela resposta, e é aqui que ela é reconhecida — inclusive vinda de outra
+        # réplica, porque a reserva está no banco.
+        reservado = True
+        if self._atendimentos is not None and wamid:
+            estado = await self._atendimentos.iniciar(
+                chave=wamid, tenant_id=escola.id, origem=origem
+            )
+            if estado is EstadoAtendimento.CONCLUIDA:
                 resultado.repetidas += 1
-                logger.info("Inbound Meta repetido (wamid %s) — reentrega descartada", wamid)
+                logger.info(
+                    "Inbound Meta repetido (wamid %s): dúvida já sanada — descartado", wamid
+                )
                 return
+            if estado is EstadoAtendimento.EM_ATENDIMENTO:
+                resultado.repetidas += 1
+                logger.info(
+                    "Inbound Meta repetido (wamid %s): já em atendimento em outro "
+                    "processo — descartado",
+                    wamid,
+                )
+                return
+            if estado is EstadoAtendimento.RETOMADO:
+                logger.warning(
+                    "Inbound Meta retomado (wamid %s): a tentativa anterior não concluiu",
+                    wamid,
+                )
+        else:
+            reservado = False
 
-        # Limite de taxa por remetente, DEPOIS da idempotência (uma reentrega da Meta não
-        # pode consumir a franquia do responsável) e ANTES da LLM — que é justamente o
-        # recurso caro que um número em loop queimaria da escola.
+        # Limite de taxa por remetente, DEPOIS da reserva (uma reentrega da Meta não pode
+        # consumir a franquia do responsável) e ANTES da LLM — que é justamente o recurso
+        # caro que um número em loop queimaria da escola.
         if not await self._dentro_do_limite(origem):
             resultado.limitadas += 1
             logger.warning(
@@ -173,19 +205,32 @@ class ProcessarInboundMeta:
                 origem,
                 escola.slug,
             )
+            # Libera a reserva: a mensagem não foi atendida, e deixá-la travada em
+            # "em atendimento" impediria uma retentativa legítima quando a janela abrir.
+            await self._liberar(wamid, reservado, "recusado por limite de taxa")
             return
 
         resultado.recebidas += 1
-        resposta = await self._receber.executar(
-            tenant_id=escola.id, contato=origem, texto=texto
-        )
-
-        # A Meta não aceita a resposta no corpo do webhook: é uma nova chamada à API, saindo
-        # do número da própria escola.
-        if resposta.texto.strip():
-            await self._canal.enviar_texto(
-                contato=origem,
-                texto=resposta.texto,
-                remetente=escola.remetente_canal or None,
+        try:
+            resposta = await self._receber.executar(
+                tenant_id=escola.id, contato=origem, texto=texto
             )
-            resultado.respondidas += 1
+
+            # A Meta não aceita a resposta no corpo do webhook: é uma nova chamada à API,
+            # saindo do número da própria escola.
+            if resposta.texto.strip():
+                await self._canal.enviar_texto(
+                    contato=origem,
+                    texto=resposta.texto,
+                    remetente=escola.remetente_canal or None,
+                )
+                resultado.respondidas += 1
+        except Exception as erro:
+            # Falha na LLM ou no envio: libera a reserva para que a reentrega da Meta —
+            # ou a próxima tentativa — possa atender de verdade, em vez de encontrar a
+            # mensagem marcada como "em atendimento" e descartá-la.
+            await self._liberar(wamid, reservado, f"{type(erro).__name__}: {erro}")
+            raise
+
+        if reservado:
+            await self._atendimentos.concluir(chave=wamid, resumo=resposta.texto[:500])

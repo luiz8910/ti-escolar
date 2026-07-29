@@ -18,6 +18,7 @@ from app.domain.entities import (
     Conversa,
     CotaImpressao,
     Documento,
+    EstadoAtendimento,
     FerramentaSpec,
     FichaMatricula,
     FonteConhecimento,
@@ -199,15 +200,30 @@ class EmailSender(Protocol):
 # Idempotência (reentrega de webhooks)
 # --------------------------------------------------------------------------- #
 @runtime_checkable
-class CacheIdempotencia(Protocol):
-    """Marca chaves já processadas para descartar reentregas.
+class RegistroAtendimento(Protocol):
+    """Estado do atendimento de cada mensagem recebida, para descartar reentregas.
 
     A Meta **reenvia** o webhook quando não recebe o ``200 OK`` a tempo. Sem isso a mesma
-    mensagem do responsável seria atendida (e cobrada na LLM) mais de uma vez.
+    dúvida seria atendida (e cobrada na LLM) mais de uma vez.
+
+    O contrato é de **reserva**, não de consulta: ``iniciar`` tenta reservar a mensagem e
+    devolve o que encontrou. Consultar-e-depois-gravar abriria a janela em que duas
+    réplicas leem "inédita" ao mesmo tempo — que é exatamente o caso da reentrega, já que
+    ela chega enquanto a primeira tentativa ainda está na LLM.
     """
 
-    async def registrar(self, chave: str) -> bool:
-        """``True`` se a chave é inédita (siga o processamento); ``False`` se repetida."""
+    async def iniciar(
+        self, *, chave: str, tenant_id: UUID | None = None, origem: str = ""
+    ) -> EstadoAtendimento: ...
+
+    async def concluir(self, *, chave: str, resumo: str = "") -> None:
+        """Marca a dúvida como sanada (a resposta saiu)."""
+        ...
+
+    async def falhar(self, *, chave: str, erro: str = "") -> None:
+        """Libera a reserva quando o atendimento não terminou, para que a reentrega da
+        Meta possa tentar de novo em vez de encontrar a mensagem eternamente 'em
+        atendimento'."""
         ...
 
 

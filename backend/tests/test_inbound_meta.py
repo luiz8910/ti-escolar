@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from app.application.inbound_use_cases import (
     ProcessarInboundMeta,
     normalizar_origem,
@@ -17,8 +19,8 @@ from app.application.use_cases import (
     RecuperarEEnviarDocumento,
     ResponderDuvida,
 )
-from app.domain.entities import Tenant
-from app.infrastructure.idempotencia import CacheIdempotenciaMemoria
+from app.domain.entities import EstadoAtendimento, Tenant
+from app.infrastructure.atendimento import RegistroAtendimentoMemoria
 from tests.fakes import (
     FakeConversaRepo,
     FakeDocumentSource,
@@ -80,7 +82,7 @@ def _escolas() -> tuple[Tenant, Tenant]:
     return rosa, sao_jose
 
 
-def _montar(tenants: list[Tenant], *, idempotencia=None):
+def _montar(tenants: list[Tenant], *, atendimentos=None):
     conversas = FakeConversaRepo()
     receber = ReceberMensagemRecebida(
         conversas=conversas,
@@ -96,7 +98,7 @@ def _montar(tenants: list[Tenant], *, idempotencia=None):
         tenants=FakeTenantRepoInbound(tenants),
         receber=receber,
         canal=canal,
-        idempotencia=idempotencia,
+        atendimentos=atendimentos,
     )
     return uc, canal, conversas
 
@@ -351,7 +353,7 @@ async def test_mensagem_e_status_no_mesmo_post_convivem():
 # --------------------------------------------------------------------------- #
 async def test_reentrega_do_mesmo_wamid_nao_responde_duas_vezes():
     rosa, _ = _escolas()
-    uc, canal, conversas = _montar([rosa], idempotencia=CacheIdempotenciaMemoria())
+    uc, canal, conversas = _montar([rosa], atendimentos=RegistroAtendimentoMemoria())
     payload = _payload_mensagem(phone_number_id=PID_ROSA, wamid="wamid.unico")
 
     primeira = await uc.executar(payload=payload)
@@ -364,16 +366,69 @@ async def test_reentrega_do_mesmo_wamid_nao_responde_duas_vezes():
 
 async def test_wamids_distintos_nao_se_bloqueiam():
     rosa, _ = _escolas()
-    uc, canal, _ = _montar([rosa], idempotencia=CacheIdempotenciaMemoria())
+    uc, canal, _ = _montar([rosa], atendimentos=RegistroAtendimentoMemoria())
     await uc.executar(payload=_payload_mensagem(phone_number_id=PID_ROSA, wamid="wamid.1"))
     await uc.executar(payload=_payload_mensagem(phone_number_id=PID_ROSA, wamid="wamid.2"))
     assert len(canal.textos) == 2
 
 
-async def test_cache_de_idempotencia_respeita_a_capacidade():
-    cache = CacheIdempotenciaMemoria(capacidade=2)
-    assert await cache.registrar("a") is True
-    assert await cache.registrar("b") is True
-    assert await cache.registrar("a") is False
-    await cache.registrar("c")  # expulsa o menos recente ("b")
-    assert await cache.registrar("b") is True
+async def test_reserva_marca_a_duvida_como_sanada_ao_terminar():
+    """O estado final tem que ser 'concluída', não 'em atendimento' — é o que faz a
+    reentrega tardia ser reconhecida como dúvida já respondida."""
+    rosa, _ = _escolas()
+    registro = RegistroAtendimentoMemoria()
+    uc, _, _ = _montar([rosa], atendimentos=registro)
+
+    await uc.executar(payload=_payload_mensagem(phone_number_id=PID_ROSA, wamid="w.ok"))
+
+    assert registro._registros["w.ok"]["status"] == "concluida"
+    assert await registro.iniciar(chave="w.ok") is EstadoAtendimento.CONCLUIDA
+
+
+async def test_falha_no_atendimento_libera_a_reserva_para_a_retentativa():
+    """Sem liberar, um erro na LLM deixaria a mensagem travada em 'em atendimento' e a
+    reentrega da Meta — que é a chance de acertar — seria descartada."""
+    rosa, _ = _escolas()
+    registro = RegistroAtendimentoMemoria()
+    uc, _, _ = _montar([rosa], atendimentos=registro)
+
+    class CanalQueFalha:
+        async def enviar_texto(self, **kwargs):
+            raise RuntimeError("Graph API fora do ar")
+
+        async def enviar_template(self, **kwargs):
+            return "x"
+
+        async def enviar_documento(self, **kwargs):
+            return "x"
+
+    uc._canal = CanalQueFalha()
+    payload = _payload_mensagem(phone_number_id=PID_ROSA, wamid="w.falha")
+
+    with pytest.raises(RuntimeError):
+        await uc.executar(payload=payload)
+
+    assert registro._registros["w.falha"]["status"] == "falhou"
+    # A retentativa consegue retomar a reserva em vez de esbarrar nela.
+    assert await registro.iniciar(chave="w.falha") is EstadoAtendimento.RETOMADO
+
+
+async def test_reserva_viva_de_outro_processo_bloqueia_o_atendimento_duplo():
+    """A reentrega chega enquanto a primeira ainda espera a LLM: nesse instante o estado
+    é 'em atendimento', não 'concluída'. Um cache booleano não distinguiria os dois."""
+    registro = RegistroAtendimentoMemoria()
+    assert await registro.iniciar(chave="w.x") is EstadoAtendimento.NOVO
+    assert await registro.iniciar(chave="w.x") is EstadoAtendimento.EM_ATENDIMENTO
+
+
+async def test_reserva_abandonada_pode_ser_retomada():
+    """Se o processo cai no meio, a mensagem não pode ficar travada para sempre."""
+    registro = RegistroAtendimentoMemoria(reserva_abandonada_segundos=0)
+    await registro.iniciar(chave="w.y")
+    assert await registro.iniciar(chave="w.y") is EstadoAtendimento.RETOMADO
+
+
+async def test_mensagem_sem_wamid_e_atendida():
+    """Sem id não há como deduplicar; perder a resposta é pior que uma duplicata rara."""
+    registro = RegistroAtendimentoMemoria()
+    assert await registro.iniciar(chave="") is EstadoAtendimento.NOVO

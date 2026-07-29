@@ -926,6 +926,25 @@ class MessageQuota:
         return self.ilimitado or self.enviados + quantidade <= self.limite_diario
 
 
+class EstadoAtendimento(str, enum.Enum):
+    """Em que pé está o atendimento de uma mensagem recebida (§9e.1).
+
+    Substitui o antigo "já vi este wamid, sim/não". A diferença que importa é entre
+    ``EM_ATENDIMENTO`` e ``CONCLUIDA``: a reentrega da Meta chega tipicamente **enquanto**
+    a primeira ainda está esperando a LLM, e um cache booleano de processo não distingue
+    isso de uma dúvida já respondida — nem enxerga o que a outra réplica está fazendo.
+    """
+
+    # A mensagem é inédita e acabou de ser reservada por este processo.
+    NOVO = "novo"
+    # Havia uma reserva anterior abandonada (processo caiu / falhou) e foi retomada.
+    RETOMADO = "retomado"
+    # Outro processo (ou este, antes) está atendendo agora — não atender de novo.
+    EM_ATENDIMENTO = "em_atendimento"
+    # A dúvida já foi sanada; a resposta já saiu para o responsável.
+    CONCLUIDA = "concluida"
+
+
 @dataclass(frozen=True)
 class ResultadoTaxa:
     """Veredito de um limite de taxa sobre uma chave (IP, e-mail, telefone).

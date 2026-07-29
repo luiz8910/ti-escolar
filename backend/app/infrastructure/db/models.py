@@ -705,3 +705,35 @@ class ControleTaxaORM(Base):
     chave: Mapped[str] = mapped_column(String(200), primary_key=True)
     janela_inicio: Mapped[datetime] = mapped_column(index=True)
     contador: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# --------------------------------------------------------------------------- #
+# Infra de produção · atendimento do inbound (idempotência durável)
+# --------------------------------------------------------------------------- #
+class InboundAtendimentoORM(Base):
+    """Estado do atendimento de cada mensagem recebida, chaveado pelo wamid da Meta.
+
+    Existe para que a reentrega do webhook — que chega enquanto a primeira tentativa
+    ainda está esperando a LLM — não vire uma segunda resposta ao responsável e uma
+    segunda cobrança no provedor. Mora no banco, e não no processo, porque o duplicado
+    frequentemente cai em **outra réplica**, onde um cache de memória nada sabe.
+    """
+
+    __tablename__ = "inbound_atendimento"
+
+    # wamid da Meta (id da mensagem recebida).
+    chave: Mapped[str] = mapped_column(String(200), primary_key=True)
+    # Escola dona da conversa; nulo apenas se a mensagem foi reservada antes do roteamento.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True
+    )
+    # Telefone do responsável (E.164), para rastrear no painel de logs.
+    origem: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # em_atendimento | concluida | falhou
+    status: Mapped[str] = mapped_column(
+        String(20), default="em_atendimento", server_default="em_atendimento", index=True
+    )
+    # Primeiras palavras da resposta enviada — mostra no log o que foi respondido.
+    resumo: Mapped[str] = mapped_column(Text, default="", server_default="")
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+    atualizado_em: Mapped[datetime] = mapped_column()
