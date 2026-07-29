@@ -100,8 +100,15 @@ class FakeConversaView:
         self._conversa = conversa
         self._mensagens = mensagens or []
 
-    async def listar_resumos(self, *, tenant_id):
-        return [r for r in self._resumos if r.conversa.tenant_id == tenant_id]
+    async def listar_resumos(self, *, tenant_id, pagina=None, por_pagina=None):
+        itens = [r for r in self._resumos if r.conversa.tenant_id == tenant_id]
+        if pagina is None or por_pagina is None:
+            return itens
+        inicio = max(0, (pagina - 1) * por_pagina)
+        return itens[inicio : inicio + por_pagina]
+
+    async def contar_conversas(self, *, tenant_id):
+        return len([r for r in self._resumos if r.conversa.tenant_id == tenant_id])
 
     async def obter_conversa(self, *, tenant_id, conversa_id):
         c = self._conversa
@@ -117,8 +124,15 @@ class FakeBroadcastView:
     def __init__(self, broadcasts) -> None:
         self._b = broadcasts
 
-    async def listar(self, *, tenant_id):
-        return [b for b in self._b if b.tenant_id == tenant_id]
+    async def listar(self, *, tenant_id, pagina=None, por_pagina=None):
+        itens = [b for b in self._b if b.tenant_id == tenant_id]
+        if pagina is None or por_pagina is None:
+            return itens
+        inicio = max(0, (pagina - 1) * por_pagina)
+        return itens[inicio : inicio + por_pagina]
+
+    async def contar(self, *, tenant_id):
+        return len([b for b in self._b if b.tenant_id == tenant_id])
 
 
 # --------------------------------------------------------------------------- #
@@ -372,7 +386,7 @@ async def test_listar_conversas_escopa_por_tenant():
             ResumoConversa(conversa=c2, total_mensagens=1),
         ]
     )
-    out = await ListarConversasDaEscola(conversas=repo).executar(tenant_id=t1)
+    out = (await ListarConversasDaEscola(conversas=repo).executar(tenant_id=t1)).itens
     assert [r.conversa.contato for r in out] == ["+5511900000001"]
 
 
@@ -399,8 +413,10 @@ async def test_listar_broadcasts_escopa_por_tenant():
         destinatarios=[DestinatarioBroadcast(contato="+5511900000001")],
     )
     b2 = Broadcast(tenant_id=t2, template_id=uuid.uuid4(), titulo="Outro")
-    out = await ListarBroadcastsDaEscola(broadcasts=FakeBroadcastView([b1, b2])).executar(
-        tenant_id=t1
-    )
+    out = (
+        await ListarBroadcastsDaEscola(broadcasts=FakeBroadcastView([b1, b2])).executar(
+            tenant_id=t1
+        )
+    ).itens
     assert len(out) == 1
     assert out[0].broadcast.titulo == "Reunião de pais"

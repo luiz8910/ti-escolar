@@ -9,6 +9,11 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from app.application.paginacao import (
+    POR_PAGINA_PADRAO,
+    Pagina,
+    normalizar_paginacao,
+)
 from app.domain.entities import AtorAuditoria, RegistroAuditoria
 from app.domain.ports import AuditLogRepository
 
@@ -57,6 +62,11 @@ class ListarAuditoria:
         self._auditoria = auditoria
 
     async def executar(
-        self, *, tenant_id: UUID, limite: int = 200
-    ) -> list[RegistroAuditoria]:
-        return await self._auditoria.listar(tenant_id=tenant_id, limite=limite)
+        self, *, tenant_id: UUID, pagina: int = 1, por_pagina: int = POR_PAGINA_PADRAO
+    ) -> Pagina[RegistroAuditoria]:
+        pagina, por_pagina = normalizar_paginacao(pagina, por_pagina)
+        itens = await self._auditoria.listar(
+            tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+        )
+        total = await self._auditoria.contar(tenant_id=tenant_id)
+        return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)

@@ -136,7 +136,9 @@ async def test_filtrar_alunos_por_serie():
     await cadastrar.executar(tenant_id=TENANT, nome="A", sala_id=s1.id)
     await cadastrar.executar(tenant_id=TENANT, nome="B", sala_id=s2.id)
 
-    da_s1 = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, sala_id=s1.id)
+    da_s1 = (
+        await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, sala_id=s1.id)
+    ).itens
     assert [a.nome for a in da_s1] == ["A"]
 
 
@@ -157,13 +159,17 @@ async def test_desativar_aluno_preserva_o_registro():
     assert desativado.desativado_em is not None
     assert desativado.motivo_desativacao == "Transferido para outra escola"
     # Continua existindo: some da lista de matriculados, não da base.
-    assert await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT) != []
-    assert await ListarAlunos(alunos=alunos).executar(
-        tenant_id=TENANT, apenas_ativos=True
-    ) == []
-    ex_alunos = await ListarAlunos(alunos=alunos).executar(
-        tenant_id=TENANT, apenas_ativos=False
-    )
+    assert (await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT)).itens != []
+    assert (
+        await ListarAlunos(alunos=alunos).executar(
+            tenant_id=TENANT, apenas_ativos=True
+        )
+    ).itens == []
+    ex_alunos = (
+        await ListarAlunos(alunos=alunos).executar(
+            tenant_id=TENANT, apenas_ativos=False
+        )
+    ).itens
     assert [a.id for a in ex_alunos] == [aluno.id]
 
 
@@ -234,7 +240,7 @@ async def test_excluir_serie_com_alunos_exige_destino():
 
     # Nem a série nem os alunos foram tocados.
     assert await salas.obter(tenant_id=TENANT, sala_id=sala.id) is not None
-    assert len(await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT)) == 1
+    assert (await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT)).total == 1
 
 
 async def test_excluir_serie_vazia_dispensa_destino():

@@ -10,6 +10,11 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from app.application.paginacao import (  # noqa: F401 — reexportado por conveniência
+    POR_PAGINA_MAXIMO,
+    POR_PAGINA_PADRAO,
+    normalizar_paginacao,
+)
 from app.domain.entities import (
     AtendimentoInbound,
     NivelLog,
@@ -17,20 +22,9 @@ from app.domain.entities import (
     ResumoLogs,
 )
 
-# Página pequena por padrão: log é para investigar, não para rolar. O teto impede que um
-# `?por_pagina=100000` transforme a tela de diagnóstico no próximo incidente.
-POR_PAGINA_PADRAO = 10
-POR_PAGINA_MAXIMO = 200
+# A régua de paginação é a mesma de todas as listagens (§ item 7): reexportada aqui só
+# para quem já importava daqui.
 JANELA_MAXIMA_HORAS = 24 * 30
-
-
-def normalizar_paginacao(
-    pagina: int | None, por_pagina: int | None
-) -> tuple[int, int]:
-    """Página ≥ 1 e tamanho dentro do teto — a origem é o cliente, não se confia nela."""
-    p = max(1, int(pagina or 1))
-    tamanho = int(por_pagina or POR_PAGINA_PADRAO)
-    return p, max(1, min(tamanho, POR_PAGINA_MAXIMO))
 
 
 @dataclass(frozen=True)

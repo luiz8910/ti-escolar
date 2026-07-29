@@ -17,6 +17,12 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Paginacao,
+  salvarTamanhoPreferido,
+  tamanhoPreferido,
+  type PaginaMeta,
+} from "@/components/ui/Paginacao";
 import { cn } from "@/components/ui/cn";
 import { ChatBubbleIcon } from "@/components/ui/icons";
 
@@ -38,9 +44,15 @@ export default function HistoricoConversas() {
   const [conversas, setConversas] = useState<ConversaResumo[]>([]);
   const [carregando, setCarregando] = useState(true);
 
+  const [meta, setMeta] = useState<PaginaMeta | null>(null);
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(() => tamanhoPreferido("conversas"));
+
   const recarregar = useCallback(async () => {
-    setConversas(await listarConversas(tenantEmFoco()));
-  }, []);
+    const resultado = await listarConversas(tenantEmFoco(), pagina, porPagina);
+    setConversas(resultado.itens);
+    setMeta(resultado.meta);
+  }, [pagina, porPagina]);
 
   useEffect(() => {
     const s = getSessao();
@@ -84,14 +96,33 @@ export default function HistoricoConversas() {
         {carregando ? (
           <p className="text-sm text-n-400">Carregando…</p>
         ) : (
-          <Conversas conversas={conversas} />
+          <Conversas
+            conversas={conversas}
+            meta={meta}
+            onPagina={setPagina}
+            onTamanho={(t) => {
+              salvarTamanhoPreferido("conversas", t);
+              setPorPagina(t);
+              setPagina(1);
+            }}
+          />
         )}
       </div>
     </AppShell>
   );
 }
 
-function Conversas({ conversas }: { conversas: ConversaResumo[] }) {
+function Conversas({
+  conversas,
+  meta,
+  onPagina,
+  onTamanho,
+}: {
+  conversas: ConversaResumo[];
+  meta: PaginaMeta | null;
+  onPagina: (p: number) => void;
+  onTamanho: (t: number) => void;
+}) {
   const toast = useToast();
   const [aberta, setAberta] = useState<ConversaDetalhe | null>(null);
   const [carregandoId, setCarregandoId] = useState<string | null>(null);
@@ -149,6 +180,14 @@ function Conversas({ conversas }: { conversas: ConversaResumo[] }) {
               );
             })}
           </div>
+        )}
+        {meta && (
+          <Paginacao
+            meta={meta}
+            onPagina={onPagina}
+            onTamanho={onTamanho}
+            rotulo="conversa(s)"
+          />
         )}
       </Card>
 

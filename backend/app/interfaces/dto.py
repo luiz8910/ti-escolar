@@ -1119,3 +1119,30 @@ class AtendimentoInboundSaida(BaseModel):
     tenant_nome: str = ""
     criado_em: datetime
     atualizado_em: datetime
+
+
+# Envelopes paginados das listagens (item 7). O formato é sempre {itens, meta}, para o
+# painel montar o mesmo paginador em qualquer tela.
+class ConversasPaginaSaida(BaseModel):
+    itens: list[ConversaResumoSaida]
+    meta: PaginaMeta
+
+
+class BroadcastsPaginaSaida(BaseModel):
+    itens: list[BroadcastResumoSaida]
+    meta: PaginaMeta
+
+
+class AuditoriaPaginaSaida(BaseModel):
+    itens: list[RegistroAuditoriaSaida]
+    meta: PaginaMeta
+
+
+class AlunosPaginaSaida(BaseModel):
+    itens: list[AlunoSaida]
+    meta: PaginaMeta
+
+
+class PaisPaginaSaida(BaseModel):
+    itens: list[PaiSaida]
+    meta: PaginaMeta

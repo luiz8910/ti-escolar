@@ -48,11 +48,12 @@ export default function SalasEPais() {
   const recarregar = useCallback(async () => {
     const [ss, ps, cobs] = await Promise.all([
       listarSalas(),
-      listarPais(),
+      listarPais(1, 200),
       coberturaDasSalas(),
     ]);
     setSalas(ss);
-    setPais(ps);
+    // Cadastro de pais da escola: usado para vincular às turmas, precisa do conjunto.
+    setPais(ps.itens);
     setCoberturas(Object.fromEntries(cobs.map((c) => [c.sala_id, c])));
     setSelecionada((atual) => (atual ? ss.find((s) => s.id === atual.id) ?? null : null));
   }, []);
@@ -289,18 +290,24 @@ function ExcluirSalaModal({
   const [alunos, setAlunos] = useState<Aluno[] | null>(null); // null = carregando
   const [destinoId, setDestinoId] = useState("");
   const [novaSerie, setNovaSerie] = useState("");
+  const [totalAlunos, setTotalAlunos] = useState(0);
   const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
-    listarAlunos(sala.id)
-      .then(setAlunos)
+    listarAlunos(sala.id, undefined, 1, 200)
+      .then((p) => {
+        setAlunos(p.itens);
+        // O total vem do servidor: o diálogo precisa saber quantos alunos a série tem,
+        // não quantos couberam na página.
+        setTotalAlunos(p.meta.total);
+      })
       .catch(() => {
         setAlunos([]);
         toast({ tone: "danger", title: "Falha ao verificar alunos da série." });
       });
   }, [sala.id, toast]);
 
-  const total = alunos?.length ?? 0;
+  const total = totalAlunos;
   const outras = salas.filter((s) => s.id !== sala.id);
   const criandoSerie = destinoId === "__nova__";
 

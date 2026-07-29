@@ -16,6 +16,12 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Paginacao,
+  salvarTamanhoPreferido,
+  tamanhoPreferido,
+  type PaginaMeta,
+} from "@/components/ui/Paginacao";
 import { cn } from "@/components/ui/cn";
 import { FileIcon, SparkIcon, UsersIcon } from "@/components/ui/icons";
 
@@ -47,9 +53,15 @@ export default function HistoricoAuditoria() {
   const [carregando, setCarregando] = useState(true);
   const [filtro, setFiltro] = useState<"todos" | "usuario" | "llm">("todos");
 
+  const [meta, setMeta] = useState<PaginaMeta | null>(null);
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(() => tamanhoPreferido("auditoria"));
+
   const recarregar = useCallback(async () => {
-    setRegistros(await listarAuditoria(tenantEmFoco()));
-  }, []);
+    const resultado = await listarAuditoria(tenantEmFoco(), pagina, porPagina);
+    setRegistros(resultado.itens);
+    setMeta(resultado.meta);
+  }, [pagina, porPagina]);
 
   useEffect(() => {
     const s = getSessao();
@@ -123,6 +135,18 @@ export default function HistoricoAuditoria() {
                 <Registro key={r.id} registro={r} />
               ))}
             </div>
+            {meta && (
+              <Paginacao
+                meta={meta}
+                onPagina={setPagina}
+                onTamanho={(t) => {
+                  salvarTamanhoPreferido("auditoria", t);
+                  setPorPagina(t);
+                  setPagina(1);
+                }}
+                rotulo="registro(s)"
+              />
+            )}
           </Card>
         )}
       </div>

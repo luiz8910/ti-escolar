@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.application.cadastro_use_cases import (
     AtribuirProfessorASala,
@@ -76,7 +76,11 @@ from app.interfaces.deps import (
     get_professor_repo,
     get_sala_repo,
 )
+from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
 from app.interfaces.dto import (
+    AlunosPaginaSaida,
+    PaginaMeta,
+    PaisPaginaSaida,
     AlunoAtualizar,
     AlunoEntrada,
     AlunoResumoSaida,
@@ -138,6 +142,16 @@ def _cobertura_saida(c: CoberturaContatosSala) -> CoberturaSalaSaida:
             AlunoResumoSaida(id=a.id, nome=a.nome, matricula=a.matricula)
             for a in c.alunos_sem_contato
         ],
+    )
+
+
+def _meta(pagina) -> PaginaMeta:
+    """Traduz a ``Pagina`` do domínio no metadado que o painel consome."""
+    return PaginaMeta(
+        pagina=pagina.pagina,
+        por_pagina=pagina.por_pagina,
+        total=pagina.total,
+        total_paginas=pagina.total_paginas,
     )
 
 
@@ -232,14 +246,21 @@ async def cadastrar_pai(
     return _pai_saida(contato)
 
 
-@router.get("/pais/tenant/{tenant_id}", response_model=list[PaiSaida])
+@router.get("/pais/tenant/{tenant_id}", response_model=PaisPaginaSaida)
 async def listar_pais(
     tenant_id: UUID,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     contatos: SqlContatoRepository = Depends(get_contato_repo),
-) -> list[PaiSaida]:
+) -> PaisPaginaSaida:
     _exige_acesso_tenant(usuario, tenant_id)
-    return [_pai_saida(c) for c in await ListarPais(contatos=contatos).executar(tenant_id=tenant_id)]
+    resultado = await ListarPais(contatos=contatos).executar(
+        tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+    )
+    return PaisPaginaSaida(
+        itens=[_pai_saida(c) for c in resultado.itens], meta=_meta(resultado)
+    )
 
 
 @router.put("/pais/{contato_id}", response_model=PaiSaida)
@@ -505,20 +526,28 @@ async def cadastrar_aluno(
     return _aluno_saida(aluno)
 
 
-@router.get("/alunos/tenant/{tenant_id}", response_model=list[AlunoSaida])
+@router.get("/alunos/tenant/{tenant_id}", response_model=AlunosPaginaSaida)
 async def listar_alunos(
     tenant_id: UUID,
     sala_id: UUID | None = None,
     apenas_ativos: bool | None = None,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-) -> list[AlunoSaida]:
+) -> AlunosPaginaSaida:
     """``apenas_ativos``: omitido = todos; ``true`` = matriculados; ``false`` = ex-alunos."""
     _exige_acesso_tenant(usuario, tenant_id)
-    encontrados = await ListarAlunos(alunos=alunos).executar(
-        tenant_id=tenant_id, sala_id=sala_id, apenas_ativos=apenas_ativos
+    resultado = await ListarAlunos(alunos=alunos).executar(
+        tenant_id=tenant_id,
+        sala_id=sala_id,
+        apenas_ativos=apenas_ativos,
+        pagina=pagina,
+        por_pagina=por_pagina,
     )
-    return [_aluno_saida(a) for a in encontrados]
+    return AlunosPaginaSaida(
+        itens=[_aluno_saida(a) for a in resultado.itens], meta=_meta(resultado)
+    )
 
 
 @router.get("/alunos/{aluno_id}", response_model=AlunoSaida)

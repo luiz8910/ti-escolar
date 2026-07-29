@@ -59,7 +59,7 @@ async def test_registrar_e_listar_escopado_por_tenant():
         ator=AtorAuditoria.USUARIO, acao="grupo.criar", tenant_id=OUTRO_TENANT
     )
 
-    registros = await ListarAuditoria(auditoria=repo).executar(tenant_id=TENANT)
+    registros = (await ListarAuditoria(auditoria=repo).executar(tenant_id=TENANT)).itens
     assert [r.acao for r in registros] == ["login"]
     assert registros[0].ator_nome == "Ana"
 
@@ -72,7 +72,10 @@ async def test_listar_ordena_mais_recentes_primeiro_e_respeita_limite():
             ator=AtorAuditoria.USUARIO, acao=f"acao{i}", tenant_id=TENANT
         )
 
-    registros = await ListarAuditoria(auditoria=repo).executar(tenant_id=TENANT, limite=2)
+    pagina = await ListarAuditoria(auditoria=repo).executar(
+        tenant_id=TENANT, por_pagina=2
+    )
+    registros = pagina.itens
     assert len(registros) == 2
     # Os mais recentes (acao4, acao3) vêm primeiro.
     assert registros[0].acao == "acao4"
@@ -186,9 +189,11 @@ async def test_listar_broadcasts_resolve_nome_do_template():
     repo = FakeBroadcastRepo()
     await repo.salvar(_broadcast(template.id))
 
-    itens = await ListarBroadcastsDaEscola(
-        broadcasts=repo, templates=FakeTemplateRepo(template)
-    ).executar(tenant_id=TENANT)
+    itens = (
+        await ListarBroadcastsDaEscola(
+            broadcasts=repo, templates=FakeTemplateRepo(template)
+        ).executar(tenant_id=TENANT)
+    ).itens
 
     assert len(itens) == 1
     assert itens[0].template_nome == "aviso_reuniao"

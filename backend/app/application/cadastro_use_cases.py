@@ -10,6 +10,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
+from app.application.paginacao import (
+    POR_PAGINA_PADRAO,
+    Pagina,
+    normalizar_paginacao,
+)
 from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Professor, Sala
 from app.domain.ports import (
     AlunoRepository,
@@ -60,8 +65,15 @@ class ListarPais:
     def __init__(self, *, contatos: ContatoRepository) -> None:
         self._contatos = contatos
 
-    async def executar(self, *, tenant_id: UUID) -> list[Contato]:
-        return await self._contatos.listar(tenant_id=tenant_id)
+    async def executar(
+        self, *, tenant_id: UUID, pagina: int = 1, por_pagina: int = POR_PAGINA_PADRAO
+    ) -> Pagina[Contato]:
+        pagina, por_pagina = normalizar_paginacao(pagina, por_pagina)
+        itens = await self._contatos.listar(
+            tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+        )
+        total = await self._contatos.contar(tenant_id=tenant_id)
+        return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
 
 
 class AtualizarPai:
@@ -365,11 +377,22 @@ class ListarAlunos:
     async def executar(
         self, *, tenant_id: UUID, sala_id: UUID | None = None,
         apenas_ativos: bool | None = None,
-    ) -> list[Aluno]:
+        pagina: int = 1,
+        por_pagina: int = POR_PAGINA_PADRAO,
+    ) -> Pagina[Aluno]:
         """``apenas_ativos=None`` traz matriculados e ex-alunos; ``True``/``False`` filtra."""
-        return await self._alunos.listar(
+        pagina, por_pagina = normalizar_paginacao(pagina, por_pagina)
+        itens = await self._alunos.listar(
+            tenant_id=tenant_id,
+            sala_id=sala_id,
+            apenas_ativos=apenas_ativos,
+            pagina=pagina,
+            por_pagina=por_pagina,
+        )
+        total = await self._alunos.contar(
             tenant_id=tenant_id, sala_id=sala_id, apenas_ativos=apenas_ativos
         )
+        return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
 
 
 class ObterAluno:

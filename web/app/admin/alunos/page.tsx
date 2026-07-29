@@ -33,22 +33,43 @@ import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon } from "@/components/ui/icons";
+import {
+  Paginacao,
+  salvarTamanhoPreferido,
+  tamanhoPreferido,
+  type PaginaMeta,
+} from "@/components/ui/Paginacao";
 
 export default function Alunos() {
   const router = useRouter();
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
+  const [meta, setMeta] = useState<PaginaMeta | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
   const [pais, setPais] = useState<Pai[]>([]);
   const [filtroSala, setFiltroSala] = useState("");
+  // Filtro e paginação vão para o servidor: a lista de alunos cresce todo ano e não
+  // pode ser carregada inteira só para exibir uma tela.
+  const [situacao, setSituacao] = useState<"ativos" | "ex" | "todos">("ativos");
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(() => tamanhoPreferido("alunos"));
   const toast = useToast();
 
   const recarregar = useCallback(async () => {
-    const [as, ss, ps] = await Promise.all([listarAlunos(), listarSalas(), listarPais()]);
-    setAlunos(as);
+    const apenasAtivos =
+      situacao === "todos" ? undefined : situacao === "ativos" ? true : false;
+    const [as, ss, ps] = await Promise.all([
+      listarAlunos(filtroSala || undefined, apenasAtivos, pagina, porPagina),
+      listarSalas(),
+      // Lista de seleção de responsáveis (para vincular a um aluno): precisa do
+      // conjunto, não de uma página.
+      listarPais(1, 200),
+    ]);
+    setAlunos(as.itens);
+    setMeta(as.meta);
     setSalas(ss);
-    setPais(ps);
-  }, []);
+    setPais(ps.itens);
+  }, [filtroSala, situacao, pagina, porPagina]);
 
   useEffect(() => {
     const s = getSessao();
@@ -64,11 +85,6 @@ export default function Alunos() {
     logout();
     router.replace("/admin/login");
   }
-
-  const visiveis = useMemo(
-    () => (filtroSala ? alunos.filter((a) => a.sala_id === filtroSala) : alunos),
-    [alunos, filtroSala],
-  );
 
   if (!usuario) return null;
 
@@ -87,11 +103,26 @@ export default function Alunos() {
         <ImportarAlunos onMudou={recarregar} />
         <AlunoForm salas={salas} onMudou={recarregar} />
         <ListaAlunos
-          alunos={visiveis}
+          alunos={alunos}
+          meta={meta}
           salas={salas}
           pais={pais}
           filtroSala={filtroSala}
-          onFiltrar={setFiltroSala}
+          onFiltrar={(v) => {
+            setFiltroSala(v);
+            setPagina(1);
+          }}
+          situacao={situacao}
+          onSituacao={(v) => {
+            setSituacao(v);
+            setPagina(1);
+          }}
+          onPagina={setPagina}
+          onTamanho={(t) => {
+            salvarTamanhoPreferido("alunos", t);
+            setPorPagina(t);
+            setPagina(1);
+          }}
           onMudou={recarregar}
         />
       </div>
@@ -429,22 +460,30 @@ function ImportarAlunosModal({
 // --------------------------------------------------------------------------- //
 function ListaAlunos({
   alunos,
+  meta,
   salas,
   pais,
   filtroSala,
   onFiltrar,
+  situacao,
+  onSituacao,
+  onPagina,
+  onTamanho,
   onMudou,
 }: {
   alunos: Aluno[];
+  meta: PaginaMeta | null;
   salas: Sala[];
   pais: Pai[];
   filtroSala: string;
   onFiltrar: (v: string) => void;
+  /** Ex-alunos acumulam ano após ano: a lista abre nos matriculados. */
+  situacao: "ativos" | "ex" | "todos";
+  onSituacao: (v: "ativos" | "ex" | "todos") => void;
+  onPagina: (p: number) => void;
+  onTamanho: (t: number) => void;
   onMudou: () => Promise<void>;
 }) {
-  // Ex-alunos acumulam ano após ano; a lista abre nos matriculados e o filtro traz o
-  // resto quando alguém precisa consultar quem já passou pela escola.
-  const [situacao, setSituacao] = useState<"ativos" | "ex" | "todos">("ativos");
   const toast = useToast();
   const [editando, setEditando] = useState<Aluno | null>(null);
   const [gerenciando, setGerenciando] = useState<Aluno | null>(null);
@@ -475,21 +514,17 @@ function ListaAlunos({
     }
   }
 
-  const visiveis = alunos.filter((a) =>
-    situacao === "todos" ? true : situacao === "ativos" ? a.ativo : !a.ativo,
-  );
-
   return (
     <Card>
       <CardHeader
         title="Alunos cadastrados"
-        count={visiveis.length}
+        count={meta?.total ?? alunos.length}
         action={
           <div className="flex gap-2">
             <Select
               className="w-40"
               value={situacao}
-              onChange={(e) => setSituacao(e.target.value as "ativos" | "ex" | "todos")}
+              onChange={(e) => onSituacao(e.target.value as "ativos" | "ex" | "todos")}
             >
               <option value="ativos">Matriculados</option>
               <option value="ex">Ex-alunos</option>
@@ -520,7 +555,7 @@ function ListaAlunos({
             </tr>
           </thead>
           <tbody>
-            {visiveis.map((a) => (
+            {alunos.map((a) => (
               <Tr key={a.id}>
                 <Td className="font-medium">{a.nome}</Td>
                 <Td className="font-mono text-xs text-n-500">{a.matricula || "—"}</Td>
@@ -590,7 +625,7 @@ function ListaAlunos({
                 </Td>
               </Tr>
             ))}
-            {visiveis.length === 0 && (
+            {alunos.length === 0 && (
               <Tr>
                 <Td colSpan={6} className="text-n-400">
                   {situacao === "ex"
@@ -602,6 +637,10 @@ function ListaAlunos({
           </tbody>
         </Table>
       </TableWrap>
+
+      {meta && (
+        <Paginacao meta={meta} onPagina={onPagina} onTamanho={onTamanho} rotulo="aluno(s)" />
+      )}
 
       {editando && (
         <EditarAlunoModal

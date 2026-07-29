@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
+from app.application.paginacao import (
+    POR_PAGINA_PADRAO,
+    Pagina,
+    normalizar_paginacao,
+)
 from app.domain.entities import (
     Broadcast,
     Conversa,
@@ -440,8 +445,15 @@ class ListarConversasDaEscola:
     def __init__(self, *, conversas: ConversaRepository) -> None:
         self._conversas = conversas
 
-    async def executar(self, *, tenant_id: UUID) -> list[ResumoConversa]:
-        return await self._conversas.listar_resumos(tenant_id=tenant_id)
+    async def executar(
+        self, *, tenant_id: UUID, pagina: int = 1, por_pagina: int = POR_PAGINA_PADRAO
+    ) -> Pagina[ResumoConversa]:
+        pagina, por_pagina = normalizar_paginacao(pagina, por_pagina)
+        itens = await self._conversas.listar_resumos(
+            tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+        )
+        total = await self._conversas.contar_conversas(tenant_id=tenant_id)
+        return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
 
 
 @dataclass
@@ -490,8 +502,13 @@ class ListarBroadcastsDaEscola:
         self._broadcasts = broadcasts
         self._templates = templates
 
-    async def executar(self, *, tenant_id: UUID) -> list[BroadcastComTemplate]:
-        bs = await self._broadcasts.listar(tenant_id=tenant_id)
+    async def executar(
+        self, *, tenant_id: UUID, pagina: int = 1, por_pagina: int = POR_PAGINA_PADRAO
+    ) -> Pagina[BroadcastComTemplate]:
+        pagina, por_pagina = normalizar_paginacao(pagina, por_pagina)
+        bs = await self._broadcasts.listar(
+            tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+        )
         nomes: dict[UUID, str] = {}
         if self._templates is not None:
             for template_id in {b.template_id for b in bs}:
@@ -499,10 +516,12 @@ class ListarBroadcastsDaEscola:
                     tenant_id=tenant_id, template_id=template_id
                 )
                 nomes[template_id] = template.nome if template else ""
-        return [
+        total = await self._broadcasts.contar(tenant_id=tenant_id)
+        itens = [
             BroadcastComTemplate(broadcast=b, template_nome=nomes.get(b.template_id, ""))
             for b in bs
         ]
+        return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
 
 
 @dataclass

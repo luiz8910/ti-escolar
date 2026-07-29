@@ -68,8 +68,10 @@ export default function EscolaDetalhePage() {
     ]);
     setEscola(e);
     setFicha(f);
-    setConversas(cs);
-    setBroadcasts(bs);
+    // Painel-resumo da escola: a primeira página já dá o panorama; o histórico completo
+    // (com paginação) fica nas telas de HISTÓRICO.
+    setConversas(cs.itens);
+    setBroadcasts(bs.itens);
   }, [tenantId]);
 
   useEffect(() => {

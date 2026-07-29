@@ -513,10 +513,15 @@ export async function notificarVencimento(): Promise<AvisoLicenca[]> {
 }
 
 // --------------------------- conversas e broadcasts ------------------------ //
-export async function listarConversas(tenantId: string): Promise<ConversaResumo[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/conversas`, {
-    headers: authHeaders(),
-  });
+export async function listarConversas(
+  tenantId: string,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<ConversaResumo>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/conversas${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar conversas`);
   return resp.json();
 }
@@ -533,10 +538,15 @@ export async function obterConversa(
   return resp.json();
 }
 
-export async function listarBroadcasts(tenantId: string): Promise<BroadcastResumo[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/broadcasts`, {
-    headers: authHeaders(),
-  });
+export async function listarBroadcasts(
+  tenantId: string,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<BroadcastResumo>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/broadcasts${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar mensagens em massa`);
   return resp.json();
 }
@@ -554,10 +564,15 @@ export async function obterBroadcast(
 }
 
 // --------------------------- auditoria ------------------------------------ //
-export async function listarAuditoria(tenantId: string): Promise<RegistroAuditoria[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/auditoria`, {
-    headers: authHeaders(),
-  });
+export async function listarAuditoria(
+  tenantId: string,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<RegistroAuditoria>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/auditoria${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar a auditoria`);
   return resp.json();
 }
@@ -588,10 +603,14 @@ async function jsonOuErro<T>(resp: Response, contexto: string): Promise<T> {
 }
 
 // ----- pais (CRUD) ----- //
-export async function listarPais(): Promise<Pai[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}`, {
-    headers: authHeaders(),
-  });
+export async function listarPais(
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<Pai>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   return jsonOuErro(resp, "listar pais");
 }
 
@@ -780,10 +799,14 @@ export interface Aluno {
 export async function listarAlunos(
   salaId?: string,
   apenasAtivos?: boolean,
-): Promise<Aluno[]> {
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<Aluno>> {
   const params = new URLSearchParams();
   if (salaId) params.set("sala_id", salaId);
   if (apenasAtivos !== undefined) params.set("apenas_ativos", String(apenasAtivos));
+  if (pagina) params.set("pagina", String(pagina));
+  if (porPagina) params.set("por_pagina", String(porPagina));
   const qs = params.toString() ? `?${params.toString()}` : "";
   const resp = await apiFetch(
     `${API_URL}/api/admin/alunos/tenant/${tenantEmFoco()}${qs}`,
@@ -1613,6 +1636,21 @@ export interface PaginaMeta {
   por_pagina: number;
   total: number;
   total_paginas: number;
+}
+
+/** Envelope das listagens paginadas — o mesmo formato em todas as telas. */
+export interface Pagina<T> {
+  itens: T[];
+  meta: PaginaMeta;
+}
+
+/** Monta a query string de paginação; omitir = usa o padrão do back-end (10). */
+function qsPaginacao(pagina?: number, porPagina?: number): string {
+  const params = new URLSearchParams();
+  if (pagina) params.set("pagina", String(pagina));
+  if (porPagina) params.set("por_pagina", String(porPagina));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export interface LogsPagina {
