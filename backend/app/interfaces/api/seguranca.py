@@ -49,6 +49,8 @@ def _config_atual(settings: Settings) -> ConfiguracaoSeguranca:
         rate_limit_login_tentativas=settings.rate_limit_login_tentativas,
         rate_limit_inbound_mensagens=settings.rate_limit_inbound_mensagens,
         seed_demo_habilitado=settings.seed_demo,
+        logs_persistidos=settings.log_persistir,
+        logs_retencao_dias=settings.log_retencao_dias,
     )
 
 

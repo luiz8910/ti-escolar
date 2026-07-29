@@ -1044,3 +1044,75 @@ class PosturaSegurancaSaida(BaseModel):
     ambiente: str
     canal: str
     gerado_em: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Paginação (item 7 do checklist) — usada por todas as listagens paginadas
+# --------------------------------------------------------------------------- #
+class PaginaMeta(BaseModel):
+    """Metadados de uma página. Padrão único para o painel montar o mesmo paginador
+    em qualquer listagem, em vez de cada tela inventar o seu."""
+
+    pagina: int
+    por_pagina: int
+    total: int
+    total_paginas: int
+
+
+# --------------------------------------------------------------------------- #
+# Observabilidade — logs da aplicação (§16)
+# --------------------------------------------------------------------------- #
+class LogSaida(BaseModel):
+    id: UUID
+    criado_em: datetime
+    nivel: str
+    logger: str = ""
+    mensagem: str = ""
+    correlacao_id: str = ""
+    rota: str = ""
+    metodo: str = ""
+    status_code: int | None = None
+    duracao_ms: int | None = None
+    tenant_id: UUID | None = None
+    excecao: str = ""
+    metadados: dict = {}
+
+
+class LogsPaginaSaida(BaseModel):
+    itens: list[LogSaida]
+    meta: PaginaMeta
+    # Loggers vistos na janela — alimenta o filtro sem lista fixa no front.
+    loggers: list[str] = []
+
+
+class ContagemSaida(BaseModel):
+    rotulo: str
+    quantidade: int
+
+
+class ResumoLogsSaida(BaseModel):
+    janela_horas: int
+    total: int
+    erros: int
+    alertas: int
+    requisicoes: int
+    duracao_media_ms: int
+    duracao_p95_ms: int
+    taxa_erro_percentual: float
+    saudavel: bool
+    atendimentos_concluidos: int
+    atendimentos_em_andamento: int
+    atendimentos_falhos: int
+    rotas_mais_lentas: list[ContagemSaida] = []
+    erros_mais_comuns: list[ContagemSaida] = []
+
+
+class AtendimentoInboundSaida(BaseModel):
+    chave: str
+    status: str
+    origem: str = ""
+    resumo: str = ""
+    tenant_id: UUID | None = None
+    tenant_nome: str = ""
+    criado_em: datetime
+    atualizado_em: datetime

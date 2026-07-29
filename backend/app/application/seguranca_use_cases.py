@@ -49,6 +49,9 @@ class ConfiguracaoSeguranca:
     rate_limit_inbound_mensagens: int = 0
     # Seed de demonstração habilitado no ambiente (SEED_DEMO).
     seed_demo_habilitado: bool = False
+    # Observabilidade: logs persistidos e por quantos dias.
+    logs_persistidos: bool = False
+    logs_retencao_dias: int = 0
 
 
 # Segredos que vêm no .env.example e nunca devem sobreviver ao deploy.
@@ -65,7 +68,7 @@ class AvaliarPosturaSeguranca:
                 *self._integridade_webhook(config),
                 *self._autenticacao(config),
                 *self._isolamento(),
-                *self._rastreabilidade(),
+                *self._rastreabilidade(config),
                 *self._exposicao(config),
             ],
             checklist=self._checklist_pre_deploy(config),
@@ -157,13 +160,14 @@ class AvaliarPosturaSeguranca:
                 numero=6,
                 titulo="Tratamento de erro — telas próprias",
                 exigencia="Sem stack trace visível; erro com identificação para suporte.",
-                status=StatusMedida.PENDENTE,
+                status=StatusMedida.ATIVA,
                 situacao=(
-                    "O painel não tem app/error.tsx, app/global-error.tsx nem app/not-found.tsx "
-                    "— erro de runtime cai na tela padrão do Next. No back-end não há "
-                    "exception_handler próprio: a exceção vira o 500 do FastAPI, sem stack "
-                    "trace ao cliente, mas também sem id de correlação para rastrear."
+                    "O painel tem error.tsx, global-error.tsx e not-found.tsx, e o back-end "
+                    "tem handlers próprios: toda resposta de erro carrega o id de correlação "
+                    "(também no cabeçalho X-Request-Id), enquanto o traceback fica no log. É "
+                    "o id que o usuário informa ao suporte e que localiza a falha em /admin/logs."
                 ),
+                medidas_relacionadas=["observabilidade"],
             ),
             ItemChecklist(
                 numero=7,
@@ -182,11 +186,22 @@ class AvaliarPosturaSeguranca:
                 exigencia="Log estruturado somado a alerta de falha crítica.",
                 status=StatusMedida.ATENCAO,
                 situacao=(
-                    "Existe auditoria de negócio (quem fez o quê, incluindo a LLM) e loggers "
-                    "por módulo. Faltam logging estruturado, coletor de exceções e alerta: hoje "
-                    "uma falha em produção só aparece se alguém abrir os logs do Render."
+                    (
+                        "A metade do logging está feita: logging configurado, id de correlação "
+                        "por requisição, persistência no Postgres e painel em /admin/logs, com "
+                        f"retenção de {c.logs_retencao_dias} dias. Falta a outra metade — "
+                        "**alerta ativo**: ninguém é avisado de um erro; é preciso alguém abrir "
+                        "o painel para descobrir. Fica ATENÇÃO até haver notificação "
+                        "(e-mail/push) em falha crítica."
+                    )
+                    if c.logs_persistidos
+                    else (
+                        "Existe auditoria de negócio e loggers por módulo, mas a persistência "
+                        "de log está desligada (LOG_PERSISTIR=false): uma falha em produção só "
+                        "aparece se alguém abrir os logs do provedor no momento certo."
+                    )
                 ),
-                medidas_relacionadas=["auditoria"],
+                medidas_relacionadas=["auditoria", "observabilidade"],
             ),
             ItemChecklist(
                 numero=9,
@@ -371,8 +386,30 @@ class AvaliarPosturaSeguranca:
 
     # -- Rastreabilidade ---------------------------------------------------
 
-    def _rastreabilidade(self) -> list[MedidaSeguranca]:
+    def _rastreabilidade(self, c: ConfiguracaoSeguranca) -> list[MedidaSeguranca]:
         return [
+            MedidaSeguranca(
+                chave="observabilidade",
+                titulo="Log operacional persistido e consultável",
+                categoria="Rastreabilidade",
+                descricao=(
+                    "Toda requisição recebe um id de correlação, e os logs (com traceback) são gravados no Postgres e consultáveis em /admin/logs. Distinto da auditoria: aquela registra decisões de negócio, este registra o que o processo fez."
+                ),
+                risco=(
+                    "Sem log persistido, uma falha em produção só existe enquanto alguém estiver com o painel do Render aberto — e o erro que o usuário relata na segunda-feira já não pode ser localizado."
+                ),
+                status=(
+                    StatusMedida.ATIVA if c.logs_persistidos else StatusMedida.ATENCAO
+                ),
+                detalhe=(
+                    f"Retenção de {c.logs_retencao_dias} dias; a gravação é assíncrona (fila em memória drenada em lote), de modo a não somar latência à resposta."
+                    if c.logs_persistidos
+                    else (
+                        "LOG_PERSISTIR=false: os logs só vão para o stdout do provedor, que é volátil."
+                    )
+                ),
+                referencia="CLAUDE.md §16 · app/infrastructure/logs.py",
+            ),
             MedidaSeguranca(
                 chave="auditoria",
                 titulo="Log de auditoria de ações",

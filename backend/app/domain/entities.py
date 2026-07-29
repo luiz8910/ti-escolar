@@ -926,6 +926,108 @@ class MessageQuota:
         return self.ilimitado or self.enviados + quantidade <= self.limite_diario
 
 
+# --------------------------------------------------------------------------- #
+# Observabilidade — logs da aplicação (§16)
+# --------------------------------------------------------------------------- #
+class NivelLog(str, enum.Enum):
+    """Níveis persistidos. Espelham os do ``logging`` da stdlib, sem DEBUG — que é ruído
+    de desenvolvimento e não deve ocupar linha no banco de produção."""
+
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+    @property
+    def severidade(self) -> int:
+        return {"INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}[self.value]
+
+
+@dataclass
+class RegistroLog:
+    """Uma linha de log da aplicação, consultável no painel.
+
+    Distinto de ``RegistroAuditoria`` (§13), que registra **decisões de negócio** ("quem
+    disparou o quê") e é evidência de compliance. Este aqui é **operacional**: o que o
+    processo fez, quanto demorou e onde quebrou. Misturar os dois transformaria a
+    auditoria em depósito de ruído técnico.
+    """
+
+    nivel: NivelLog
+    mensagem: str
+    logger: str = ""
+    # Id que amarra todas as linhas de uma mesma requisição — é o que se pede ao usuário
+    # que relatou o erro ("qual o código que apareceu na tela?").
+    correlacao_id: str = ""
+    rota: str = ""
+    metodo: str = ""
+    status_code: int | None = None
+    duracao_ms: int | None = None
+    tenant_id: UUID | None = None
+    # Traceback, quando houver.
+    excecao: str = ""
+    metadados: dict = field(default_factory=dict)
+    criado_em: datetime = field(default_factory=_now)
+    id: UUID = field(default_factory=_new_id)
+
+    @property
+    def falha(self) -> bool:
+        return self.nivel in (NivelLog.ERROR, NivelLog.CRITICAL)
+
+
+@dataclass(frozen=True)
+class ContagemRotulada:
+    """Par rótulo/quantidade — usado nos rankings do painel (rotas, loggers, erros)."""
+
+    rotulo: str
+    quantidade: int
+
+
+@dataclass(frozen=True)
+class ResumoLogs:
+    """Visão agregada da janela recente: é a tela de abertura do painel de logs."""
+
+    janela_horas: int
+    total: int
+    erros: int
+    alertas: int
+    requisicoes: int
+    # Latência das requisições na janela (ms).
+    duracao_media_ms: int
+    duracao_p95_ms: int
+    # Atendimentos do WhatsApp na janela (o análogo das "filas" do Horizon).
+    atendimentos_concluidos: int
+    atendimentos_em_andamento: int
+    atendimentos_falhos: int
+    rotas_mais_lentas: list[ContagemRotulada] = field(default_factory=list)
+    erros_mais_comuns: list[ContagemRotulada] = field(default_factory=list)
+
+    @property
+    def taxa_erro_percentual(self) -> float:
+        if not self.requisicoes:
+            return 0.0
+        return round(100 * self.erros / self.requisicoes, 2)
+
+    @property
+    def saudavel(self) -> bool:
+        """Sem erro e sem atendimento travado na janela."""
+        return self.erros == 0 and self.atendimentos_falhos == 0
+
+
+@dataclass(frozen=True)
+class AtendimentoInbound:
+    """Estado de um atendimento de WhatsApp, para a visão tipo Horizon."""
+
+    chave: str
+    status: str
+    origem: str
+    resumo: str
+    criado_em: datetime
+    atualizado_em: datetime
+    tenant_id: UUID | None = None
+    tenant_nome: str = ""
+
+
 class EstadoAtendimento(str, enum.Enum):
     """Em que pé está o atendimento de uma mensagem recebida (§9e.1).
 

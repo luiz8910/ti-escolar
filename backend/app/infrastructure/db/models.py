@@ -737,3 +737,38 @@ class InboundAtendimentoORM(Base):
     resumo: Mapped[str] = mapped_column(Text, default="", server_default="")
     criado_em: Mapped[datetime] = mapped_column(index=True)
     atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Observabilidade · logs da aplicação (§16)
+# --------------------------------------------------------------------------- #
+class LogAplicacaoORM(Base):
+    """Log operacional persistido, consultável pelo super admin.
+
+    Separado de ``auditoria``: aquela registra decisões de negócio (evidência de
+    compliance), esta registra o que o processo fez e onde quebrou. Guardar os dois na
+    mesma tabela transformaria a auditoria em depósito de ruído técnico.
+    """
+
+    __tablename__ = "logs_aplicacao"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+    nivel: Mapped[str] = mapped_column(String(10), index=True)
+    logger: Mapped[str] = mapped_column(String(120), default="", server_default="", index=True)
+    mensagem: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Amarra todas as linhas de uma mesma requisição (e o código mostrado ao usuário).
+    correlacao_id: Mapped[str] = mapped_column(
+        String(40), default="", server_default="", index=True
+    )
+    rota: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    metodo: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duracao_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Sem FK: um log pode nascer antes de sabermos a escola, ou de um tenant já removido —
+    # e a FK faria a limpeza de escola falhar por causa de linha de log.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True
+    )
+    excecao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    metadados: Mapped[dict] = mapped_column(JSON, default=dict)

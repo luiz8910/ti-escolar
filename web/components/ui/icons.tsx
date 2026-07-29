@@ -158,3 +158,10 @@ export const AlertIcon = (p: IconProps) => (
     <path d="M12 17.2v.1" />
   </svg>
 );
+
+/** Batimento — usado no painel de Logs (observabilidade). */
+export const PulseIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 12h4l2.5-7 5 14L17 12h4" />
+  </svg>
+);

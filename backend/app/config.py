@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     # Senha do professor demo (login do mural do professor — §A1)
     demo_professor_senha: str = "prof123"
 
+    # Observabilidade / logs (§16, item 8 do checklist).
+    log_nivel: str = "INFO"
+    # Log de console em JSON (útil se algum dia houver um coletor externo lendo o stdout).
+    log_json: bool = False
+    # Persistir os logs no Postgres para o painel /admin/logs. Desligue se o volume
+    # crescer além do que o plano do banco comporta.
+    log_persistir: bool = True
+    log_nivel_persistido: str = "INFO"
+    # Teto da fila em memória: cheia, descarta o mais antigo em vez de bloquear a resposta.
+    log_fila_capacidade: int = 2000
+    log_retencao_dias: int = 14
+
     # Limite de taxa de entrada (item 5 do checklist de pré-deploy).
     # Estado compartilhado no Postgres (tabela controle_taxa), para valer entre réplicas.
     rate_limit_habilitado: bool = True

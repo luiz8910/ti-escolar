@@ -1562,3 +1562,113 @@ export async function obterPosturaSeguranca(): Promise<PosturaSeguranca> {
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar a postura de segurança`);
   return resp.json();
 }
+
+// --------------------------------------------------------------------------- //
+// Logs da aplicação (§16) — exclusivo do super admin
+// --------------------------------------------------------------------------- //
+export type NivelLog = "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+
+export interface RegistroLog {
+  id: string;
+  criado_em: string;
+  nivel: NivelLog;
+  logger: string;
+  mensagem: string;
+  correlacao_id: string;
+  rota: string;
+  metodo: string;
+  status_code: number | null;
+  duracao_ms: number | null;
+  tenant_id: string | null;
+  excecao: string;
+  metadados: Record<string, unknown>;
+}
+
+export interface PaginaMeta {
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface LogsPagina {
+  itens: RegistroLog[];
+  meta: PaginaMeta;
+  loggers: string[];
+}
+
+export interface Contagem {
+  rotulo: string;
+  quantidade: number;
+}
+
+export interface ResumoLogs {
+  janela_horas: number;
+  total: number;
+  erros: number;
+  alertas: number;
+  requisicoes: number;
+  duracao_media_ms: number;
+  duracao_p95_ms: number;
+  taxa_erro_percentual: number;
+  saudavel: boolean;
+  atendimentos_concluidos: number;
+  atendimentos_em_andamento: number;
+  atendimentos_falhos: number;
+  rotas_mais_lentas: Contagem[];
+  erros_mais_comuns: Contagem[];
+}
+
+export interface AtendimentoInbound {
+  chave: string;
+  status: string;
+  origem: string;
+  resumo: string;
+  tenant_id: string | null;
+  tenant_nome: string;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface FiltroLogs {
+  nivel?: string;
+  logger_nome?: string;
+  correlacao_id?: string;
+  busca?: string;
+  apenas_falhas?: boolean;
+  pagina?: number;
+  por_pagina?: number;
+}
+
+export async function listarLogs(filtro: FiltroLogs = {}): Promise<LogsPagina> {
+  const params = new URLSearchParams();
+  for (const [chave, valor] of Object.entries(filtro)) {
+    if (valor !== undefined && valor !== "" && valor !== false) params.set(chave, String(valor));
+  }
+  const resp = await apiFetch(`${API_URL}/api/admin/logs?${params.toString()}`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar os logs`);
+  return resp.json();
+}
+
+export async function obterResumoLogs(janelaHoras = 24): Promise<ResumoLogs> {
+  const resp = await apiFetch(`${API_URL}/api/admin/logs/resumo?janela_horas=${janelaHoras}`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar o resumo`);
+  return resp.json();
+}
+
+export async function listarAtendimentosInbound(
+  status = "",
+  limite = 30,
+): Promise<AtendimentoInbound[]> {
+  const params = new URLSearchParams({ limite: String(limite) });
+  if (status) params.set("status", status);
+  const resp = await apiFetch(`${API_URL}/api/admin/logs/atendimentos?${params.toString()}`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar os atendimentos`);
+  return resp.json();
+}

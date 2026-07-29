@@ -81,6 +81,8 @@ def _config(**over) -> ConfiguracaoSeguranca:
         rate_limit_login_tentativas=10,
         rate_limit_inbound_mensagens=20,
         seed_demo_habilitado=False,
+        logs_persistidos=True,
+        logs_retencao_dias=14,
     )
     base.update(over)
     return ConfiguracaoSeguranca(**base)
@@ -242,3 +244,24 @@ def test_checklist_pendente_impede_pronto_para_producao():
     postura = AvaliarPosturaSeguranca().executar(config=_config())
     assert postura.checklist_pendentes > 0
     assert not postura.pronto_para_producao
+
+
+def test_logging_desligado_vira_atencao():
+    """Com LOG_PERSISTIR=false o código continua lá, mas a falha em produção volta a
+    depender de alguém abrir o painel do provedor no momento certo."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config(logs_persistidos=False))
+    assert _medida(postura, "observabilidade").status is StatusMedida.ATENCAO
+
+
+def test_item_8_permanece_atencao_por_falta_de_alerta():
+    """Honestidade: log persistido e painel não são monitoramento. Enquanto ninguém for
+    avisado de um erro, o item continua em dívida — mesmo com tudo o mais pronto."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    item = _item(postura, 8)
+    assert item.status is StatusMedida.ATENCAO
+    assert "alerta" in item.situacao.lower()
+
+
+def test_item_6_atendido_com_telas_de_erro_e_id_de_correlacao():
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    assert _item(postura, 6).status is StatusMedida.ATIVA
