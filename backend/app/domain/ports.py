@@ -35,6 +35,7 @@ from app.domain.entities import (
     RespostaLLM,
     RespostaRapida,
     ResultadoBusca,
+    ResultadoTaxa,
     ResumoConversa,
     ResumoEscola,
     Sala,
@@ -165,6 +166,23 @@ class RateLimiter(Protocol):
     """Throttling da taxa por segundo da API (independente da cota diária)."""
 
     async def aguardar_vaga(self) -> None: ...
+
+
+@runtime_checkable
+class ControleTaxa(Protocol):
+    """Limite de taxa **de entrada**: quantas chamadas uma origem pode fazer por janela.
+
+    Cobre o brute force contra o login e o consumo desenfreado de LLM por um número em
+    loop no webhook. Ao contrário do ``RateLimiter`` (que *espera* uma vaga para não
+    estourar a API da Meta), aqui a chamada excedente é **recusada** — quem está
+    atacando não merece ser enfileirado.
+    """
+
+    async def registrar(
+        self, *, chave: str, limite: int, janela_segundos: int
+    ) -> ResultadoTaxa:
+        """Contabiliza uma tentativa e diz se ela cabe na janela."""
+        ...
 
 
 # --------------------------------------------------------------------------- #

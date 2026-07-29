@@ -60,8 +60,12 @@ from app.infrastructure.factories import criar_canal, criar_embedder, criar_llm
 from app.infrastructure.idempotencia import CacheIdempotenciaMemoria
 from app.infrastructure.messaging.email import LogEmailSender
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
+from app.infrastructure.rate_limit import SqlControleTaxa
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
+# Limite de taxa de ENTRADA (login, inbound). O estado fica no Postgres, então este objeto
+# é só o adaptador — pode ser compartilhado entre requisições e réplicas sem problema.
+_controle_taxa = SqlControleTaxa(SessionLocal)
 # Singleton de processo: precisa sobreviver entre requisições para reconhecer a reentrega
 # de um webhook que a Meta repetiu. Ver os limites declarados em `idempotencia.py`.
 _idempotencia_inbound = CacheIdempotenciaMemoria()
@@ -113,6 +117,11 @@ def get_processar_inbound_meta(
         receber=get_receber_mensagem(session=session, settings=settings),
         canal=criar_canal(settings),
         idempotencia=_idempotencia_inbound,
+        controle_taxa=_controle_taxa,
+        limite_por_remetente=(
+            settings.rate_limit_inbound_mensagens if settings.rate_limit_habilitado else 0
+        ),
+        janela_taxa_segundos=settings.rate_limit_inbound_janela_segundos,
     )
 
 

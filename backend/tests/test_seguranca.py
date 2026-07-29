@@ -77,6 +77,10 @@ def _config(**over) -> ConfiguracaoSeguranca:
         jwt_expira_minutos=480,
         cors_liberado=False,
         app_env="production",
+        rate_limit_habilitado=True,
+        rate_limit_login_tentativas=10,
+        rate_limit_inbound_mensagens=20,
+        seed_demo_habilitado=False,
     )
     base.update(over)
     return ConfiguracaoSeguranca(**base)
@@ -124,12 +128,30 @@ def test_cors_liberado_e_ambiente_nao_produtivo_sao_sinalizados():
     assert _medida(postura, "ambiente").status is StatusMedida.ATENCAO
 
 
-def test_medida_nao_implementada_aparece_como_pendente():
-    """O painel não pode dourar a pílula: o que falta tem que aparecer como falta."""
-    postura = AvaliarPosturaSeguranca().executar(config=_config())
-    assert _medida(postura, "rate_limit_inbound").status is StatusMedida.PENDENTE
-    assert postura.total_pendentes == 1
+def test_medida_existente_mas_desligada_aparece_como_atencao():
+    """O ponto do painel: o caso perigoso não é a medida que falta, é a que existe no
+    código e está desligada no ambiente. Um relatório sim/não esconderia justamente ela."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(rate_limit_habilitado=False)
+    )
+    assert _medida(postura, "rate_limit_login").status is StatusMedida.ATENCAO
+    assert _medida(postura, "rate_limit_inbound").status is StatusMedida.ATENCAO
     assert not postura.pronto_para_producao
+
+
+def test_seed_ligado_em_producao_e_alertado():
+    """Seed em produção despeja escola fictícia e senha de exemplo no banco real."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(seed_demo_habilitado=True, app_env="production")
+    )
+    assert _medida(postura, "seed_producao").status is StatusMedida.ATENCAO
+
+
+def test_seed_ligado_fora_de_producao_nao_e_alarme():
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(seed_demo_habilitado=True, app_env="development")
+    )
+    assert _medida(postura, "seed_producao").status is StatusMedida.ATIVA
 
 
 def test_toda_medida_declara_o_risco_que_cobre():
@@ -170,11 +192,16 @@ def test_todo_item_declara_exigencia_e_situacao():
         assert i.titulo and i.exigencia and i.situacao
 
 
-def test_itens_nao_implementados_aparecem_como_pendentes():
-    """Rate limiting e telas de erro não existem — o painel tem que dizer isso."""
-    postura = AvaliarPosturaSeguranca().executar(config=_config())
-    assert _item(postura, 5).status is StatusMedida.PENDENTE  # rate limiting
-    assert _item(postura, 6).status is StatusMedida.PENDENTE  # telas de erro
+def test_item_de_checklist_reflete_a_configuracao_viva():
+    """O item 5 não é um fato fixo sobre o código: com o limite desligado no ambiente, o
+    checklist tem que voltar a acusar dívida."""
+    ligado = AvaliarPosturaSeguranca().executar(config=_config())
+    assert _item(ligado, 5).status is StatusMedida.ATIVA
+
+    desligado = AvaliarPosturaSeguranca().executar(
+        config=_config(rate_limit_habilitado=False)
+    )
+    assert _item(desligado, 5).status is StatusMedida.ATENCAO
 
 
 def test_reset_de_senha_e_nao_aplicavel_e_nao_conta_como_divida():

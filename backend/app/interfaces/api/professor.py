@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application.comunicacao_interna_use_cases import (
@@ -52,6 +52,7 @@ from app.infrastructure.db.repositories_comunicacao import (
 )
 from app.infrastructure.db.repositories_onda3 import SqlAvisoFaltaRepository
 from app.infrastructure.security import criar_token, decodificar_token
+from app.interfaces.api.rate_limit import limitar_login
 from app.interfaces.deps import (
     get_canal,
     get_contato_repo,
@@ -154,10 +155,16 @@ def _impressao_saida(s) -> ImpressaoSaida:
 
 @router.post("/login", response_model=ProfessorTokenSaida)
 async def login_professor(
+    request: Request,
     payload: ProfessorLoginEntrada,
     professores: SqlProfessorRepository = Depends(get_professor_repo),
     settings: Settings = Depends(get_settings_dep),
 ) -> ProfessorTokenSaida:
+    # Mesmo limite do login do painel: o telefone faz as vezes do e-mail como chave.
+    await limitar_login(
+        request, identificador=payload.telefone, escopo="professor", settings=settings
+    )
+
     professor = await AutenticarProfessor(professores=professores).executar(
         tenant_id=payload.tenant_id, telefone=payload.telefone, senha=payload.senha
     )

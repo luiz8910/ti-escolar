@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application.admin_use_cases import (
@@ -55,6 +55,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlTenantRepository,
     SqlUsuarioRepository,
 )
+from app.interfaces.api.rate_limit import limitar_login
 from app.interfaces.deps import (
     get_audit_repo,
     get_broadcast_repo,
@@ -192,12 +193,17 @@ async def _auditar_usuario(
 # --------------------------------------------------------------------------- #
 @router.post("/login", response_model=TokenSaida)
 async def login(
+    request: Request,
     payload: LoginEntrada,
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
     tenants: SqlTenantRepository = Depends(get_tenant_repo),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
     settings: Settings = Depends(get_settings_dep),
 ) -> TokenSaida:
+    # Antes de tocar no banco: sem isto, o PBKDF2 encarece cada tentativa mas não limita
+    # quantas o atacante faz contra as senhas de admin (item 5 do checklist).
+    await limitar_login(request, identificador=payload.email, escopo="admin", settings=settings)
+
     usuario = await AutenticarUsuario(usuarios=usuarios).executar(
         email=payload.email, senha=payload.senha
     )

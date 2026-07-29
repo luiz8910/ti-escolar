@@ -926,6 +926,23 @@ class MessageQuota:
         return self.ilimitado or self.enviados + quantidade <= self.limite_diario
 
 
+@dataclass(frozen=True)
+class ResultadoTaxa:
+    """Veredito de um limite de taxa sobre uma chave (IP, e-mail, telefone).
+
+    Diferente da ``MessageQuota`` (cota diária de envio, regra da Meta), este é o limite
+    **de entrada**: quantas vezes a mesma origem pode bater numa rota numa janela curta.
+    """
+
+    permitido: bool
+    # Quantas chamadas ainda cabem na janela atual.
+    restantes: int
+    # Segundos até a janela virar — vira o cabeçalho Retry-After no 429.
+    retry_after: int
+    # Quantas chamadas já foram contabilizadas nesta janela (inclui a atual).
+    contador: int = 0
+
+
 # --------------------------------------------------------------------------- #
 # Onda 2 · A2/A4 — Canal interno professor → secretaria (com roteamento por assunto)
 # --------------------------------------------------------------------------- #

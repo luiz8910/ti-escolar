@@ -686,3 +686,22 @@ class SolicitacaoMatriculaORM(Base):
     documentos: Mapped[list] = mapped_column(JSON, default=list)
     criado_em: Mapped[datetime] = mapped_column(index=True)
     atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Infra de produção · rate limiting (item 5 do checklist de pré-deploy)
+# --------------------------------------------------------------------------- #
+class ControleTaxaORM(Base):
+    """Contador de janela fixa por chave, para o limite de taxa de entrada.
+
+    Mora no Postgres — e não em memória — porque o limite precisa valer para o
+    **serviço inteiro**: com duas instâncias no Render, um contador de processo daria
+    ao atacante o dobro das tentativas, e um restart zeraria a contagem.
+    """
+
+    __tablename__ = "controle_taxa"
+
+    # Ex.: "login:ip:203.0.113.7", "login:email:diretor@escola.br", "inbound:+5511...".
+    chave: Mapped[str] = mapped_column(String(200), primary_key=True)
+    janela_inicio: Mapped[datetime] = mapped_column(index=True)
+    contador: Mapped[int] = mapped_column(Integer, default=0)

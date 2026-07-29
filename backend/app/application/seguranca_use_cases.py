@@ -42,6 +42,13 @@ class ConfiguracaoSeguranca:
     cors_liberado: bool
     # Ambiente declarado (APP_ENV): "production" no Render, "development" no local.
     app_env: str
+    # Limite de taxa de entrada (login e inbound). Defaults preservam a leitura de quem
+    # constrói a configuração sem esses sinais.
+    rate_limit_habilitado: bool = True
+    rate_limit_login_tentativas: int = 0
+    rate_limit_inbound_mensagens: int = 0
+    # Seed de demonstração habilitado no ambiente (SEED_DEMO).
+    seed_demo_habilitado: bool = False
 
 
 # Segredos que vêm no .env.example e nunca devem sobreviver ao deploy.
@@ -126,14 +133,25 @@ class AvaliarPosturaSeguranca:
                 numero=5,
                 titulo="Rate limiting",
                 exigencia="Limite em login, reset, cadastro e operações caras.",
-                status=StatusMedida.PENDENTE,
-                situacao=(
-                    "Não existe em lugar nenhum. O ponto mais grave é POST /api/admin/login: "
-                    "brute force livre contra as senhas de administrador (o PBKDF2 encarece "
-                    "cada tentativa, mas não limita quantas). Faltam também teto no webhook "
-                    "inbound e no chat demo, ambos caros por acionarem a LLM."
+                status=(
+                    StatusMedida.ATIVA if c.rate_limit_habilitado else StatusMedida.ATENCAO
                 ),
-                medidas_relacionadas=["rate_limit_inbound"],
+                situacao=(
+                    (
+                        f"Login limitado a {c.rate_limit_login_tentativas} tentativas por "
+                        f"janela (contadas por IP e por e-mail) e inbound a "
+                        f"{c.rate_limit_inbound_mensagens} mensagens por remetente. O "
+                        "contador vive no Postgres (tabela controle_taxa), então vale para "
+                        "todas as réplicas e sobrevive a restart."
+                    )
+                    if c.rate_limit_habilitado
+                    else (
+                        "RATE_LIMIT_HABILITADO=false: o código existe, mas está desligado — "
+                        "brute force livre contra as senhas de administrador e inbound sem "
+                        "teto de consumo de LLM."
+                    )
+                ),
+                medidas_relacionadas=["rate_limit_login", "rate_limit_inbound"],
             ),
             ItemChecklist(
                 numero=6,
@@ -454,18 +472,83 @@ class AvaliarPosturaSeguranca:
                 titulo="Limite de taxa por remetente no inbound",
                 categoria="Exposição",
                 descricao=(
-                    "Limitar quantas mensagens um mesmo telefone pode disparar por minuto no "
-                    "webhook, para conter abuso e custo de LLM."
+                    "Limita quantas mensagens um mesmo telefone pode disparar por janela no "
+                    "webhook. A checagem roda depois da idempotência e antes da LLM, então a "
+                    "mensagem excedente não chega a custar uma chamada ao provedor."
                 ),
                 risco=(
                     "Um único número em loop pode consumir a cota de LLM da escola e gerar "
-                    "custo desproporcional — hoje só há limite de tamanho por mensagem."
+                    "custo desproporcional."
                 ),
-                status=StatusMedida.PENDENTE,
+                status=(
+                    StatusMedida.ATIVA
+                    if c.rate_limit_habilitado and c.rate_limit_inbound_mensagens > 0
+                    else StatusMedida.ATENCAO
+                ),
                 detalhe=(
-                    "Ainda não implementado. Existe apenas MENSAGEM_PAI_MAX_CHARS, que corta "
-                    "mensagem longa sem acionar a LLM."
+                    f"{c.rate_limit_inbound_mensagens} mensagens por remetente por janela; "
+                    "a excedente é descartada e o webhook segue devolvendo 200 à Meta."
+                    if c.rate_limit_habilitado and c.rate_limit_inbound_mensagens > 0
+                    else (
+                        "Desligado: sobra apenas MENSAGEM_PAI_MAX_CHARS, que corta mensagem "
+                        "longa mas não limita quantas chegam."
+                    )
                 ),
-                referencia="CLAUDE.md §G1",
+                referencia="app/application/inbound_use_cases.py",
+            ),
+            MedidaSeguranca(
+                chave="rate_limit_login",
+                titulo="Limite de tentativas de login",
+                categoria="Autenticação",
+                descricao=(
+                    "Conta as tentativas por IP e por identificador (e-mail do admin, "
+                    "telefone do professor) numa janela fixa e recusa o excedente com 429. "
+                    "As duas chaves juntas cobrem o ataque distribuído (que passaria pelo "
+                    "contador de IP) sem permitir trancar a conta alheia só por saber o "
+                    "e-mail."
+                ),
+                risco=(
+                    "Sem limite, o brute force contra a senha de um administrador é livre: o "
+                    "PBKDF2 encarece cada tentativa, mas não limita quantas são feitas."
+                ),
+                status=(
+                    StatusMedida.ATIVA
+                    if c.rate_limit_habilitado and c.rate_limit_login_tentativas > 0
+                    else StatusMedida.ATENCAO
+                ),
+                detalhe=(
+                    f"{c.rate_limit_login_tentativas} tentativas por janela, por IP e por "
+                    "identificador. Contador no Postgres (controle_taxa), compartilhado "
+                    "entre réplicas."
+                    if c.rate_limit_habilitado and c.rate_limit_login_tentativas > 0
+                    else "Desligado por configuração."
+                ),
+                referencia="app/interfaces/api/rate_limit.py",
+            ),
+            MedidaSeguranca(
+                chave="seed_producao",
+                titulo="Seed de demonstração fora de produção",
+                categoria="Exposição",
+                descricao=(
+                    "O seed cria escola fictícia, alunos e logins com senha de exemplo. Ele é "
+                    "bloqueado quando APP_ENV=production e, fora de desenvolvimento, exige "
+                    "que as senhas tenham valor próprio."
+                ),
+                risco=(
+                    "Rodando em produção, o seed insere no banco da escola real dados falsos "
+                    "indistinguíveis dos verdadeiros e um login cuja senha está versionada "
+                    "no repositório."
+                ),
+                status=(
+                    StatusMedida.ATENCAO
+                    if c.seed_demo_habilitado and c.app_env == "production"
+                    else StatusMedida.ATIVA
+                ),
+                detalhe=(
+                    f"SEED_DEMO={'ligado' if c.seed_demo_habilitado else 'desligado'}; "
+                    f"APP_ENV={c.app_env or '(vazio)'}. O provisionamento de produção é o "
+                    "`app.bootstrap`, que cria apenas o super admin."
+                ),
+                referencia="app/bootstrap.py",
             ),
         ]

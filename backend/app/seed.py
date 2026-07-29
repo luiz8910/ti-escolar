@@ -1,7 +1,12 @@
 """Seed de demonstração: escola, conhecimento (RAG indexado) e template aprovado.
 
 Idempotente: usa um tenant fixo (DEMO_TENANT_ID) e não duplica se já existir.
-Executado pelo docker-compose após as migrations.
+
+**Só roda em desenvolvimento/homologação**, sob `SEED_DEMO=true` — a política está em
+`app.bootstrap.avaliar_seed`. Em produção quem provisiona é `python -m app.bootstrap`,
+que cria apenas o super admin. Este módulo cria escola fictícia, alunos, fichas de
+matrícula e logins com senha de exemplo: nada disso pode encostar no banco de uma
+escola real.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from app.application.matricula_use_cases import IniciarMatricula
 from app.application.mural_use_cases import PublicarRecado
 from app.application.respostas_rapidas_use_cases import CriarRespostaRapida
 from app.application.use_cases import IndexarConhecimento
+from app.bootstrap import avaliar_seed
 from app.config import get_settings
 from app.domain.entities import (
     CategoriaSolicitacao,
@@ -169,6 +175,12 @@ _CONHECIMENTO = [
 
 async def _seed() -> None:
     settings = get_settings()
+    decisao = avaliar_seed(settings)
+    if not decisao.permitido:
+        # Sai em silêncio (código 0): o seed é opcional e não pode derrubar o start do
+        # container. O motivo vai para o log do deploy.
+        print("Seed de demonstração NÃO executado —", decisao.motivo)
+        return
     async with SessionLocal() as session:
         # Tenant
         tenant = await session.get(TenantORM, DEMO_TENANT_ID)

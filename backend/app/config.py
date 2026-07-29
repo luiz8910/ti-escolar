@@ -45,7 +45,12 @@ class Settings(BaseSettings):
     # Canal
     message_channel: str = "demo"
 
-    # Super admin (criado no seed)
+    # Seed de demonstração (escola fictícia, alunos, senhas de exemplo).
+    # Default DESLIGADO: o seed nunca deve rodar contra o banco de uma escola real.
+    # Ver a política completa em `app/bootstrap.py::avaliar_seed`.
+    seed_demo: bool = False
+
+    # Super admin (criado no bootstrap, em qualquer ambiente)
     super_admin_email: str = "admin@tiescolar.test"
     super_admin_senha: str = "troque-esta-senha"
     super_admin_nome: str = "Super Admin"
@@ -55,6 +60,20 @@ class Settings(BaseSettings):
     demo_admin_senha: str = "escola123"
     # Senha do professor demo (login do mural do professor — §A1)
     demo_professor_senha: str = "prof123"
+
+    # Limite de taxa de entrada (item 5 do checklist de pré-deploy).
+    # Estado compartilhado no Postgres (tabela controle_taxa), para valer entre réplicas.
+    rate_limit_habilitado: bool = True
+    # Login: tentativas por janela, contadas por IP e por e-mail.
+    rate_limit_login_tentativas: int = 10
+    rate_limit_login_janela_segundos: int = 300
+    # Inbound do webhook: mensagens por janela, por telefone remetente.
+    rate_limit_inbound_mensagens: int = 20
+    rate_limit_inbound_janela_segundos: int = 60
+    # Confiar no X-Forwarded-For para descobrir o IP do cliente. Ligado porque o Render
+    # põe um proxy na frente; desligue se a aplicação for exposta direto (o cabeçalho é
+    # enviado pelo cliente e, sem proxy reescrevendo, é forjável).
+    trust_proxy_headers: bool = True
 
     # Autenticação (JWT) — segredo de assinatura HS256 e validade do token (minutos).
     # Em produção, defina JWT_SECRET com um valor forte e secreto.
@@ -98,6 +117,16 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.backend_cors_origins.split(",") if o.strip()]
+
+    @property
+    def ambiente_producao(self) -> bool:
+        """Ambiente de produção — aceita as grafias usadas pelos provedores de deploy."""
+        return self.app_env.strip().lower() in {"production", "producao", "prod"}
+
+    @property
+    def ambiente_desenvolvimento(self) -> bool:
+        """Máquina do dev / docker-compose local, onde o banco é descartável."""
+        return self.app_env.strip().lower() in {"development", "desenvolvimento", "dev", "local"}
 
 
 @lru_cache
