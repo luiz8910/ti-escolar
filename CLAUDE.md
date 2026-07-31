@@ -1141,3 +1141,47 @@ código sem rodar o `downgrade` deixa o schema à frente da aplicação.
 3. **Telas de erro + handler com id de correlação** (item 6).
 4. **Logging estruturado + alerta** (item 8).
 5. **Testar o rollback** do Render uma vez, com migration envolvida (item 9).
+
+---
+
+## 17. Auditoria LGPD contínua
+
+A base do TI-Escolar é, na prática, um cadastro de **dados pessoais de crianças e
+adolescentes com dado sensível junto** (§6i: `cor_raca`, `laudo_cid`, `nis`, alergia,
+observações de saúde — tudo em JSON de texto claro na `fichas_matricula`). Isso põe o
+produto no ponto mais exigente da LGPD (arts. 11 e 14), então a conformidade é verificada
+por rotina, não por lembrança.
+
+São **duas camadas, separadas pela natureza do risco** — `.github/workflows/lgpd.yml`:
+
+- **Código, no pull request** — o agente **`lgpd-auditor`** (`.claude/agents/`, versionado)
+  audita **só o diff**, e só quando ele toca os caminhos onde dado pessoal é definido,
+  movido ou exposto (entidades, rotas, migrations, casos de uso de ficha/matrícula/
+  importação/exportação/inbound/conhecimento, política e termos). Comenta os achados no PR
+  com `arquivo:linha` e artigo da lei; **não bloqueia o merge** e não substitui parecer
+  jurídico. Exige o secret `ANTHROPIC_API_KEY` — sem ele o job avisa e passa.
+- **Configuração, a cada deploy** — `scripts/postura_ambiente.py` mede o **ambiente no ar**.
+  O código é o mesmo em homolog e em produção; o que difere é a config, e ela muda **por
+  fora do git** (alguém edita uma env var no painel do Render), por isso há também um
+  disparo semanal. É **determinístico e sem LLM** — pagar inferência para reler o mesmo
+  repo a cada deploy seria caro e não repetível.
+
+**As verificações de ambiente são caixa-preta, sem nenhuma credencial**, e isso é decisão de
+projeto: guardar um login de super admin num secret do CI abriria um caminho novo para a
+base inteira — todas as escolas, todas as fichas — maior do que o risco que a checagem
+cobre. O que ela mede, tudo observável de fora: `/health`; o handshake do webhook recusando
+o `verify_token` de exemplo (`changeme`); `POST` no webhook sem `X-Hub-Signature-256`
+devolvendo 403 (prova que `META_VALIDATE_SIGNATURE` está ligado); CORS não ecoando uma
+origem forjada; rota administrativa exigindo token; e as **senhas versionadas no
+`.env.example` não autenticando** — se autenticam, o seed de demonstração rodou ali e quem
+leu o repositório entra.
+
+**Ambientes.** O serviço do Render hoje é **homolog**; **produção ainda não existe**. Por
+isso o job roda em **modo observação** (relata sem reprovar). Quando produção subir,
+acrescente um job igual apontando para a outra URL e com **`--estrito`**, que faz a
+regressão de configuração falhar o build. A URL vem da variável de repositório
+`HOMOLOG_BASE_URL`; sem ela, o job avisa e passa.
+
+Distinto do painel `/admin/seguranca` (§14), que avalia a postura **de dentro** e serve à
+auditoria interna dos sócios: aqui a leitura é **externa**, é a visão de quem está do lado
+de fora da porta.

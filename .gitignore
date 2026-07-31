@@ -20,7 +20,12 @@ npm-debug.log*
 *.tsbuildinfo
 
 # Claude Code (sessão/memória local)
-.claude/
+# `.claude/*` em vez de `.claude/`: o git não consegue re-incluir um caminho cujo
+# diretório-pai está excluído, então negar `.claude/agents/` só funciona se a exclusão
+# for dos filhos. Os agentes são versionados de propósito — valem para a equipe toda,
+# como o CLAUDE.md; sessão, memória e worktrees continuam locais.
+.claude/*
+!.claude/agents/
 
 # OS / editor
 .DS_Store
