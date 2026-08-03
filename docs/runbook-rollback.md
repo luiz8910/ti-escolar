@@ -1,12 +1,28 @@
-# Runbook — rollback de produção
+# Runbook — rollback
 
-> Item 9 do checklist de pré-deploy (§15). O que fazer quando um deploy quebra produção:
+> Item 9 do checklist de pré-deploy (§15). O que fazer quando um deploy quebra o ambiente:
 > onde clicar, o que esperar e o que **não** volta sozinho.
 >
-> **Este runbook nunca foi executado em produção.** Ele descreve o caminho correto a
-> partir da arquitetura do projeto e da documentação dos provedores. A primeira execução
-> deve ser um **ensaio agendado** (§ "Ensaio obrigatório"), não a estreia durante um
-> incidente.
+> **Este runbook nunca foi executado.** Ele descreve o caminho correto a partir da
+> arquitetura do projeto e da documentação dos provedores. A primeira execução deve ser um
+> **ensaio agendado** (§ "Ensaio obrigatório"), não a estreia durante um incidente.
+>
+> ### Qual ambiente é este
+>
+> **O serviço do Render é hoje o de homologação — não existe ambiente de produção
+> separado.** Isso muda duas coisas na leitura deste documento:
+>
+> 1. Enquanto for assim, um rollback aqui **não afeta escola nenhuma**. É exatamente por
+>    isso que o ensaio deve ser feito **agora**, enquanto errar é barato.
+> 2. Quando o ambiente de produção existir, ele terá seu próprio serviço no Render, sua
+>    própria `DATABASE_URL` e seu próprio projeto no Neon. **Confira em qual serviço você
+>    está antes de clicar** — os passos são idênticos, e é justamente essa semelhança que
+>    faz alguém reverter o ambiente errado.
+>
+> Um efeito colateral que vale conferir: com `APP_ENV` diferente de `production`, o seed de
+> demonstração **roda** se `SEED_DEMO=true` (ver §10 do CLAUDE.md). Em homologação isso é o
+> comportamento desejado; ao promover o ambiente a produção, `APP_ENV=production` é o que
+> desliga o seed e passa a exigir senha própria no bootstrap.
 
 ---
 
@@ -122,7 +138,7 @@ alembic current            # confirme em que revisão o banco está
 alembic downgrade -1       # volta uma migration
 alembic current            # confirme que voltou
 
-# Opção B — da sua máquina, apontando para o banco de produção:
+# Opção B — da sua máquina, apontando para o banco do ambiente afetado:
 cd backend
 DATABASE_URL="<connection string do Neon>" .venv/bin/alembic current
 DATABASE_URL="<connection string do Neon>" .venv/bin/alembic downgrade -1
@@ -204,7 +220,7 @@ vez em condições controladas**. Roteiro sugerido, em horário de baixo uso:
 
 1. Faça um commit inócuo (mudar um texto de tela) **acompanhado de uma migration
    aditiva** — para o ensaio exercitar o caso que dá medo, não o trivial.
-2. Deixe subir para produção normalmente.
+2. Deixe subir normalmente pelo pipeline (push na `main`).
 3. Execute o passo 1 (Render) e o passo 2 (Vercel).
 4. Cronometre: **quanto tempo até o serviço voltar?** Esse número é o seu RTO real, e é o
    que você vai poder prometer à escola.
