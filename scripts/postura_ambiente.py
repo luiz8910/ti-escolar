@@ -173,7 +173,7 @@ def checar_cors(base: str) -> Resultado:
         "CORS restrito ao próprio domínio",
         not aberto,
         f"Access-Control-Allow-Origin para origem forjada → {permitido or '(ausente)'}",
-        "Qualquer site pode chamar a API pelo navegador da vítima."
+        "CORS aberto permite que qualquer site leia respostas da API pelo navegador; isso expõe endpoints públicos e reduz defesa em profundidade."
         if aberto
         else "",
     )
