@@ -1,0 +1,164 @@
+name: LGPD — auditoria
+
+# Duas camadas, separadas pela natureza do risco:
+#
+#   1. `codigo`   — no pull request, e só quando o diff toca dado pessoal. Roda o agente
+#                   `lgpd-auditor` (.claude/agents/) e comenta os achados no PR. É onde a
+#                   LLM agrega: ler o diff no contexto da lei. Não bloqueia o merge.
+#
+#   2. `ambiente` — a cada deploy. O código é o mesmo em todo ambiente; o que muda é a
+#                   CONFIGURAÇÃO, e ela é medida por um script determinístico, sem LLM e
+#                   sem credencial (scripts/postura_ambiente.py). Custo zero, resultado
+#                   repetível — usar LLM aqui seria caro e não determinístico.
+#
+# Hoje o serviço do Render é o ambiente de HOMOLOG; produção ainda não existe. Quando
+# existir, basta acrescentar um job igual ao `ambiente`, apontando para a outra URL e com
+# `--estrito` (em homolog o modo é observação, para não travar a esteira).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # Onde o dado pessoal é definido, movido ou exposto.
+      - "backend/app/domain/entities.py"
+      - "backend/app/domain/ports.py"
+      - "backend/app/interfaces/api/**"
+      - "backend/app/application/ficha_use_cases.py"
+      - "backend/app/application/matricula_use_cases.py"
+      - "backend/app/application/importacao_use_cases.py"
+      - "backend/app/application/exportacao_use_cases.py"
+      - "backend/app/application/inbound_use_cases.py"
+      - "backend/app/application/conhecimento_use_cases.py"
+      - "backend/app/application/auditoria_use_cases.py"
+      - "backend/app/infrastructure/db/**"
+      - "backend/alembic/versions/**"
+      # Onde o tratamento é declarado ao titular.
+      - "site/app/privacidade/**"
+      - "site/app/termos/**"
+      # O próprio auditor.
+      - ".claude/agents/lgpd-auditor.md"
+      - ".github/workflows/lgpd.yml"
+  push:
+    branches: [main] # push na main = deploy do Render
+  workflow_dispatch:
+  schedule:
+    # Segunda, 09:00 BRT. A configuração de um ambiente muda por fora do git (alguém
+    # edita uma env var no painel do Render), então checar só no deploy deixa janela.
+    - cron: "0 12 * * 1"
+
+concurrency:
+  group: lgpd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  codigo:
+    name: Auditoria do código (agente)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # o agente precisa do histórico para diffar contra a base
+
+      - name: Confere se há chave da Anthropic
+        id: chave
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "presente=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ANTHROPIC_API_KEY não configurado — auditoria LGPD pulada."
+          else
+            echo "presente=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Instala o Claude Code
+        if: steps.chave.outputs.presente == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Roda o agente lgpd-auditor sobre o diff
+        if: steps.chave.outputs.presente == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -o pipefail
+          claude -p \
+            --agent lgpd-auditor \
+            --allowed-tools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(rg:*),Bash(ls:*),WebSearch,WebFetch" \
+            "Audite APENAS as mudanças deste pull request, não o repositório inteiro.
+             O diff é: git diff ${BASE_SHA}...${HEAD_SHA}
+             Leia o diff primeiro; use o restante do repositório só como contexto para
+             julgar o que mudou. Se a mudança não tiver efeito sobre dado pessoal, diga
+             isso em uma linha e pare — não invente achados para justificar a execução.
+             Responda no formato de relatório definido no seu prompt, em português." \
+            | tee relatorio-lgpd.md
+
+      - name: Comenta o relatório no PR
+        if: steps.chave.outputs.presente == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "## 🔍 Auditoria LGPD do diff"
+            echo
+            cat relatorio-lgpd.md
+            echo
+            echo "---"
+            echo "_Gerado pelo agente \`lgpd-auditor\` (\`.claude/agents/\`). Relatório"
+            echo "consultivo: não bloqueia o merge e não substitui parecer jurídico._"
+          gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md
+  ambiente:
+    name: Postura do ambiente (homolog)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Aguarda o deploy do Render subir
+        env:
+          BASE_URL: ${{ vars.HOMOLOG_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "::warning::variável HOMOLOG_BASE_URL não definida — verificação pulada."
+            exit 0
+          fi
+          # O Render leva alguns minutos para publicar depois do push; sem esperar, o
+          # script mediria a versão ANTERIOR e daria um verde enganoso.
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$BASE_URL/health" > /dev/null; then
+              echo "Ambiente respondendo (tentativa $i)."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::warning::/health não respondeu em 10 min; seguindo assim mesmo."
+
+      - name: Verifica a postura de proteção de dados
+        env:
+          BASE_URL: ${{ vars.HOMOLOG_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then exit 0; fi
+          # Sem --estrito: homolog relata e não reprova. Em produção, acrescente
+          # --estrito para que uma regressão de configuração falhe o job.
+          python scripts/postura_ambiente.py "$BASE_URL" \
+            --ambiente homolog \
+            --json postura.json | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Guarda o resultado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postura-homolog
+          path: postura.json
+          if-no-files-found: ignore
