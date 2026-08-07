@@ -119,6 +119,15 @@ def checar_verify_token_default(base: str) -> Resultado:
         "?hub.mode=subscribe&hub.verify_token=changeme&hub.challenge=sonda"
     )
     r = _requisitar(url)
+    if r.status not in (200, 403):
+        return Resultado(
+            "META_WEBHOOK_VERIFY_TOKEN não é o default",
+            False,
+            f"GET handshake com 'changeme' → {r.status} (esperado 403)",
+            "Não foi possível avaliar o verify token do webhook (endpoint não respondeu como esperado).",
+            erro_interno=True,
+        )
+
     aceitou = r.status == 200 and "sonda" in r.texto
     return Resultado(
         "META_WEBHOOK_VERIFY_TOKEN não é o default",
