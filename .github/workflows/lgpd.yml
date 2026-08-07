@@ -113,9 +113,7 @@ jobs:
             echo "---"
             echo "_Gerado pelo agente \`lgpd-auditor\` (\`.claude/agents/\`). Relatório"
             echo "consultivo: não bloqueia o merge e não substitui parecer jurídico._"
-          } > comentario.md
-          gh pr comment "$PR" --body-file comentario.md
-
+          gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md
   ambiente:
     name: Postura do ambiente (homolog)
     if: github.event_name != 'pull_request'
