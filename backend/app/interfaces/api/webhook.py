@@ -83,7 +83,7 @@ async def receber_evento(
 
     logger.info(
         "Evento Meta recebido: %s (%d status de entrega; inbound: %d recebidas, "
-        "%d respondidas, %d descartadas, %d repetidas, %d ignoradas)",
+        "%d respondidas, %d descartadas, %d repetidas, %d ignoradas, %d limitadas)",
         payload.get("object"),
         atualizados,
         inbound_resultado.recebidas,
@@ -91,6 +91,7 @@ async def receber_evento(
         inbound_resultado.descartadas,
         inbound_resultado.repetidas,
         inbound_resultado.ignoradas,
+        inbound_resultado.limitadas,
     )
     return {
         "status": "received",

@@ -13,12 +13,13 @@ import {
   ImportacaoResultado,
   LinhaImportacaoAluno,
   listarAlunos,
-  listarPais,
   listarSalas,
+  listarTodosOsPais,
   logout,
   Pai,
   previaImportacaoAlunos,
-  removerAluno,
+  desativarAluno,
+  reativarAluno,
   Sala,
   Usuario,
   vincularResponsavelAoAluno,
@@ -29,25 +30,46 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field } from "@/components/ui/form";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
-import { Modal, ConfirmDialog } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon } from "@/components/ui/icons";
+import {
+  Paginacao,
+  salvarTamanhoPreferido,
+  tamanhoPreferido,
+  type PaginaMeta,
+} from "@/components/ui/Paginacao";
 
 export default function Alunos() {
   const router = useRouter();
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
+  const [meta, setMeta] = useState<PaginaMeta | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
   const [pais, setPais] = useState<Pai[]>([]);
   const [filtroSala, setFiltroSala] = useState("");
+  // Filtro e paginação vão para o servidor: a lista de alunos cresce todo ano e não
+  // pode ser carregada inteira só para exibir uma tela.
+  const [situacao, setSituacao] = useState<"ativos" | "ex" | "todos">("ativos");
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(() => tamanhoPreferido("alunos"));
   const toast = useToast();
 
   const recarregar = useCallback(async () => {
-    const [as, ss, ps] = await Promise.all([listarAlunos(), listarSalas(), listarPais()]);
-    setAlunos(as);
+    const apenasAtivos =
+      situacao === "todos" ? undefined : situacao === "ativos" ? true : false;
+    const [as, ss, ps] = await Promise.all([
+      listarAlunos(filtroSala || undefined, apenasAtivos, pagina, porPagina),
+      listarSalas(),
+      // Lista de seleção de responsáveis (para vincular a um aluno): precisa do
+      // conjunto, não de uma página.
+      listarTodosOsPais(),
+    ]);
+    setAlunos(as.itens);
+    setMeta(as.meta);
     setSalas(ss);
     setPais(ps);
-  }, []);
+  }, [filtroSala, situacao, pagina, porPagina]);
 
   useEffect(() => {
     const s = getSessao();
@@ -63,11 +85,6 @@ export default function Alunos() {
     logout();
     router.replace("/admin/login");
   }
-
-  const visiveis = useMemo(
-    () => (filtroSala ? alunos.filter((a) => a.sala_id === filtroSala) : alunos),
-    [alunos, filtroSala],
-  );
 
   if (!usuario) return null;
 
@@ -86,11 +103,26 @@ export default function Alunos() {
         <ImportarAlunos onMudou={recarregar} />
         <AlunoForm salas={salas} onMudou={recarregar} />
         <ListaAlunos
-          alunos={visiveis}
+          alunos={alunos}
+          meta={meta}
           salas={salas}
           pais={pais}
           filtroSala={filtroSala}
-          onFiltrar={setFiltroSala}
+          onFiltrar={(v) => {
+            setFiltroSala(v);
+            setPagina(1);
+          }}
+          situacao={situacao}
+          onSituacao={(v) => {
+            setSituacao(v);
+            setPagina(1);
+          }}
+          onPagina={setPagina}
+          onTamanho={(t) => {
+            salvarTamanhoPreferido("alunos", t);
+            setPorPagina(t);
+            setPagina(1);
+          }}
           onMudou={recarregar}
         />
       </div>
@@ -428,33 +460,57 @@ function ImportarAlunosModal({
 // --------------------------------------------------------------------------- //
 function ListaAlunos({
   alunos,
+  meta,
   salas,
   pais,
   filtroSala,
   onFiltrar,
+  situacao,
+  onSituacao,
+  onPagina,
+  onTamanho,
   onMudou,
 }: {
   alunos: Aluno[];
+  meta: PaginaMeta | null;
   salas: Sala[];
   pais: Pai[];
   filtroSala: string;
   onFiltrar: (v: string) => void;
+  /** Ex-alunos acumulam ano após ano: a lista abre nos matriculados. */
+  situacao: "ativos" | "ex" | "todos";
+  onSituacao: (v: "ativos" | "ex" | "todos") => void;
+  onPagina: (p: number) => void;
+  onTamanho: (t: number) => void;
   onMudou: () => Promise<void>;
 }) {
   const toast = useToast();
   const [editando, setEditando] = useState<Aluno | null>(null);
   const [gerenciando, setGerenciando] = useState<Aluno | null>(null);
-  const [excluindo, setExcluindo] = useState<Aluno | null>(null);
+  // "Excluir" aqui é desativar: o aluno vira ex-aluno e o registro permanece.
+  const [desativando, setDesativando] = useState<Aluno | null>(null);
+  const [motivo, setMotivo] = useState("");
 
-  async function confirmarExclusao() {
-    if (!excluindo) return;
+  async function confirmarDesativacao() {
+    if (!desativando) return;
     try {
-      await removerAluno(excluindo.id);
-      setExcluindo(null);
+      await desativarAluno(desativando.id, motivo.trim());
+      setDesativando(null);
+      setMotivo("");
       await onMudou();
-      toast({ tone: "success", title: "Aluno excluído." });
+      toast({ tone: "success", title: "Aluno marcado como ex-aluno." });
     } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao desativar." });
+    }
+  }
+
+  async function reativar(aluno: Aluno) {
+    try {
+      await reativarAluno(aluno.id);
+      await onMudou();
+      toast({ tone: "success", title: "Aluno reativado." });
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao reativar." });
     }
   }
 
@@ -462,16 +518,27 @@ function ListaAlunos({
     <Card>
       <CardHeader
         title="Alunos cadastrados"
-        count={alunos.length}
+        count={meta?.total ?? alunos.length}
         action={
-          <Select className="w-48" value={filtroSala} onChange={(e) => onFiltrar(e.target.value)}>
-            <option value="">Todas as séries</option>
-            {salas.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.nome}
-              </option>
-            ))}
-          </Select>
+          <div className="flex gap-2">
+            <Select
+              className="w-40"
+              value={situacao}
+              onChange={(e) => onSituacao(e.target.value as "ativos" | "ex" | "todos")}
+            >
+              <option value="ativos">Matriculados</option>
+              <option value="ex">Ex-alunos</option>
+              <option value="todos">Todos</option>
+            </Select>
+            <Select className="w-48" value={filtroSala} onChange={(e) => onFiltrar(e.target.value)}>
+              <option value="">Todas as séries</option>
+              {salas.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
         }
       />
 
@@ -507,6 +574,18 @@ function ListaAlunos({
                       "rounded-full px-2 py-0.5 text-[11px] font-bold " +
                       (a.ativo ? "bg-[#e8f7f1] text-[#0d8a78]" : "bg-n-100 text-n-500")
                     }
+                    title={
+                      a.ativo
+                        ? undefined
+                        : [
+                            a.desativado_em
+                              ? `Desde ${new Date(a.desativado_em).toLocaleDateString("pt-BR")}`
+                              : "",
+                            a.motivo_desativacao,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
+                    }
                   >
                     {a.ativo ? "Ativo" : "Ex-aluno"}
                   </span>
@@ -525,12 +604,23 @@ function ListaAlunos({
                     >
                       Editar
                     </button>
-                    <button
-                      onClick={() => setExcluindo(a)}
-                      className="text-xs font-semibold text-danger hover:underline"
-                    >
-                      Excluir
-                    </button>
+                    {a.ativo ? (
+                      <button
+                        onClick={() => setDesativando(a)}
+                        className="text-xs font-semibold text-danger hover:underline"
+                        title="Marca como ex-aluno; o histórico é preservado"
+                      >
+                        Desativar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => reativar(a)}
+                        className="text-xs font-semibold text-brand-600 hover:underline"
+                        title="Volta o aluno à condição de matriculado"
+                      >
+                        Reativar
+                      </button>
+                    )}
                   </span>
                 </Td>
               </Tr>
@@ -538,13 +628,19 @@ function ListaAlunos({
             {alunos.length === 0 && (
               <Tr>
                 <Td colSpan={6} className="text-n-400">
-                  Nenhum aluno cadastrado ainda.
+                  {situacao === "ex"
+                    ? "Nenhum ex-aluno registrado."
+                    : "Nenhum aluno cadastrado ainda."}
                 </Td>
               </Tr>
             )}
           </tbody>
         </Table>
       </TableWrap>
+
+      {meta && (
+        <Paginacao meta={meta} onPagina={onPagina} onTamanho={onTamanho} rotulo="aluno(s)" />
+      )}
 
       {editando && (
         <EditarAlunoModal
@@ -564,13 +660,46 @@ function ListaAlunos({
         />
       )}
 
-      <ConfirmDialog
-        open={!!excluindo}
-        onClose={() => setExcluindo(null)}
-        onConfirm={confirmarExclusao}
-        title="Excluir aluno"
-        message={`Excluir o aluno "${excluindo?.nome}"? Os responsáveis continuam cadastrados.`}
-      />
+      {desativando && (
+        <Modal
+          open
+          onClose={() => {
+            setDesativando(null);
+            setMotivo("");
+          }}
+          title="Desativar aluno"
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-[13px] leading-relaxed text-n-600">
+              <b>{desativando.nome}</b> passa a constar como <b>ex-aluno</b>. O cadastro{" "}
+              <b>não é apagado</b>: o registro de que estudou aqui é o que sustenta
+              histórico escolar, declarações e prestação de contas. Dá para reativar
+              depois.
+            </p>
+            <Field label="Motivo (opcional)">
+              <Input
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="Ex.: transferido para outra escola"
+              />
+            </Field>
+            <div className="mt-1 flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDesativando(null);
+                  setMotivo("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button variant="danger" onClick={confirmarDesativacao}>
+                Desativar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </Card>
   );
 }

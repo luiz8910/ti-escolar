@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -95,13 +95,49 @@ class SqlConversaRepository:
             for m in rows
         ]
 
-    async def listar_resumos(self, *, tenant_id: uuid.UUID) -> list[ResumoConversa]:
+    async def contar_conversas(self, *, tenant_id: uuid.UUID) -> int:
+        return int(
+            (
+                await self._s.execute(
+                    select(func.count())
+                    .select_from(ConversaORM)
+                    .where(ConversaORM.tenant_id == tenant_id)
+                )
+            ).scalar_one()
+        )
+
+    async def listar_resumos(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[ResumoConversa]:
+        """Resumos das conversas, com atividade mais recente primeiro.
+
+        Com ``pagina``/``por_pagina``, o recorte é feito **no banco**: sem isso, uma
+        escola com um ano de uso carregaria todas as conversas — e todas as mensagens de
+        cada uma, por causa do ``selectinload`` — só para exibir dez linhas.
+
+        A ordenação por **última atividade** vive no ``ORDER BY``, não em memória: com
+        ``OFFSET``/``LIMIT``, reordenar depois do recorte reordena apenas a página, e
+        conversas passariam a pular ou repetir entre as páginas.
+        """
+        ultima_atividade = func.coalesce(
+            select(func.max(MensagemORM.criado_em))
+            .where(MensagemORM.conversa_id == ConversaORM.id)
+            .correlate(ConversaORM)
+            .scalar_subquery(),
+            ConversaORM.criado_em,
+        )
         stmt = (
             select(ConversaORM)
             .where(ConversaORM.tenant_id == tenant_id)
             .options(selectinload(ConversaORM.mensagens))
-            .order_by(ConversaORM.criado_em.desc())
+            .order_by(ultima_atividade.desc(), ConversaORM.id.desc())
         )
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
         rows = (await self._s.execute(stmt)).scalars().all()
         resumos: list[ResumoConversa] = []
         for r in rows:
@@ -119,8 +155,6 @@ class SqlConversaRepository:
                     ultima_em=ultima.criado_em if ultima else None,
                 )
             )
-        # Conversas com atividade mais recente primeiro.
-        resumos.sort(key=lambda x: x.ultima_em or x.conversa.criado_em, reverse=True)
         return resumos
 
     async def obter_conversa(
@@ -235,13 +269,32 @@ class SqlBroadcastRepository:
         row = (await self._s.execute(stmt)).scalar_one_or_none()
         return self._to_broadcast(row) if row else None
 
-    async def listar(self, *, tenant_id: uuid.UUID) -> list[Broadcast]:
+    async def contar(self, *, tenant_id: uuid.UUID) -> int:
+        return int(
+            (
+                await self._s.execute(
+                    select(func.count())
+                    .select_from(BroadcastORM)
+                    .where(BroadcastORM.tenant_id == tenant_id)
+                )
+            ).scalar_one()
+        )
+
+    async def listar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[Broadcast]:
         stmt = (
             select(BroadcastORM)
             .where(BroadcastORM.tenant_id == tenant_id)
             .options(selectinload(BroadcastORM.destinatarios))
             .order_by(BroadcastORM.criado_em.desc())
         )
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
         rows = (await self._s.execute(stmt)).scalars().all()
         return [self._to_broadcast(r) for r in rows]
 

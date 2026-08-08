@@ -406,15 +406,34 @@ class SqlAuditLogRepository:
         await self._s.flush()
         return registro
 
+    async def contar(self, *, tenant_id: uuid.UUID) -> int:
+        return int(
+            (
+                await self._s.execute(
+                    select(func.count())
+                    .select_from(AuditoriaORM)
+                    .where(AuditoriaORM.tenant_id == tenant_id)
+                )
+            ).scalar_one()
+        )
+
     async def listar(
-        self, *, tenant_id: uuid.UUID, limite: int = 200
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        limite: int = 200,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
     ) -> list[RegistroAuditoria]:
         stmt = (
             select(AuditoriaORM)
             .where(AuditoriaORM.tenant_id == tenant_id)
             .order_by(AuditoriaORM.criado_em.desc())
-            .limit(limite)
         )
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
+        else:
+            stmt = stmt.limit(limite)
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_auditoria(r) for r in rows]
 
@@ -577,12 +596,33 @@ class SqlContatoRepository:
         row = (await self._s.execute(stmt)).scalar_one_or_none()
         return _to_contato(row) if row else None
 
-    async def listar(self, *, tenant_id: uuid.UUID) -> list[Contato]:
+    async def contar(self, *, tenant_id: uuid.UUID) -> int:
+        return int(
+            (
+                await self._s.execute(
+                    select(func.count())
+                    .select_from(ContatoORM)
+                    .where(ContatoORM.tenant_id == tenant_id)
+                )
+            ).scalar_one()
+        )
+
+    async def listar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[Contato]:
+        """Sem paginação, devolve todos — os casos de uso internos (grupos, cobertura,
+        progressão) precisam do conjunto completo. A borda HTTP é que pagina."""
         stmt = (
             select(ContatoORM)
             .where(ContatoORM.tenant_id == tenant_id)
-            .order_by(ContatoORM.nome)
+            .order_by(ContatoORM.criado_em.desc())
         )
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_contato(r) for r in rows]
 
@@ -796,6 +836,8 @@ def _to_aluno(row: AlunoORM) -> Aluno:
         matricula=row.matricula,
         sala_id=row.sala_id,
         ativo=row.ativo,
+        desativado_em=row.desativado_em,
+        motivo_desativacao=row.motivo_desativacao,
         criado_em=row.criado_em,
         responsaveis=[_to_contato(c) for c in row.responsaveis],
         sala_nome=row.sala.nome if row.sala else "",
@@ -838,18 +880,41 @@ class SqlAlunoRepository:
         return _to_aluno(row) if row else None
 
     async def listar(
-        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID | None = None
+        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID | None = None,
+        apenas_ativos: bool | None = None,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
     ) -> list[Aluno]:
+        """``apenas_ativos=None`` traz todos; ``True`` só os matriculados; ``False`` só
+        os ex-alunos (a lista de quem já passou pela escola)."""
         stmt = (
             select(AlunoORM)
             .where(AlunoORM.tenant_id == tenant_id)
             .options(selectinload(AlunoORM.responsaveis), selectinload(AlunoORM.sala))
-            .order_by(AlunoORM.nome)
+            .order_by(AlunoORM.criado_em.desc())
         )
         if sala_id is not None:
             stmt = stmt.where(AlunoORM.sala_id == sala_id)
+        if apenas_ativos is not None:
+            stmt = stmt.where(AlunoORM.ativo.is_(apenas_ativos))
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_aluno(r) for r in rows]
+
+    async def contar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        sala_id: uuid.UUID | None = None,
+        apenas_ativos: bool | None = None,
+    ) -> int:
+        stmt = select(func.count()).select_from(AlunoORM).where(AlunoORM.tenant_id == tenant_id)
+        if sala_id is not None:
+            stmt = stmt.where(AlunoORM.sala_id == sala_id)
+        if apenas_ativos is not None:
+            stmt = stmt.where(AlunoORM.ativo.is_(apenas_ativos))
+        return int((await self._s.execute(stmt)).scalar_one())
 
     async def atualizar(self, aluno: Aluno) -> Aluno:
         row = await self._orm(tenant_id=aluno.tenant_id, aluno_id=aluno.id)
@@ -859,6 +924,8 @@ class SqlAlunoRepository:
         row.matricula = aluno.matricula
         row.sala_id = aluno.sala_id
         row.ativo = aluno.ativo
+        row.desativado_em = aluno.desativado_em
+        row.motivo_desativacao = aluno.motivo_desativacao
         await self._s.flush()
         await self._s.refresh(row, attribute_names=["sala"])
         return _to_aluno(row)

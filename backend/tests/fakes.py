@@ -31,6 +31,14 @@ from app.domain.entities import (
 from app.infrastructure.llm.fake_provider import FakeEmbedder
 
 
+def _fatiar(itens: list, pagina: int | None, por_pagina: int | None) -> list:
+    """Recorte de página dos fakes — espelha o OFFSET/LIMIT dos repositórios SQL."""
+    if pagina is None or por_pagina is None:
+        return itens
+    inicio = max(0, (pagina - 1) * por_pagina)
+    return itens[inicio : inicio + por_pagina]
+
+
 class FakeVectorStore:
     def __init__(self) -> None:
         self._itens: list[tuple[TrechoConhecimento, list[float]]] = []
@@ -291,8 +299,12 @@ class FakeBroadcastRepo:
     async def obter(self, broadcast_id) -> Broadcast | None:
         return self.salvos.get(broadcast_id)
 
-    async def listar(self, *, tenant_id):
-        return [b for b in self.salvos.values() if b.tenant_id == tenant_id]
+    async def listar(self, *, tenant_id, pagina=None, por_pagina=None):
+        itens = [b for b in self.salvos.values() if b.tenant_id == tenant_id]
+        return _fatiar(itens, pagina, por_pagina)
+
+    async def contar(self, *, tenant_id):
+        return len([b for b in self.salvos.values() if b.tenant_id == tenant_id])
 
     async def registrar_status(self, *, mensagem_id_externo, status) -> bool:
         from app.domain.entities import _now
@@ -325,10 +337,15 @@ class FakeAuditLogRepo:
         self.registros.append(registro)
         return registro
 
-    async def listar(self, *, tenant_id, limite: int = 200):
+    async def listar(self, *, tenant_id, limite: int = 200, pagina=None, por_pagina=None):
         registros = [r for r in self.registros if r.tenant_id == tenant_id]
         registros.sort(key=lambda r: r.criado_em, reverse=True)
+        if pagina is not None and por_pagina is not None:
+            return _fatiar(registros, pagina, por_pagina)
         return registros[:limite]
+
+    async def contar(self, *, tenant_id):
+        return len([r for r in self.registros if r.tenant_id == tenant_id])
 
 
 def fake_embedder() -> FakeEmbedder:
@@ -386,8 +403,12 @@ class FakeContatoRepo:
             None,
         )
 
-    async def listar(self, *, tenant_id):
-        return [c for c in self.contatos.values() if c.tenant_id == tenant_id]
+    async def listar(self, *, tenant_id, pagina=None, por_pagina=None):
+        itens = [c for c in self.contatos.values() if c.tenant_id == tenant_id]
+        return _fatiar(itens, pagina, por_pagina)
+
+    async def contar(self, *, tenant_id):
+        return len([c for c in self.contatos.values() if c.tenant_id == tenant_id])
 
     async def atualizar(self, contato):
         self.contatos[contato.id] = contato
@@ -605,11 +626,23 @@ class FakeAlunoRepo:
         a = self.alunos.get(aluno_id)
         return a if a and a.tenant_id == tenant_id else None
 
-    async def listar(self, *, tenant_id, sala_id=None):
+    async def listar(
+        self, *, tenant_id, sala_id=None, apenas_ativos=None, pagina=None, por_pagina=None
+    ):
+        return _fatiar(
+            self._filtrar(tenant_id, sala_id, apenas_ativos), pagina, por_pagina
+        )
+
+    async def contar(self, *, tenant_id, sala_id=None, apenas_ativos=None):
+        return len(self._filtrar(tenant_id, sala_id, apenas_ativos))
+
+    def _filtrar(self, tenant_id, sala_id, apenas_ativos):
         return [
             a
             for a in self.alunos.values()
-            if a.tenant_id == tenant_id and (sala_id is None or a.sala_id == sala_id)
+            if a.tenant_id == tenant_id
+            and (sala_id is None or a.sala_id == sala_id)
+            and (apenas_ativos is None or a.ativo is apenas_ativos)
         ]
 
     async def atualizar(self, aluno):

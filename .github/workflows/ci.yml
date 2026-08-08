@@ -1,6 +1,6 @@
-name: CI — Backend
+name: CI
 
-# Roda lint + migrations + testes em PRs e em pushes na main.
+# Roda lint + migrations + testes do back-end e build do front em PRs e na main.
 # O deploy é feito nativamente pelo Render (Auto-Deploy ligado no push à main);
 # este workflow serve como portão de qualidade (status check) antes do merge.
 on:
@@ -60,3 +60,64 @@ jobs:
 
       - name: Testes (pytest)
         run: pytest -q
+
+  web:
+    name: Painel (web) — typecheck e build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `npm ci` (e não `install`): respeita o lockfile, então o CI valida exatamente as
+      # versões que a Vercel vai instalar.
+      - name: Instala dependências
+        run: npm ci
+
+      # O build já faz checagem de tipos, mas o `tsc` isolado falha mais rápido e com
+      # mensagem melhor — e cobre arquivos que o build não chega a incluir.
+      - name: Typecheck (tsc)
+        run: npx tsc --noEmit
+
+      - name: Build (next build)
+        run: npm run build
+        env:
+          # A URL real vem do ambiente da Vercel; aqui só precisa existir para o build.
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  site:
+    name: Landing page (site) — typecheck e build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Instala dependências
+        run: npm ci
+
+      - name: Typecheck (tsc)
+        run: npm run typecheck
+
+      # Export estático: se quebrar aqui, o deploy na Cloudflare Pages quebraria depois —
+      # com a diferença de que ali o erro só aparece no push para a main.
+      - name: Build (export estático)
+        run: npm run build

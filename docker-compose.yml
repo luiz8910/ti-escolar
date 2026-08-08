@@ -22,6 +22,10 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tiescolar:tiescolar@db:5432/tiescolar}
+      # O compose é o ambiente local descartável: aqui o seed de demonstração é o que
+      # se quer. Em produção o CMD do Dockerfile roda só o bootstrap.
+      APP_ENV: ${APP_ENV:-development}
+      SEED_DEMO: ${SEED_DEMO:-true}
     ports:
       # Porta do host configurável (BACKEND_PORT) para rodar worktrees em paralelo.
       - "${BACKEND_PORT:-8000}:8000"
@@ -30,9 +34,11 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    # Aplica migrations, faz o seed e sobe a API com reload.
+    # Aplica migrations, provisiona o super admin, faz o seed de demonstração (só roda
+    # com SEED_DEMO=true fora de produção) e sobe a API com reload.
     command: >
       sh -c "alembic upgrade head &&
+             python -m app.bootstrap &&
              python -m app.seed &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 

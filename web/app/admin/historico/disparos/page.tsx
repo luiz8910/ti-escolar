@@ -19,6 +19,12 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Paginacao,
+  salvarTamanhoPreferido,
+  tamanhoPreferido,
+  type PaginaMeta,
+} from "@/components/ui/Paginacao";
 import { cn } from "@/components/ui/cn";
 import { BellIcon } from "@/components/ui/icons";
 
@@ -75,9 +81,15 @@ export default function HistoricoDisparos() {
   const [broadcasts, setBroadcasts] = useState<BroadcastResumo[]>([]);
   const [carregando, setCarregando] = useState(true);
 
+  const [meta, setMeta] = useState<PaginaMeta | null>(null);
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(() => tamanhoPreferido("disparos"));
+
   const recarregar = useCallback(async () => {
-    setBroadcasts(await listarBroadcasts(tenantEmFoco()));
-  }, []);
+    const resultado = await listarBroadcasts(tenantEmFoco(), pagina, porPagina);
+    setBroadcasts(resultado.itens);
+    setMeta(resultado.meta);
+  }, [pagina, porPagina]);
 
   useEffect(() => {
     const s = getSessao();
@@ -122,14 +134,33 @@ export default function HistoricoDisparos() {
         {carregando ? (
           <p className="text-sm text-n-400">Carregando…</p>
         ) : (
-          <Disparos broadcasts={broadcasts} />
+          <Disparos
+            broadcasts={broadcasts}
+            meta={meta}
+            onPagina={setPagina}
+            onTamanho={(t) => {
+              salvarTamanhoPreferido("disparos", t);
+              setPorPagina(t);
+              setPagina(1);
+            }}
+          />
         )}
       </div>
     </AppShell>
   );
 }
 
-function Disparos({ broadcasts }: { broadcasts: BroadcastResumo[] }) {
+function Disparos({
+  broadcasts,
+  meta,
+  onPagina,
+  onTamanho,
+}: {
+  broadcasts: BroadcastResumo[];
+  meta: PaginaMeta | null;
+  onPagina: (p: number) => void;
+  onTamanho: (t: number) => void;
+}) {
   const toast = useToast();
   const [aberto, setAberto] = useState<BroadcastDetalhe | null>(null);
   const [carregandoId, setCarregandoId] = useState<string | null>(null);
@@ -196,6 +227,14 @@ function Disparos({ broadcasts }: { broadcasts: BroadcastResumo[] }) {
             );
           })}
         </div>
+        {meta && (
+          <Paginacao
+            meta={meta}
+            onPagina={onPagina}
+            onTamanho={onTamanho}
+            rotulo="disparo(s)"
+          />
+        )}
       </Card>
 
       <Card>

@@ -92,7 +92,7 @@ async def test_remover_pai():
         tenant_id=TENANT, nome="Maria", telefone="+5511999990001"
     )
     assert await RemoverPai(contatos=contatos).executar(tenant_id=TENANT, contato_id=pai.id)
-    assert await ListarPais(contatos=contatos).executar(tenant_id=TENANT) == []
+    assert (await ListarPais(contatos=contatos).executar(tenant_id=TENANT)).itens == []
     # Remover de novo retorna False.
     assert not await RemoverPai(contatos=contatos).executar(tenant_id=TENANT, contato_id=pai.id)
 

@@ -14,7 +14,8 @@ from app.application.cadastro_use_cases import (
     CriarSala,
     DesvincularResponsavelDoAluno,
     ListarAlunos,
-    RemoverAluno,
+    DesativarAluno,
+    ReativarAluno,
     RemoverSala,
     VincularResponsavelAoAluno,
 )
@@ -135,36 +136,136 @@ async def test_filtrar_alunos_por_serie():
     await cadastrar.executar(tenant_id=TENANT, nome="A", sala_id=s1.id)
     await cadastrar.executar(tenant_id=TENANT, nome="B", sala_id=s2.id)
 
-    da_s1 = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, sala_id=s1.id)
+    da_s1 = (
+        await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, sala_id=s1.id)
+    ).itens
     assert [a.nome for a in da_s1] == ["A"]
 
 
-async def test_remover_aluno():
+async def test_desativar_aluno_preserva_o_registro():
+    """A "exclusão" do painel é soft delete: o aluno vira ex-aluno, mas o registro de que
+    estudou aqui — e os vínculos com os responsáveis — permanecem."""
     alunos, _, salas = _repos()
     sala = await _sala(salas)
     aluno = await CadastrarAluno(alunos=alunos, salas=salas).executar(
         tenant_id=TENANT, nome="Pedro", sala_id=sala.id
     )
-    assert await RemoverAluno(alunos=alunos).executar(tenant_id=TENANT, aluno_id=aluno.id)
-    assert await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT) == []
-    assert not await RemoverAluno(alunos=alunos).executar(tenant_id=TENANT, aluno_id=aluno.id)
+
+    desativado = await DesativarAluno(alunos=alunos).executar(
+        tenant_id=TENANT, aluno_id=aluno.id, motivo="Transferido para outra escola"
+    )
+
+    assert desativado is not None and not desativado.ativo
+    assert desativado.desativado_em is not None
+    assert desativado.motivo_desativacao == "Transferido para outra escola"
+    # Continua existindo: some da lista de matriculados, não da base.
+    assert (await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT)).itens != []
+    assert (
+        await ListarAlunos(alunos=alunos).executar(
+            tenant_id=TENANT, apenas_ativos=True
+        )
+    ).itens == []
+    ex_alunos = (
+        await ListarAlunos(alunos=alunos).executar(
+            tenant_id=TENANT, apenas_ativos=False
+        )
+    ).itens
+    assert [a.id for a in ex_alunos] == [aluno.id]
+
+
+async def test_desativar_duas_vezes_nao_reescreve_a_data_de_saida():
+    """O que interessa é quando o aluno saiu, não o último clique no botão."""
+    alunos, _, salas = _repos()
+    sala = await _sala(salas)
+    aluno = await CadastrarAluno(alunos=alunos, salas=salas).executar(
+        tenant_id=TENANT, nome="Pedro", sala_id=sala.id
+    )
+    primeiro = await DesativarAluno(alunos=alunos).executar(
+        tenant_id=TENANT, aluno_id=aluno.id, motivo="Transferido"
+    )
+    segundo = await DesativarAluno(alunos=alunos).executar(
+        tenant_id=TENANT, aluno_id=aluno.id, motivo="Outro motivo"
+    )
+    assert segundo.desativado_em == primeiro.desativado_em
+    assert segundo.motivo_desativacao == "Transferido"
+
+
+async def test_reativar_desfaz_a_desativacao():
+    alunos, _, salas = _repos()
+    sala = await _sala(salas)
+    aluno = await CadastrarAluno(alunos=alunos, salas=salas).executar(
+        tenant_id=TENANT, nome="Pedro", sala_id=sala.id
+    )
+    await DesativarAluno(alunos=alunos).executar(
+        tenant_id=TENANT, aluno_id=aluno.id, motivo="engano"
+    )
+
+    reativado = await ReativarAluno(alunos=alunos).executar(
+        tenant_id=TENANT, aluno_id=aluno.id
+    )
+
+    assert reativado.ativo
+    assert reativado.desativado_em is None
+    assert reativado.motivo_desativacao == ""
+
+
+async def test_desativar_aluno_de_outro_tenant_nao_encontra():
+    alunos, _, salas = _repos()
+    sala = await _sala(salas)
+    aluno = await CadastrarAluno(alunos=alunos, salas=salas).executar(
+        tenant_id=TENANT, nome="Pedro", sala_id=sala.id
+    )
+    assert (
+        await DesativarAluno(alunos=alunos).executar(
+            tenant_id=uuid.uuid4(), aluno_id=aluno.id
+        )
+        is None
+    )
 
 
 # --------------------- exclusão de série (estratégias) --------------------- #
-async def test_excluir_serie_excluindo_os_alunos():
+async def test_excluir_serie_com_alunos_exige_destino():
+    """O caminho mais fácil da tela não pode destruir histórico: antes, excluir a série
+    sem informar destino apagava os alunos dela junto."""
     alunos, _, salas = _repos()
     sala = await _sala(salas)
     await CadastrarAluno(alunos=alunos, salas=salas).executar(
         tenant_id=TENANT, nome="Pedro", sala_id=sala.id
     )
 
-    removida = await RemoverSala(salas=salas, alunos=alunos).executar(
+    with pytest.raises(ValueError, match="destino"):
+        await RemoverSala(salas=salas, alunos=alunos).executar(
+            tenant_id=TENANT, sala_id=sala.id
+        )
+
+    # Nem a série nem os alunos foram tocados.
+    assert await salas.obter(tenant_id=TENANT, sala_id=sala.id) is not None
+    assert (await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT)).total == 1
+
+
+async def test_excluir_serie_vazia_dispensa_destino():
+    alunos, _, salas = _repos()
+    sala = await _sala(salas)
+
+    assert await RemoverSala(salas=salas, alunos=alunos).executar(
         tenant_id=TENANT, sala_id=sala.id
     )
-    assert removida
-    # Sem mover_para, os alunos da série somem junto.
-    assert await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT) == []
     assert await salas.obter(tenant_id=TENANT, sala_id=sala.id) is None
+
+
+async def test_ex_aluno_tambem_bloqueia_a_exclusao_sem_destino():
+    """O ex-aluno continua vinculado à série; apagá-la em silêncio o levaria junto."""
+    alunos, _, salas = _repos()
+    sala = await _sala(salas)
+    aluno = await CadastrarAluno(alunos=alunos, salas=salas).executar(
+        tenant_id=TENANT, nome="Pedro", sala_id=sala.id
+    )
+    await DesativarAluno(alunos=alunos).executar(tenant_id=TENANT, aluno_id=aluno.id)
+
+    with pytest.raises(ValueError, match="destino"):
+        await RemoverSala(salas=salas, alunos=alunos).executar(
+            tenant_id=TENANT, sala_id=sala.id
+        )
 
 
 async def test_excluir_serie_movendo_alunos_para_outra():

@@ -439,7 +439,10 @@ class AlunoSaida(BaseModel):
     id: UUID
     nome: str
     matricula: str
+    # ativo=False é ex-aluno: o registro permanece (soft delete), com data e motivo.
     ativo: bool
+    desativado_em: datetime | None = None
+    motivo_desativacao: str = ""
     sala_id: UUID
     sala_nome: str = ""
     responsaveis: list[PaiSaida] = []
@@ -1044,3 +1047,102 @@ class PosturaSegurancaSaida(BaseModel):
     ambiente: str
     canal: str
     gerado_em: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Paginação (item 7 do checklist) — usada por todas as listagens paginadas
+# --------------------------------------------------------------------------- #
+class PaginaMeta(BaseModel):
+    """Metadados de uma página. Padrão único para o painel montar o mesmo paginador
+    em qualquer listagem, em vez de cada tela inventar o seu."""
+
+    pagina: int
+    por_pagina: int
+    total: int
+    total_paginas: int
+
+
+# --------------------------------------------------------------------------- #
+# Observabilidade — logs da aplicação (§16)
+# --------------------------------------------------------------------------- #
+class LogSaida(BaseModel):
+    id: UUID
+    criado_em: datetime
+    nivel: str
+    logger: str = ""
+    mensagem: str = ""
+    correlacao_id: str = ""
+    rota: str = ""
+    metodo: str = ""
+    status_code: int | None = None
+    duracao_ms: int | None = None
+    tenant_id: UUID | None = None
+    excecao: str = ""
+    metadados: dict = {}
+
+
+class LogsPaginaSaida(BaseModel):
+    itens: list[LogSaida]
+    meta: PaginaMeta
+    # Loggers vistos na janela — alimenta o filtro sem lista fixa no front.
+    loggers: list[str] = []
+
+
+class ContagemSaida(BaseModel):
+    rotulo: str
+    quantidade: int
+
+
+class ResumoLogsSaida(BaseModel):
+    janela_horas: int
+    total: int
+    erros: int
+    alertas: int
+    requisicoes: int
+    duracao_media_ms: int
+    duracao_p95_ms: int
+    taxa_erro_percentual: float
+    saudavel: bool
+    atendimentos_concluidos: int
+    atendimentos_em_andamento: int
+    atendimentos_falhos: int
+    rotas_mais_lentas: list[ContagemSaida] = []
+    erros_mais_comuns: list[ContagemSaida] = []
+
+
+class AtendimentoInboundSaida(BaseModel):
+    chave: str
+    status: str
+    origem: str = ""
+    resumo: str = ""
+    tenant_id: UUID | None = None
+    tenant_nome: str = ""
+    criado_em: datetime
+    atualizado_em: datetime
+
+
+# Envelopes paginados das listagens (item 7). O formato é sempre {itens, meta}, para o
+# painel montar o mesmo paginador em qualquer tela.
+class ConversasPaginaSaida(BaseModel):
+    itens: list[ConversaResumoSaida]
+    meta: PaginaMeta
+
+
+class BroadcastsPaginaSaida(BaseModel):
+    itens: list[BroadcastResumoSaida]
+    meta: PaginaMeta
+
+
+class AuditoriaPaginaSaida(BaseModel):
+    itens: list[RegistroAuditoriaSaida]
+    meta: PaginaMeta
+
+
+class AlunosPaginaSaida(BaseModel):
+    itens: list[AlunoSaida]
+    meta: PaginaMeta
+
+
+class PaisPaginaSaida(BaseModel):
+    itens: list[PaiSaida]
+    meta: PaginaMeta

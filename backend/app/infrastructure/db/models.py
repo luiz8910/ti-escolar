@@ -10,6 +10,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -402,11 +403,20 @@ class AlunoORM(Base):
     nome: Mapped[str] = mapped_column(String(200))
     matricula: Mapped[str] = mapped_column(String(50), default="")
     # Série/turma do aluno (1:1, obrigatória). A exclusão de uma série é mediada pelos
-    # casos de uso (excluir os alunos ou movê-los), por isso a FK é restritiva.
+    # casos de uso (que exigem uma série destino para os alunos), por isso a FK é
+    # restritiva: nenhum caminho pode deixar aluno órfão nem apagá-lo em cascata.
     sala_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("salas.id"), nullable=False, index=True
     )
+    # Soft delete: o aluno nunca é apagado pelo painel — o registro de que ele estudou
+    # aqui é o lastro da escola (histórico, declarações). ativo=False é a "exclusão".
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    desativado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    motivo_desativacao: Mapped[str] = mapped_column(
+        String(200), default="", server_default=""
+    )
     criado_em: Mapped[datetime] = mapped_column()
 
     sala: Mapped["SalaORM | None"] = relationship()
@@ -686,3 +696,89 @@ class SolicitacaoMatriculaORM(Base):
     documentos: Mapped[list] = mapped_column(JSON, default=list)
     criado_em: Mapped[datetime] = mapped_column(index=True)
     atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Infra de produção · rate limiting (item 5 do checklist de pré-deploy)
+# --------------------------------------------------------------------------- #
+class ControleTaxaORM(Base):
+    """Contador de janela fixa por chave, para o limite de taxa de entrada.
+
+    Mora no Postgres — e não em memória — porque o limite precisa valer para o
+    **serviço inteiro**: com duas instâncias no Render, um contador de processo daria
+    ao atacante o dobro das tentativas, e um restart zeraria a contagem.
+    """
+
+    __tablename__ = "controle_taxa"
+
+    # Ex.: "login:ip:203.0.113.7", "login:email:diretor@escola.br", "inbound:+5511...".
+    chave: Mapped[str] = mapped_column(String(200), primary_key=True)
+    janela_inicio: Mapped[datetime] = mapped_column(index=True)
+    contador: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# --------------------------------------------------------------------------- #
+# Infra de produção · atendimento do inbound (idempotência durável)
+# --------------------------------------------------------------------------- #
+class InboundAtendimentoORM(Base):
+    """Estado do atendimento de cada mensagem recebida, chaveado pelo wamid da Meta.
+
+    Existe para que a reentrega do webhook — que chega enquanto a primeira tentativa
+    ainda está esperando a LLM — não vire uma segunda resposta ao responsável e uma
+    segunda cobrança no provedor. Mora no banco, e não no processo, porque o duplicado
+    frequentemente cai em **outra réplica**, onde um cache de memória nada sabe.
+    """
+
+    __tablename__ = "inbound_atendimento"
+
+    # wamid da Meta (id da mensagem recebida).
+    chave: Mapped[str] = mapped_column(String(200), primary_key=True)
+    # Escola dona da conversa; nulo apenas se a mensagem foi reservada antes do roteamento.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True
+    )
+    # Telefone do responsável (E.164), para rastrear no painel de logs.
+    origem: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # em_atendimento | concluida | falhou
+    status: Mapped[str] = mapped_column(
+        String(20), default="em_atendimento", server_default="em_atendimento", index=True
+    )
+    # Primeiras palavras da resposta enviada — mostra no log o que foi respondido.
+    resumo: Mapped[str] = mapped_column(Text, default="", server_default="")
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+
+# --------------------------------------------------------------------------- #
+# Observabilidade · logs da aplicação (§16)
+# --------------------------------------------------------------------------- #
+class LogAplicacaoORM(Base):
+    """Log operacional persistido, consultável pelo super admin.
+
+    Separado de ``auditoria``: aquela registra decisões de negócio (evidência de
+    compliance), esta registra o que o processo fez e onde quebrou. Guardar os dois na
+    mesma tabela transformaria a auditoria em depósito de ruído técnico.
+    """
+
+    __tablename__ = "logs_aplicacao"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    criado_em: Mapped[datetime] = mapped_column(index=True)
+    nivel: Mapped[str] = mapped_column(String(10), index=True)
+    logger: Mapped[str] = mapped_column(String(120), default="", server_default="", index=True)
+    mensagem: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Amarra todas as linhas de uma mesma requisição (e o código mostrado ao usuário).
+    correlacao_id: Mapped[str] = mapped_column(
+        String(40), default="", server_default="", index=True
+    )
+    rota: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    metodo: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duracao_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Sem FK: um log pode nascer antes de sabermos a escola, ou de um tenant já removido —
+    # e a FK faria a limpeza de escola falhar por causa de linha de log.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True
+    )
+    excecao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    metadados: Mapped[dict] = mapped_column(JSON, default=dict)

@@ -42,6 +42,16 @@ class ConfiguracaoSeguranca:
     cors_liberado: bool
     # Ambiente declarado (APP_ENV): "production" no Render, "development" no local.
     app_env: str
+    # Limite de taxa de entrada (login e inbound). Defaults preservam a leitura de quem
+    # constrói a configuração sem esses sinais.
+    rate_limit_habilitado: bool = True
+    rate_limit_login_tentativas: int = 0
+    rate_limit_inbound_mensagens: int = 0
+    # Seed de demonstração habilitado no ambiente (SEED_DEMO).
+    seed_demo_habilitado: bool = False
+    # Observabilidade: logs persistidos e por quantos dias.
+    logs_persistidos: bool = False
+    logs_retencao_dias: int = 0
 
 
 # Segredos que vêm no .env.example e nunca devem sobreviver ao deploy.
@@ -58,7 +68,7 @@ class AvaliarPosturaSeguranca:
                 *self._integridade_webhook(config),
                 *self._autenticacao(config),
                 *self._isolamento(),
-                *self._rastreabilidade(),
+                *self._rastreabilidade(config),
                 *self._exposicao(config),
             ],
             checklist=self._checklist_pre_deploy(config),
@@ -126,26 +136,38 @@ class AvaliarPosturaSeguranca:
                 numero=5,
                 titulo="Rate limiting",
                 exigencia="Limite em login, reset, cadastro e operações caras.",
-                status=StatusMedida.PENDENTE,
-                situacao=(
-                    "Não existe em lugar nenhum. O ponto mais grave é POST /api/admin/login: "
-                    "brute force livre contra as senhas de administrador (o PBKDF2 encarece "
-                    "cada tentativa, mas não limita quantas). Faltam também teto no webhook "
-                    "inbound e no chat demo, ambos caros por acionarem a LLM."
+                status=(
+                    StatusMedida.ATIVA if c.rate_limit_habilitado else StatusMedida.ATENCAO
                 ),
-                medidas_relacionadas=["rate_limit_inbound"],
+                situacao=(
+                    (
+                        f"Login limitado a {c.rate_limit_login_tentativas} tentativas por "
+                        f"janela (contadas por IP e por e-mail) e inbound a "
+                        f"{c.rate_limit_inbound_mensagens} mensagens por remetente. O "
+                        "contador vive no Postgres (tabela controle_taxa), então vale para "
+                        "todas as réplicas e sobrevive a restart."
+                    )
+                    if c.rate_limit_habilitado
+                    else (
+                        "RATE_LIMIT_HABILITADO=false: o código existe, mas está desligado — "
+                        "brute force livre contra as senhas de administrador e inbound sem "
+                        "teto de consumo de LLM."
+                    )
+                ),
+                medidas_relacionadas=["rate_limit_login", "rate_limit_inbound"],
             ),
             ItemChecklist(
                 numero=6,
                 titulo="Tratamento de erro — telas próprias",
                 exigencia="Sem stack trace visível; erro com identificação para suporte.",
-                status=StatusMedida.PENDENTE,
+                status=StatusMedida.ATIVA,
                 situacao=(
-                    "O painel não tem app/error.tsx, app/global-error.tsx nem app/not-found.tsx "
-                    "— erro de runtime cai na tela padrão do Next. No back-end não há "
-                    "exception_handler próprio: a exceção vira o 500 do FastAPI, sem stack "
-                    "trace ao cliente, mas também sem id de correlação para rastrear."
+                    "O painel tem error.tsx, global-error.tsx e not-found.tsx, e o back-end "
+                    "tem handlers próprios: toda resposta de erro carrega o id de correlação "
+                    "(também no cabeçalho X-Request-Id), enquanto o traceback fica no log. É "
+                    "o id que o usuário informa ao suporte e que localiza a falha em /admin/logs."
                 ),
+                medidas_relacionadas=["observabilidade"],
             ),
             ItemChecklist(
                 numero=7,
@@ -164,11 +186,22 @@ class AvaliarPosturaSeguranca:
                 exigencia="Log estruturado somado a alerta de falha crítica.",
                 status=StatusMedida.ATENCAO,
                 situacao=(
-                    "Existe auditoria de negócio (quem fez o quê, incluindo a LLM) e loggers "
-                    "por módulo. Faltam logging estruturado, coletor de exceções e alerta: hoje "
-                    "uma falha em produção só aparece se alguém abrir os logs do Render."
+                    (
+                        "A metade do logging está feita: logging configurado, id de correlação "
+                        "por requisição, persistência no Postgres e painel em /admin/logs, com "
+                        f"retenção de {c.logs_retencao_dias} dias. Falta a outra metade — "
+                        "**alerta ativo**: ninguém é avisado de um erro; é preciso alguém abrir "
+                        "o painel para descobrir. Fica ATENÇÃO até haver notificação "
+                        "(e-mail/push) em falha crítica."
+                    )
+                    if c.logs_persistidos
+                    else (
+                        "Existe auditoria de negócio e loggers por módulo, mas a persistência "
+                        "de log está desligada (LOG_PERSISTIR=false): uma falha em produção só "
+                        "aparece se alguém abrir os logs do provedor no momento certo."
+                    )
                 ),
-                medidas_relacionadas=["auditoria"],
+                medidas_relacionadas=["auditoria", "observabilidade"],
             ),
             ItemChecklist(
                 numero=9,
@@ -176,10 +209,26 @@ class AvaliarPosturaSeguranca:
                 exigencia="Capacidade de reverter testada (blue-green ou equivalente).",
                 status=StatusMedida.ATENCAO,
                 situacao=(
-                    "O Render permite rollback de aplicação com um clique, mas isso nunca foi "
-                    "testado e não é blue-green. Ponto específico deste projeto: rollback de "
-                    "aplicação NÃO desfaz migration — voltar o código sem rodar o downgrade "
-                    "deixa o schema à frente da aplicação."
+                    "O procedimento está documentado passo a passo em docs/runbook-rollback.md "
+                    "(Render, Vercel, Cloudflare, downgrade de migration e restauração via "
+                    "Neon), mas NUNCA FOI EXECUTADO — segue em ATENÇÃO até o ensaio. Ponto "
+                    "específico deste projeto: rollback de aplicação não desfaz migration, e o "
+                    "CMD do container reaplica `alembic upgrade head` a cada restart."
+                ),
+            ),
+            ItemChecklist(
+                numero=10,
+                titulo="Política de backup (extra ao checklist de origem)",
+                exigencia="Cópia fora do provedor do dado, com restauração testada.",
+                status=StatusMedida.PENDENTE,
+                situacao=(
+                    "Existe apenas o point-in-time recovery do Neon, que cobre erro de operação "
+                    "recente mas mora dentro do mesmo provedor: perda de conta ou corrupção "
+                    "descoberta depois da janela de retenção não têm de onde voltar. A política "
+                    "proposta (dump diário para armazenamento externo, com teste trimestral de "
+                    "restauração) está em docs/backup.md, aguardando decisão. Pesa mais aqui do "
+                    "que num sistema comum: a base guarda ficha de matrícula de menor, com "
+                    "dado sensível que só existe aqui."
                 ),
             ),
         ]
@@ -353,8 +402,30 @@ class AvaliarPosturaSeguranca:
 
     # -- Rastreabilidade ---------------------------------------------------
 
-    def _rastreabilidade(self) -> list[MedidaSeguranca]:
+    def _rastreabilidade(self, c: ConfiguracaoSeguranca) -> list[MedidaSeguranca]:
         return [
+            MedidaSeguranca(
+                chave="observabilidade",
+                titulo="Log operacional persistido e consultável",
+                categoria="Rastreabilidade",
+                descricao=(
+                    "Toda requisição recebe um id de correlação, e os logs (com traceback) são gravados no Postgres e consultáveis em /admin/logs. Distinto da auditoria: aquela registra decisões de negócio, este registra o que o processo fez."
+                ),
+                risco=(
+                    "Sem log persistido, uma falha em produção só existe enquanto alguém estiver com o painel do Render aberto — e o erro que o usuário relata na segunda-feira já não pode ser localizado."
+                ),
+                status=(
+                    StatusMedida.ATIVA if c.logs_persistidos else StatusMedida.ATENCAO
+                ),
+                detalhe=(
+                    f"Retenção de {c.logs_retencao_dias} dias; a gravação é assíncrona (fila em memória drenada em lote), de modo a não somar latência à resposta."
+                    if c.logs_persistidos
+                    else (
+                        "LOG_PERSISTIR=false: os logs só vão para o stdout do provedor, que é volátil."
+                    )
+                ),
+                referencia="CLAUDE.md §16 · app/infrastructure/logs.py",
+            ),
             MedidaSeguranca(
                 chave="auditoria",
                 titulo="Log de auditoria de ações",
@@ -454,18 +525,83 @@ class AvaliarPosturaSeguranca:
                 titulo="Limite de taxa por remetente no inbound",
                 categoria="Exposição",
                 descricao=(
-                    "Limitar quantas mensagens um mesmo telefone pode disparar por minuto no "
-                    "webhook, para conter abuso e custo de LLM."
+                    "Limita quantas mensagens um mesmo telefone pode disparar por janela no "
+                    "webhook. A checagem roda depois da idempotência e antes da LLM, então a "
+                    "mensagem excedente não chega a custar uma chamada ao provedor."
                 ),
                 risco=(
                     "Um único número em loop pode consumir a cota de LLM da escola e gerar "
-                    "custo desproporcional — hoje só há limite de tamanho por mensagem."
+                    "custo desproporcional."
                 ),
-                status=StatusMedida.PENDENTE,
+                status=(
+                    StatusMedida.ATIVA
+                    if c.rate_limit_habilitado and c.rate_limit_inbound_mensagens > 0
+                    else StatusMedida.ATENCAO
+                ),
                 detalhe=(
-                    "Ainda não implementado. Existe apenas MENSAGEM_PAI_MAX_CHARS, que corta "
-                    "mensagem longa sem acionar a LLM."
+                    f"{c.rate_limit_inbound_mensagens} mensagens por remetente por janela; "
+                    "a excedente é descartada e o webhook segue devolvendo 200 à Meta."
+                    if c.rate_limit_habilitado and c.rate_limit_inbound_mensagens > 0
+                    else (
+                        "Desligado: sobra apenas MENSAGEM_PAI_MAX_CHARS, que corta mensagem "
+                        "longa mas não limita quantas chegam."
+                    )
                 ),
-                referencia="CLAUDE.md §G1",
+                referencia="app/application/inbound_use_cases.py",
+            ),
+            MedidaSeguranca(
+                chave="rate_limit_login",
+                titulo="Limite de tentativas de login",
+                categoria="Autenticação",
+                descricao=(
+                    "Conta as tentativas por IP e por identificador (e-mail do admin, "
+                    "telefone do professor) numa janela fixa e recusa o excedente com 429. "
+                    "As duas chaves juntas cobrem o ataque distribuído (que passaria pelo "
+                    "contador de IP) sem permitir trancar a conta alheia só por saber o "
+                    "e-mail."
+                ),
+                risco=(
+                    "Sem limite, o brute force contra a senha de um administrador é livre: o "
+                    "PBKDF2 encarece cada tentativa, mas não limita quantas são feitas."
+                ),
+                status=(
+                    StatusMedida.ATIVA
+                    if c.rate_limit_habilitado and c.rate_limit_login_tentativas > 0
+                    else StatusMedida.ATENCAO
+                ),
+                detalhe=(
+                    f"{c.rate_limit_login_tentativas} tentativas por janela, por IP e por "
+                    "identificador. Contador no Postgres (controle_taxa), compartilhado "
+                    "entre réplicas."
+                    if c.rate_limit_habilitado and c.rate_limit_login_tentativas > 0
+                    else "Desligado por configuração."
+                ),
+                referencia="app/interfaces/api/rate_limit.py",
+            ),
+            MedidaSeguranca(
+                chave="seed_producao",
+                titulo="Seed de demonstração fora de produção",
+                categoria="Exposição",
+                descricao=(
+                    "O seed cria escola fictícia, alunos e logins com senha de exemplo. Ele é "
+                    "bloqueado quando APP_ENV=production e, fora de desenvolvimento, exige "
+                    "que as senhas tenham valor próprio."
+                ),
+                risco=(
+                    "Rodando em produção, o seed insere no banco da escola real dados falsos "
+                    "indistinguíveis dos verdadeiros e um login cuja senha está versionada "
+                    "no repositório."
+                ),
+                status=(
+                    StatusMedida.ATENCAO
+                    if c.seed_demo_habilitado and c.app_env == "production"
+                    else StatusMedida.ATIVA
+                ),
+                detalhe=(
+                    f"SEED_DEMO={'ligado' if c.seed_demo_habilitado else 'desligado'}; "
+                    f"APP_ENV={c.app_env or '(vazio)'}. O provisionamento de produção é o "
+                    "`app.bootstrap`, que cria apenas o super admin."
+                ),
+                referencia="app/bootstrap.py",
             ),
         ]

@@ -513,10 +513,15 @@ export async function notificarVencimento(): Promise<AvisoLicenca[]> {
 }
 
 // --------------------------- conversas e broadcasts ------------------------ //
-export async function listarConversas(tenantId: string): Promise<ConversaResumo[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/conversas`, {
-    headers: authHeaders(),
-  });
+export async function listarConversas(
+  tenantId: string,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<ConversaResumo>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/conversas${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar conversas`);
   return resp.json();
 }
@@ -533,10 +538,15 @@ export async function obterConversa(
   return resp.json();
 }
 
-export async function listarBroadcasts(tenantId: string): Promise<BroadcastResumo[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/broadcasts`, {
-    headers: authHeaders(),
-  });
+export async function listarBroadcasts(
+  tenantId: string,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<BroadcastResumo>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/broadcasts${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar mensagens em massa`);
   return resp.json();
 }
@@ -554,10 +564,15 @@ export async function obterBroadcast(
 }
 
 // --------------------------- auditoria ------------------------------------ //
-export async function listarAuditoria(tenantId: string): Promise<RegistroAuditoria[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/escolas/${tenantId}/auditoria`, {
-    headers: authHeaders(),
-  });
+export async function listarAuditoria(
+  tenantId: string,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<RegistroAuditoria>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/auditoria${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar a auditoria`);
   return resp.json();
 }
@@ -588,11 +603,32 @@ async function jsonOuErro<T>(resp: Response, contexto: string): Promise<T> {
 }
 
 // ----- pais (CRUD) ----- //
-export async function listarPais(): Promise<Pai[]> {
-  const resp = await apiFetch(`${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}`, {
-    headers: authHeaders(),
-  });
+export async function listarPais(
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<Pai>> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/pais/tenant/${tenantEmFoco()}${qsPaginacao(pagina, porPagina)}`,
+    { headers: authHeaders() },
+  );
   return jsonOuErro(resp, "listar pais");
+}
+
+/**
+ * Todos os responsáveis da escola, percorrendo as páginas até o fim.
+ *
+ * As telas que **vinculam** um responsável (a uma turma, a um aluno) precisam do
+ * conjunto, não de uma página: pedir só a primeira faria sumir do seletor quem está
+ * além dela — e o vínculo com essa pessoa ficaria impossível pela tela.
+ */
+export async function listarTodosOsPais(porPagina = 200): Promise<Pai[]> {
+  const primeira = await listarPais(1, porPagina);
+  const todos = [...primeira.itens];
+  for (let pagina = 2; pagina <= primeira.meta.total_paginas; pagina++) {
+    const seguinte = await listarPais(pagina, porPagina);
+    todos.push(...seguinte.itens);
+  }
+  return todos;
 }
 
 export async function cadastrarPai(
@@ -767,14 +803,28 @@ export interface Aluno {
   id: string;
   nome: string;
   matricula: string;
+  /** false = ex-aluno. O registro nunca é apagado (soft delete). */
   ativo: boolean;
+  desativado_em: string | null;
+  motivo_desativacao: string;
   sala_id: string;
   sala_nome: string;
   responsaveis: Pai[];
 }
 
-export async function listarAlunos(salaId?: string): Promise<Aluno[]> {
-  const qs = salaId ? `?sala_id=${salaId}` : "";
+/** `apenasAtivos`: undefined = todos; true = matriculados; false = ex-alunos. */
+export async function listarAlunos(
+  salaId?: string,
+  apenasAtivos?: boolean,
+  pagina?: number,
+  porPagina?: number,
+): Promise<Pagina<Aluno>> {
+  const params = new URLSearchParams();
+  if (salaId) params.set("sala_id", salaId);
+  if (apenasAtivos !== undefined) params.set("apenas_ativos", String(apenasAtivos));
+  if (pagina) params.set("pagina", String(pagina));
+  if (porPagina) params.set("por_pagina", String(porPagina));
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const resp = await apiFetch(
     `${API_URL}/api/admin/alunos/tenant/${tenantEmFoco()}${qs}`,
     { headers: authHeaders() }
@@ -823,15 +873,29 @@ export async function atualizarAluno(
   return jsonOuErro(resp, "atualizar aluno");
 }
 
-export async function removerAluno(alunoId: string): Promise<void> {
+/**
+ * Desativa o aluno — **soft delete**. Nada é apagado: o registro de que ele estudou na
+ * escola é o lastro que o histórico escolar e as declarações exigem.
+ */
+export async function desativarAluno(alunoId: string, motivo = ""): Promise<Aluno> {
+  const params = new URLSearchParams({ tenant_id: tenantEmFoco() });
+  if (motivo) params.set("motivo", motivo);
   const resp = await apiFetch(
-    `${API_URL}/api/admin/alunos/${alunoId}?tenant_id=${tenantEmFoco()}`,
+    `${API_URL}/api/admin/alunos/${alunoId}?${params.toString()}`,
     { method: "DELETE", headers: authHeaders() }
   );
-  if (!resp.ok && resp.status !== 204) {
-    const erro = await resp.json().catch(() => ({}));
-    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover aluno`);
-  }
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao desativar aluno`);
+  return resp.json();
+}
+
+/** Rematrícula do ex-aluno — ou desfaz uma desativação feita por engano. */
+export async function reativarAluno(alunoId: string): Promise<Aluno> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/${alunoId}/reativar?tenant_id=${tenantEmFoco()}`,
+    { method: "POST", headers: authHeaders() }
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao reativar aluno`);
+  return resp.json();
 }
 
 export async function vincularResponsavelAoAluno(
@@ -1560,5 +1624,130 @@ export interface PosturaSeguranca {
 export async function obterPosturaSeguranca(): Promise<PosturaSeguranca> {
   const resp = await apiFetch(`${API_URL}/api/admin/seguranca`, { headers: authHeaders() });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar a postura de segurança`);
+  return resp.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Logs da aplicação (§16) — exclusivo do super admin
+// --------------------------------------------------------------------------- //
+export type NivelLog = "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+
+export interface RegistroLog {
+  id: string;
+  criado_em: string;
+  nivel: NivelLog;
+  logger: string;
+  mensagem: string;
+  correlacao_id: string;
+  rota: string;
+  metodo: string;
+  status_code: number | null;
+  duracao_ms: number | null;
+  tenant_id: string | null;
+  excecao: string;
+  metadados: Record<string, unknown>;
+}
+
+export interface PaginaMeta {
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+/** Envelope das listagens paginadas — o mesmo formato em todas as telas. */
+export interface Pagina<T> {
+  itens: T[];
+  meta: PaginaMeta;
+}
+
+/** Monta a query string de paginação; omitir = usa o padrão do back-end (10). */
+function qsPaginacao(pagina?: number, porPagina?: number): string {
+  const params = new URLSearchParams();
+  if (pagina) params.set("pagina", String(pagina));
+  if (porPagina) params.set("por_pagina", String(porPagina));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export interface LogsPagina {
+  itens: RegistroLog[];
+  meta: PaginaMeta;
+  loggers: string[];
+}
+
+export interface Contagem {
+  rotulo: string;
+  quantidade: number;
+}
+
+export interface ResumoLogs {
+  janela_horas: number;
+  total: number;
+  erros: number;
+  alertas: number;
+  requisicoes: number;
+  duracao_media_ms: number;
+  duracao_p95_ms: number;
+  taxa_erro_percentual: number;
+  saudavel: boolean;
+  atendimentos_concluidos: number;
+  atendimentos_em_andamento: number;
+  atendimentos_falhos: number;
+  rotas_mais_lentas: Contagem[];
+  erros_mais_comuns: Contagem[];
+}
+
+export interface AtendimentoInbound {
+  chave: string;
+  status: string;
+  origem: string;
+  resumo: string;
+  tenant_id: string | null;
+  tenant_nome: string;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface FiltroLogs {
+  nivel?: string;
+  logger_nome?: string;
+  correlacao_id?: string;
+  busca?: string;
+  apenas_falhas?: boolean;
+  pagina?: number;
+  por_pagina?: number;
+}
+
+export async function listarLogs(filtro: FiltroLogs = {}): Promise<LogsPagina> {
+  const params = new URLSearchParams();
+  for (const [chave, valor] of Object.entries(filtro)) {
+    if (valor !== undefined && valor !== "" && valor !== false) params.set(chave, String(valor));
+  }
+  const resp = await apiFetch(`${API_URL}/api/admin/logs?${params.toString()}`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar os logs`);
+  return resp.json();
+}
+
+export async function obterResumoLogs(janelaHoras = 24): Promise<ResumoLogs> {
+  const resp = await apiFetch(`${API_URL}/api/admin/logs/resumo?janela_horas=${janelaHoras}`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar o resumo`);
+  return resp.json();
+}
+
+export async function listarAtendimentosInbound(
+  status = "",
+  limite = 30,
+): Promise<AtendimentoInbound[]> {
+  const params = new URLSearchParams({ limite: String(limite) });
+  if (status) params.set("status", status);
+  const resp = await apiFetch(`${API_URL}/api/admin/logs/atendimentos?${params.toString()}`, {
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar os atendimentos`);
   return resp.json();
 }

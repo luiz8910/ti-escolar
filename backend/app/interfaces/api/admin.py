@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application.admin_use_cases import (
@@ -21,6 +21,7 @@ from app.application.admin_use_cases import (
     EnviarBroadcastParaGrupo,
 )
 from app.application.auditoria_use_cases import ListarAuditoria, RegistrarAuditoria
+from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
 from app.application.use_cases import VerificarRecebimentoBroadcast
 from app.application.tenant_use_cases import (
     AtualizarEscola,
@@ -55,6 +56,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlTenantRepository,
     SqlUsuarioRepository,
 )
+from app.interfaces.api.rate_limit import limitar_login
 from app.interfaces.deps import (
     get_audit_repo,
     get_broadcast_repo,
@@ -69,15 +71,18 @@ from app.interfaces.deps import (
     get_usuario_repo,
 )
 from app.interfaces.dto import (
+    AuditoriaPaginaSaida,
     AvisoLicencaSaida,
     BloqueioEntrada,
     BroadcastDetalheSaida,
     BroadcastResumoSaida,
+    BroadcastsPaginaSaida,
     CancelamentoEntrada,
     ContatoEntrada,
     ContatoSaida,
     ConversaDetalheSaida,
     ConversaResumoSaida,
+    ConversasPaginaSaida,
     CriarUsuarioEntrada,
     DestinatarioBroadcastSaida,
     EnvioGrupoEntrada,
@@ -94,6 +99,7 @@ from app.interfaces.dto import (
     MensagemConversaSaida,
     MetricasUsoSaida,
     NaoEntregaSaida,
+    PaginaMeta,
     RegistroAuditoriaSaida,
     TokenSaida,
     UsuarioSaida,
@@ -104,6 +110,16 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 # auto_error=False: deixamos a checagem para ``usuario_autenticado`` devolver 401 limpo.
 _bearer = HTTPBearer(auto_error=False)
+
+
+def _meta(pagina) -> PaginaMeta:
+    """Traduz a ``Pagina`` do domínio no metadado que o painel consome."""
+    return PaginaMeta(
+        pagina=pagina.pagina,
+        por_pagina=pagina.por_pagina,
+        total=pagina.total,
+        total_paginas=pagina.total_paginas,
+    )
 
 
 def _usuario_saida(u: Usuario) -> UsuarioSaida:
@@ -192,12 +208,17 @@ async def _auditar_usuario(
 # --------------------------------------------------------------------------- #
 @router.post("/login", response_model=TokenSaida)
 async def login(
+    request: Request,
     payload: LoginEntrada,
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
     tenants: SqlTenantRepository = Depends(get_tenant_repo),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
     settings: Settings = Depends(get_settings_dep),
 ) -> TokenSaida:
+    # Antes de tocar no banco: sem isto, o PBKDF2 encarece cada tentativa mas não limita
+    # quantas o atacante faz contra as senhas de admin (item 5 do checklist).
+    await limitar_login(request, identificador=payload.email, escopo="admin", settings=settings)
+
     usuario = await AutenticarUsuario(usuarios=usuarios).executar(
         email=payload.email, senha=payload.senha
     )
@@ -729,15 +750,19 @@ async def obter_ficha_financeira(
 # --------------------------------------------------------------------------- #
 # Visualização: conversas (inbound) e mensagens em massa (outbound) da escola
 # --------------------------------------------------------------------------- #
-@router.get("/escolas/{tenant_id}/conversas", response_model=list[ConversaResumoSaida])
+@router.get("/escolas/{tenant_id}/conversas", response_model=ConversasPaginaSaida)
 async def listar_conversas(
     tenant_id: UUID,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     conversas: SqlConversaRepository = Depends(get_conversa_repo),
-) -> list[ConversaResumoSaida]:
+) -> ConversasPaginaSaida:
     _exige_acesso_tenant(usuario, tenant_id)
-    resumos = await ListarConversasDaEscola(conversas=conversas).executar(tenant_id=tenant_id)
-    return [
+    resultado = await ListarConversasDaEscola(conversas=conversas).executar(
+        tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+    )
+    itens = [
         ConversaResumoSaida(
             id=r.conversa.id,
             contato=r.conversa.contato,
@@ -746,8 +771,9 @@ async def listar_conversas(
             ultima_mensagem=r.ultima_mensagem,
             ultima_em=r.ultima_em,
         )
-        for r in resumos
+        for r in resultado.itens
     ]
+    return ConversasPaginaSaida(itens=itens, meta=_meta(resultado))
 
 
 @router.get(
@@ -782,18 +808,20 @@ async def obter_conversa(
     )
 
 
-@router.get("/escolas/{tenant_id}/broadcasts", response_model=list[BroadcastResumoSaida])
+@router.get("/escolas/{tenant_id}/broadcasts", response_model=BroadcastsPaginaSaida)
 async def listar_broadcasts(
     tenant_id: UUID,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
     session: AsyncSession = Depends(get_session),
-) -> list[BroadcastResumoSaida]:
+) -> BroadcastsPaginaSaida:
     _exige_acesso_tenant(usuario, tenant_id)
-    itens = await ListarBroadcastsDaEscola(
+    resultado = await ListarBroadcastsDaEscola(
         broadcasts=broadcasts, templates=SqlTemplateRepository(session)
-    ).executar(tenant_id=tenant_id)
-    return [
+    ).executar(tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina)
+    itens = [
         BroadcastResumoSaida(
             id=item.broadcast.id,
             titulo=item.broadcast.titulo,
@@ -804,8 +832,9 @@ async def listar_broadcasts(
             total_destinatarios=len(item.broadcast.destinatarios),
             por_status=dict(Counter(d.status.value for d in item.broadcast.destinatarios)),
         )
-        for item in itens
+        for item in resultado.itens
     ]
+    return BroadcastsPaginaSaida(itens=itens, meta=_meta(resultado))
 
 
 @router.get(
@@ -886,22 +915,20 @@ async def listar_nao_entregues(
 # --------------------------------------------------------------------------- #
 # Auditoria de ações (usuários logados + LLM) da escola
 # --------------------------------------------------------------------------- #
-@router.get(
-    "/escolas/{tenant_id}/auditoria", response_model=list[RegistroAuditoriaSaida]
-)
+@router.get("/escolas/{tenant_id}/auditoria", response_model=AuditoriaPaginaSaida)
 async def listar_auditoria(
     tenant_id: UUID,
-    limite: int = 200,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
-) -> list[RegistroAuditoriaSaida]:
+) -> AuditoriaPaginaSaida:
     """Log de auditoria da escola: ações de usuários logados e da LLM (mais recentes primeiro)."""
     _exige_acesso_tenant(usuario, tenant_id)
-    limite = max(1, min(limite, 500))
-    registros = await ListarAuditoria(auditoria=auditoria).executar(
-        tenant_id=tenant_id, limite=limite
+    resultado = await ListarAuditoria(auditoria=auditoria).executar(
+        tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
     )
-    return [
+    itens = [
         RegistroAuditoriaSaida(
             id=r.id,
             tenant_id=r.tenant_id,
@@ -913,5 +940,6 @@ async def listar_auditoria(
             metadados=r.metadados,
             criado_em=r.criado_em,
         )
-        for r in registros
+        for r in resultado.itens
     ]
+    return AuditoriaPaginaSaida(itens=itens, meta=_meta(resultado))

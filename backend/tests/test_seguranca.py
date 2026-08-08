@@ -77,6 +77,12 @@ def _config(**over) -> ConfiguracaoSeguranca:
         jwt_expira_minutos=480,
         cors_liberado=False,
         app_env="production",
+        rate_limit_habilitado=True,
+        rate_limit_login_tentativas=10,
+        rate_limit_inbound_mensagens=20,
+        seed_demo_habilitado=False,
+        logs_persistidos=True,
+        logs_retencao_dias=14,
     )
     base.update(over)
     return ConfiguracaoSeguranca(**base)
@@ -124,12 +130,30 @@ def test_cors_liberado_e_ambiente_nao_produtivo_sao_sinalizados():
     assert _medida(postura, "ambiente").status is StatusMedida.ATENCAO
 
 
-def test_medida_nao_implementada_aparece_como_pendente():
-    """O painel não pode dourar a pílula: o que falta tem que aparecer como falta."""
-    postura = AvaliarPosturaSeguranca().executar(config=_config())
-    assert _medida(postura, "rate_limit_inbound").status is StatusMedida.PENDENTE
-    assert postura.total_pendentes == 1
+def test_medida_existente_mas_desligada_aparece_como_atencao():
+    """O ponto do painel: o caso perigoso não é a medida que falta, é a que existe no
+    código e está desligada no ambiente. Um relatório sim/não esconderia justamente ela."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(rate_limit_habilitado=False)
+    )
+    assert _medida(postura, "rate_limit_login").status is StatusMedida.ATENCAO
+    assert _medida(postura, "rate_limit_inbound").status is StatusMedida.ATENCAO
     assert not postura.pronto_para_producao
+
+
+def test_seed_ligado_em_producao_e_alertado():
+    """Seed em produção despeja escola fictícia e senha de exemplo no banco real."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(seed_demo_habilitado=True, app_env="production")
+    )
+    assert _medida(postura, "seed_producao").status is StatusMedida.ATENCAO
+
+
+def test_seed_ligado_fora_de_producao_nao_e_alarme():
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(seed_demo_habilitado=True, app_env="development")
+    )
+    assert _medida(postura, "seed_producao").status is StatusMedida.ATIVA
 
 
 def test_toda_medida_declara_o_risco_que_cobre():
@@ -157,11 +181,22 @@ def _item(postura, numero: int):
     return next(i for i in postura.checklist if i.numero == numero)
 
 
-def test_checklist_traz_os_nove_itens_na_numeracao_da_fonte():
-    """A conferência com a lista de origem é 1:1 — numeração e ordem não podem escorregar."""
+def test_checklist_preserva_a_numeracao_da_fonte_e_acrescenta_no_fim():
+    """Os 9 itens da lista de origem mantêm numeração e ordem — quem audita precisa cruzar
+    1:1 com a fonte. Itens nossos (10+) só podem vir depois, nunca intercalados."""
     postura = AvaliarPosturaSeguranca().executar(config=_config())
-    assert [i.numero for i in postura.checklist] == list(range(1, 10))
+    numeros = [i.numero for i in postura.checklist]
+    assert numeros[:9] == list(range(1, 10))
+    assert numeros == sorted(numeros)
     assert postura.checklist_fonte.startswith("https://")
+
+
+def test_backup_aparece_como_pendente_ate_a_politica_existir():
+    """O painel não pode dourar a pílula: PITR do provedor não é política de backup."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    item = _item(postura, 10)
+    assert item.status is StatusMedida.PENDENTE
+    assert not postura.pronto_para_producao
 
 
 def test_todo_item_declara_exigencia_e_situacao():
@@ -170,11 +205,16 @@ def test_todo_item_declara_exigencia_e_situacao():
         assert i.titulo and i.exigencia and i.situacao
 
 
-def test_itens_nao_implementados_aparecem_como_pendentes():
-    """Rate limiting e telas de erro não existem — o painel tem que dizer isso."""
-    postura = AvaliarPosturaSeguranca().executar(config=_config())
-    assert _item(postura, 5).status is StatusMedida.PENDENTE  # rate limiting
-    assert _item(postura, 6).status is StatusMedida.PENDENTE  # telas de erro
+def test_item_de_checklist_reflete_a_configuracao_viva():
+    """O item 5 não é um fato fixo sobre o código: com o limite desligado no ambiente, o
+    checklist tem que voltar a acusar dívida."""
+    ligado = AvaliarPosturaSeguranca().executar(config=_config())
+    assert _item(ligado, 5).status is StatusMedida.ATIVA
+
+    desligado = AvaliarPosturaSeguranca().executar(
+        config=_config(rate_limit_habilitado=False)
+    )
+    assert _item(desligado, 5).status is StatusMedida.ATENCAO
 
 
 def test_reset_de_senha_e_nao_aplicavel_e_nao_conta_como_divida():
@@ -215,3 +255,24 @@ def test_checklist_pendente_impede_pronto_para_producao():
     postura = AvaliarPosturaSeguranca().executar(config=_config())
     assert postura.checklist_pendentes > 0
     assert not postura.pronto_para_producao
+
+
+def test_logging_desligado_vira_atencao():
+    """Com LOG_PERSISTIR=false o código continua lá, mas a falha em produção volta a
+    depender de alguém abrir o painel do provedor no momento certo."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config(logs_persistidos=False))
+    assert _medida(postura, "observabilidade").status is StatusMedida.ATENCAO
+
+
+def test_item_8_permanece_atencao_por_falta_de_alerta():
+    """Honestidade: log persistido e painel não são monitoramento. Enquanto ninguém for
+    avisado de um erro, o item continua em dívida — mesmo com tudo o mais pronto."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    item = _item(postura, 8)
+    assert item.status is StatusMedida.ATENCAO
+    assert "alerta" in item.situacao.lower()
+
+
+def test_item_6_atendido_com_telas_de_erro_e_id_de_correlacao():
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    assert _item(postura, 6).status is StatusMedida.ATIVA

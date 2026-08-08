@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.application.cadastro_use_cases import (
     AtribuirProfessorASala,
@@ -34,7 +34,8 @@ from app.application.cadastro_use_cases import (
     ObterProfessor,
     ObterSala,
     RelatorioPaisDaSala,
-    RemoverAluno,
+    DesativarAluno,
+    ReativarAluno,
     RemoverPai,
     RemoverProfessor,
     RemoverProfessorDaSala,
@@ -75,7 +76,11 @@ from app.interfaces.deps import (
     get_professor_repo,
     get_sala_repo,
 )
+from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
 from app.interfaces.dto import (
+    AlunosPaginaSaida,
+    PaginaMeta,
+    PaisPaginaSaida,
     AlunoAtualizar,
     AlunoEntrada,
     AlunoResumoSaida,
@@ -140,12 +145,24 @@ def _cobertura_saida(c: CoberturaContatosSala) -> CoberturaSalaSaida:
     )
 
 
+def _meta(pagina) -> PaginaMeta:
+    """Traduz a ``Pagina`` do domínio no metadado que o painel consome."""
+    return PaginaMeta(
+        pagina=pagina.pagina,
+        por_pagina=pagina.por_pagina,
+        total=pagina.total,
+        total_paginas=pagina.total_paginas,
+    )
+
+
 def _aluno_saida(a: Aluno) -> AlunoSaida:
     return AlunoSaida(
         id=a.id,
         nome=a.nome,
         matricula=a.matricula,
         ativo=a.ativo,
+        desativado_em=a.desativado_em,
+        motivo_desativacao=a.motivo_desativacao,
         sala_id=a.sala_id,
         sala_nome=a.sala_nome,
         responsaveis=[_pai_saida(c) for c in a.responsaveis],
@@ -229,14 +246,21 @@ async def cadastrar_pai(
     return _pai_saida(contato)
 
 
-@router.get("/pais/tenant/{tenant_id}", response_model=list[PaiSaida])
+@router.get("/pais/tenant/{tenant_id}", response_model=PaisPaginaSaida)
 async def listar_pais(
     tenant_id: UUID,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     contatos: SqlContatoRepository = Depends(get_contato_repo),
-) -> list[PaiSaida]:
+) -> PaisPaginaSaida:
     _exige_acesso_tenant(usuario, tenant_id)
-    return [_pai_saida(c) for c in await ListarPais(contatos=contatos).executar(tenant_id=tenant_id)]
+    resultado = await ListarPais(contatos=contatos).executar(
+        tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
+    )
+    return PaisPaginaSaida(
+        itens=[_pai_saida(c) for c in resultado.itens], meta=_meta(resultado)
+    )
 
 
 @router.put("/pais/{contato_id}", response_model=PaiSaida)
@@ -502,16 +526,28 @@ async def cadastrar_aluno(
     return _aluno_saida(aluno)
 
 
-@router.get("/alunos/tenant/{tenant_id}", response_model=list[AlunoSaida])
+@router.get("/alunos/tenant/{tenant_id}", response_model=AlunosPaginaSaida)
 async def listar_alunos(
     tenant_id: UUID,
     sala_id: UUID | None = None,
+    apenas_ativos: bool | None = None,
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-) -> list[AlunoSaida]:
+) -> AlunosPaginaSaida:
+    """``apenas_ativos``: omitido = todos; ``true`` = matriculados; ``false`` = ex-alunos."""
     _exige_acesso_tenant(usuario, tenant_id)
-    encontrados = await ListarAlunos(alunos=alunos).executar(tenant_id=tenant_id, sala_id=sala_id)
-    return [_aluno_saida(a) for a in encontrados]
+    resultado = await ListarAlunos(alunos=alunos).executar(
+        tenant_id=tenant_id,
+        sala_id=sala_id,
+        apenas_ativos=apenas_ativos,
+        pagina=pagina,
+        por_pagina=por_pagina,
+    )
+    return AlunosPaginaSaida(
+        itens=[_aluno_saida(a) for a in resultado.itens], meta=_meta(resultado)
+    )
 
 
 @router.get("/alunos/{aluno_id}", response_model=AlunoSaida)
@@ -552,17 +588,42 @@ async def atualizar_aluno(
     return _aluno_saida(aluno)
 
 
-@router.delete("/alunos/{aluno_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remover_aluno(
+@router.delete("/alunos/{aluno_id}", response_model=AlunoSaida)
+async def desativar_aluno(
+    aluno_id: UUID,
+    tenant_id: UUID,
+    motivo: str = "",
+    usuario: Usuario = Depends(usuario_autenticado),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+) -> AlunoSaida:
+    """Desativa o aluno (**soft delete**) e devolve o registro atualizado.
+
+    O verbo é ``DELETE`` porque é a "exclusão" do ponto de vista de quem usa o painel, mas
+    nada é apagado: o aluno vira ex-aluno. Apagar destruiria o registro de que ele estudou
+    na escola — histórico, declarações, prestação de contas.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    aluno = await DesativarAluno(alunos=alunos).executar(
+        tenant_id=tenant_id, aluno_id=aluno_id, motivo=motivo
+    )
+    if aluno is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado")
+    return _aluno_saida(aluno)
+
+
+@router.post("/alunos/{aluno_id}/reativar", response_model=AlunoSaida)
+async def reativar_aluno(
     aluno_id: UUID,
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-) -> None:
+) -> AlunoSaida:
+    """Rematrícula do ex-aluno — ou desfaz uma desativação feita por engano."""
     _exige_acesso_tenant(usuario, tenant_id)
-    removido = await RemoverAluno(alunos=alunos).executar(tenant_id=tenant_id, aluno_id=aluno_id)
-    if not removido:
+    aluno = await ReativarAluno(alunos=alunos).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+    if aluno is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado")
+    return _aluno_saida(aluno)
 
 
 @router.post("/alunos/{aluno_id}/responsaveis", status_code=status.HTTP_204_NO_CONTENT)

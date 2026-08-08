@@ -150,7 +150,8 @@ ti-escolar/
   `0014_solicitacoes_impressao` → `0015_mural_professor` → `0016_solicitacoes_internas` →
   `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo` →
   `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula` →
-  `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id`.
+  `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id` → `0025_controle_taxa` →
+  `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -215,17 +216,21 @@ ti-escolar/
 
 - **`Aluno`** por tenant, com **série 1:1 obrigatória** (`sala_id` → `Sala`, FK restritiva) e
   **responsáveis N:N** (`Contato`s via `aluno_responsaveis`, `ON DELETE CASCADE`). Campos: `nome`,
-  `matricula` (opcional), `ativo` (marca **ex-aluno** — base da futura transferência/promoção de
-  série). `sala_nome` é denormalizado só para exibição.
+  `matricula` (opcional), `ativo` (marca **ex-aluno**), `desativado_em` e `motivo_desativacao`.
+  **O aluno nunca é apagado pelo painel:** "excluir" é `DesativarAluno` (soft delete), porque o
+  registro de que ele estudou na escola sustenta histórico escolar, declarações e prestação de
+  contas. `ReativarAluno` desfaz (rematrícula ou clique errado); desativar duas vezes não
+  reescreve a data de saída. `sala_nome` é denormalizado só para exibição.
 - **CRUD completo** + vínculo/desvínculo de responsáveis e filtro por série. Casos de uso em
   `app/application/cadastro_use_cases.py` (`CadastrarAluno`, `ListarAlunos`, `ObterAluno`,
   `AtualizarAluno`, `RemoverAluno`, `VincularResponsavelAoAluno`, `DesvincularResponsavelDoAluno`);
   a série informada é validada como pertencente ao tenant. Repositório `SqlAlunoRepository`.
-- **Exclusão de série com alunos:** como `sala_id` é obrigatório, `RemoverSala` exige uma
-  estratégia: sem `mover_para` **exclui** os alunos junto com a série; com `mover_para=<sala_id>`
-  **transfere** os alunos para outra série (validada no tenant, diferente da removida) antes de
-  apagar a original. No painel, o diálogo de exclusão oferece as duas opções e permite **criar a
-  série destino** na hora (reusando `POST /salas`).
+- **Exclusão de série com alunos:** como `sala_id` é obrigatório, `RemoverSala` exige
+  `mover_para=<sala_id>`, que **transfere** os alunos para outra série (validada no tenant,
+  diferente da removida) antes de apagar a original; série vazia é removida sem cerimônia.
+  **Não existe mais a opção de apagar os alunos junto** — era o caminho mais fácil da tela
+  destruindo histórico. No painel, o diálogo permite **criar a série destino** na hora
+  (reusando `POST /salas`).
 - **Rotas** em `app/interfaces/api/cadastro.py`: `alunos` (POST · GET `tenant/{tenant_id}` com
   `?sala_id=` opcional), `alunos/{id}` (GET/PUT/DELETE), `alunos/{id}/responsaveis`
   (POST vincular · DELETE `/{contato_id}` desvincular) e `DELETE /salas/{id}?mover_para=` para a
@@ -367,8 +372,12 @@ ti-escolar/
   para expirar" é `dias_para_expirar` (exposto em `LicencaSaida`).
 - **Aviso por e-mail:** `NotificarLicencasAVencer` avisa os `tenant_admin` das escolas com
   **plano anual** dentro da janela `LICENSE_WARNING_DAYS` (default 30) do vencimento. Porta
-  `EmailSender` no domínio; adaptador atual `LogEmailSender` (mock/log,
-  `app/infrastructure/messaging/email.py`). Disparável pelo super admin via
+  `EmailSender` no domínio; adaptadores `LogEmailSender` (mock/log) e **`ResendEmailSender`**
+  (envio real via API HTTP do resend.com), escolhidos por `EMAIL_PROVIDER`
+  (`app/infrastructure/messaging/email.py`, fábrica `criar_email_sender`). Com
+  `EMAIL_PROVIDER=resend` e `RESEND_API_KEY` vazia, cai no log em vez de derrubar o deploy.
+  Falha do provedor é registrada e engolida: o aviso percorre várias escolas e a recusa de uma
+  não pode interromper as demais. Disparável pelo super admin via
   `POST /api/admin/licencas/notificar-vencimento` (ou por um job agendado).
 - **Rotas** (super admin, `app/interfaces/api/admin.py`): `/escolas/{tenant_id}/bloquear`,
   `/escolas/{tenant_id}/desbloquear`, `/escolas/{tenant_id}/cancelar`,
@@ -730,11 +739,16 @@ número. Como ficou:
    - **responde ativamente**: a Meta exige `200 OK` e não aceita a resposta no corpo do webhook,
      então a resposta sai por uma **segunda chamada** à API (`MessageChannel.enviar_texto`), a
      partir do número da própria escola;
-   - **idempotência por `wamid`** (`CacheIdempotencia` / `CacheIdempotenciaMemoria`): a Meta
-     reenvia o evento quando o `200` demora, e sem isso o mesmo recado seria atendido — e cobrado
-     na LLM — duas vezes. O cache é **de processo** (LRU limitado): cobre a reentrega imediata,
-     mas **não** atravessa réplicas nem restart. **[Roadmap]** versão durável (tabela/Redis) e
-     fila/worker, para o `200` não depender da latência da LLM.
+   - **idempotência por `wamid`** (`RegistroAtendimento`, tabela `inbound_atendimento`,
+     migration `0026`): a Meta reenvia o evento quando o `200` demora, e sem isso o mesmo recado
+     seria atendido — e cobrado na LLM — duas vezes. Desde 29/jul/2026 a reserva é **durável e
+     compartilhada**: guarda **estado** (`em_atendimento` × `concluida`), não um booleano, porque
+     a reentrega chega justamente *durante* a espera pela LLM e, com mais de uma réplica, quase
+     sempre em outro processo. A reserva é feita num único `INSERT ... ON CONFLICT` antes da
+     chamada à LLM; falha ou recusa por limite de taxa **liberam** a reserva, senão a mensagem
+     ficaria travada e a reentrega — que é a chance de acertar — seria descartada. Reserva
+     abandonada há mais de 3 min é retomável. **[Roadmap]** fila/worker, para o `200` não
+     depender da latência da LLM.
    - **[Roadmap]** mídia (imagem/áudio/documento): hoje é ignorada com log, porque exige baixar
      o `media_id` pela Graph API.
 6. **Painel:** o `meta_phone_number_id` é editável no cadastro/edição de escola do super admin
@@ -821,6 +835,15 @@ Tudo roda sob Docker. Serviços previstos no `docker-compose.yml`:
 Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de **migrations**
 (Alembic), **seed** de dados de demonstração e execução de **testes** (`pytest`).
 
+> **Provisionamento × seed.** O `CMD` do container roda `alembic upgrade head` e
+> `python -m app.bootstrap` — este último cria **apenas o super admin**, é idempotente (não
+> sobrescreve senha de quem já existe) e recusa a senha de exemplo em produção. O **seed de
+> demonstração** (`python -m app.seed`) só roda com `SEED_DEMO=true` e **nunca** com
+> `APP_ENV=production`; fora de desenvolvimento ainda exige que as senhas tenham valor próprio.
+> Até 29/jul/2026 o seed rodava no `CMD`, ou seja, **em produção a cada deploy**: despejava a
+> escola-demo e logins com senha versionada no repositório dentro do banco real. Política em
+> `app/bootstrap.py::avaliar_seed`.
+
 ---
 
 ## 11. Convenções
@@ -856,8 +879,9 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   - [x] **Inbound** no `POST /api/webhook/meta` (`ProcessarInboundMeta`): roteia por
     `metadata.phone_number_id`, **descarta número desconhecido** (sem tenant de fallback),
     responde ativamente pelo número da escola e deduplica reentregas por `wamid`.
-  - [ ] Idempotência **durável** do inbound (hoje o cache é de processo) e **fila/worker**, para
-    o `200 OK` não depender da latência da LLM (§9e.1).
+  - [x] Idempotência **durável** do inbound (tabela `inbound_atendimento`, com estado
+    `em_atendimento` × `concluida`, migration `0026`). **[ ] Falta a fila/worker**, para o
+    `200 OK` não depender da latência da LLM (§9e.1).
   - [ ] Inbound de **mídia** (imagem/áudio/documento): hoje é ignorado com log — exige baixar o
     `media_id` pela Graph API.
   - [ ] Automação do registro de número na WABA pela Graph API (§9e.3).
@@ -904,11 +928,28 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   **back-end (FastAPI) → Render** (Auto-Deploy nativo no push à `main`);
   **painel admin (`web/`) → Vercel**, que consome a API do Render;
   **landing page (`site/`) → Cloudflare Pages**, via `.github/workflows/site.yml` (§9d).
-  O CI (`.github/workflows/ci.yml`) roda **lint (ruff) + migrations (alembic upgrade head) +
-  pytest** em PRs e na `main`, servindo de portão de qualidade antes do merge.
+  O CI (`.github/workflows/ci.yml`) roda três jobs em PRs e na `main`, como portão de
+  qualidade antes do merge: **back-end** (ruff + `alembic upgrade head` + pytest),
+  **painel `web/`** (`tsc --noEmit` + `next build`) e **landing `site/`** (typecheck + export
+  estático). O front entrou no CI em 29/jul/2026 — até então um erro de TypeScript só
+  aparecia quando a Vercel tentava publicar. O `next lint` **não** é usado: o projeto não tem
+  configuração de ESLint e o comando entra em modo interativo.
   > O `ruff` está fixado em `>=0.5,<0.16` no `backend/pyproject.toml`: sem teto, o CI
   > instalava a versão mais nova a cada execução e a 0.16.0 quebrou a build sem que o
   > código mudasse (358 dos 424 achados eram `B008`, o `Depends()` do FastAPI).
+
+**Prontidão para produção** _(ver §15 e §16)_
+- [x] **Seed restrito a homologação** + `app.bootstrap` para o super admin (§10).
+- [x] **Rate limiting** no login e no inbound, com contador no Postgres (§15, item 5).
+- [x] **Idempotência durável** do inbound (`inbound_atendimento`, §9e.1).
+- [x] **Painel de Logs** + id de correlação + telas de erro (§16, itens 6 e 8).
+- [x] **E-mail real** via Resend (§6e).
+- [x] **Soft delete de aluno** (§6c-bis).
+- [x] **Paginação** das listagens que crescem (§15, item 7).
+- [x] **Front no CI** (typecheck + build de `web/` e `site/`).
+- [x] **Runbook de rollback** (`docs/runbook-rollback.md`) — falta o **ensaio**.
+- [ ] **Política de backup** (`docs/backup.md`) — proposta escrita, **aguardando decisão**.
+- [ ] **Alerta ativo** de falha crítica (e-mail/push/Sentry) — o que mantém o item 8 em ⚠️.
 
 **Observabilidade / histórico** _(ver §13)_
 - [x] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —
@@ -1014,8 +1055,8 @@ redireciona quem não é super admin.
   respondesse "implementado sim/não" esconderia exatamente o caso perigoso — a medida que
   existe no código e está desligada em produção.
 - **Honestidade obrigatória.** Medida planejada e não implementada aparece como `PENDENTE`.
-  Um painel de auditoria que dourasse a pílula não serviria para auditar nada. Hoje o
-  `rate_limit_inbound` (limite de taxa por remetente no webhook) está nesse estado.
+  Um painel de auditoria que dourasse a pílula não serviria para auditar nada. Hoje é o item
+  10 (**política de backup**) que está nesse estado: existe PITR do Neon, não existe política.
 - **Cada medida declara o risco que cobre**, não só o que faz — é o que permite priorizar.
 - **Nenhum segredo é exposto:** a API devolve apenas *se* um segredo continua com o valor de
   exemplo (`JWT_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`), nunca o valor.
@@ -1033,11 +1074,15 @@ enum `StatusMedida` em `entities.py`.
   (`pronto_para_producao`), o **checklist de pré-deploy** (abaixo) e as medidas agrupadas por
   categoria (Integridade de dados, Autenticação, Isolamento, Rastreabilidade, Exposição).
   Entrada na sidebar sob **ADMINISTRAÇÃO**, ao lado de "Escolas".
+- **Medidas acrescentadas em 29/jul/2026:** `rate_limit_login`, `rate_limit_inbound` (deixou
+  de ser `PENDENTE`), `seed_producao` (alerta se `SEED_DEMO` estiver ligado com
+  `APP_ENV=production`) e `observabilidade` (logs persistidos e consultáveis).
 - **Checklist de pré-deploy embutido:** os 9 itens da §15 são servidos pelo mesmo endpoint
   (`ItemChecklist`, com `numero`/`exigencia`/`situacao` e as `medidas_relacionadas`), com a
   **numeração e a ordem da fonte preservadas** para conferência 1:1 — quem audita precisa
-  cruzar item a item sem reinterpretar. O item 4 (CORS) deriva da configuração viva; os demais
-  são fatos sobre o código. O painel linka a fonte original. `pronto_para_producao` só é
+  cruzar item a item sem reinterpretar. Itens nossos, além da lista de origem, só entram
+  **depois** do 9 (hoje: o 10, política de backup). Os itens 4 (CORS), 5 (rate limiting) e 8
+  (logging) derivam da configuração viva; os demais são fatos sobre o código. O painel linka a fonte original. `pronto_para_producao` só é
   verdadeiro quando **nem as medidas nem o checklist** exigem ação.
 - **Testes:** `backend/tests/test_seguranca.py` cobre a validação de assinatura (incluindo
   corpo adulterado e segredo errado) e a classificação das medidas.
@@ -1096,21 +1141,35 @@ Lista explícita em `BACKEND_CORS_ORIGINS`. O curinga `*` é aceito só como esc
 **desabilita `allow_credentials`** (o painel usa Bearer no header, não cookie). O painel de §14
 sinaliza quando está liberado. Falta **confirmar o valor em produção** no Render.
 
-### 5. ❌ Rate limiting
+### 5. ✅ Rate limiting
 
-Não existe em lugar nenhum. Os três pontos que importam:
-- **`POST /api/admin/login`** — brute force livre contra as senhas de admin. PBKDF2 encarece
-  cada tentativa, mas não limita o número delas.
-- **Webhook inbound** — um número em loop consome a cota de LLM da escola (só há
-  `MENSAGEM_PAI_MAX_CHARS`, que corta mensagem longa).
-- **Chat demo** — público; hoje limitado ao tenant de vitrine (item 1), mas sem teto de uso.
+Implementado em 29/jul/2026. Contador de **janela fixa no Postgres** (`controle_taxa`,
+migration `0025`), não em memória: com mais de uma réplica no Render, um contador de processo
+daria ao atacante uma cota por instância e seria zerado a cada deploy.
+- **Login** (`/api/admin/login` e `/api/professor/login`) — conta por **IP e por
+  identificador**. Só por IP, uma botnet distribuída passa livre; só por e-mail, qualquer um
+  tranca a conta do diretor de propósito. Excedente recebe **429 + `Retry-After`**, sem revelar
+  a régua do limite. Config: `RATE_LIMIT_LOGIN_TENTATIVAS` / `_JANELA_SEGUNDOS`.
+- **Webhook inbound** — limite por **telefone remetente**, aplicado **depois** da idempotência
+  (reentrega da Meta não consome franquia do responsável) e **antes** da LLM, que é o recurso
+  caro. A mensagem excedente é descartada e o webhook segue devolvendo `200` à Meta — um 429
+  faria a Meta reenviar e penalizar a saúde do endpoint.
+- **Chat demo** — segue sem teto próprio; limitado ao tenant de vitrine (item 1). **[Roadmap]**
 
-### 6. ❌ Tratamento de erro — telas próprias
+Código: `app/infrastructure/rate_limit.py` (adaptadores SQL e memória),
+`app/interfaces/api/rate_limit.py` (aplicação no login), `ProcessarInboundMeta` (inbound).
+Porta `ControleTaxa` no domínio. Cobertura: `tests/test_rate_limit.py`.
 
-- **Front:** não existem `app/error.tsx`, `app/global-error.tsx` nem `app/not-found.tsx`. Erro
-  de runtime cai na tela padrão do Next.
-- **Back:** nenhum `exception_handler` custom; exceção não tratada devolve o 500 padrão do
-  FastAPI (sem stack trace ao cliente, mas sem correlação de erro para suporte).
+### 6. ✅ Tratamento de erro — telas próprias
+
+Implementado em 29/jul/2026.
+- **Front:** `web/app/error.tsx`, `global-error.tsx` e `not-found.tsx`. A mensagem técnica vai
+  para o console do navegador; o usuário vê o **código de correlação** para relatar ao suporte.
+- **Back:** `app/interfaces/middleware.py` — toda requisição recebe um id de correlação
+  (herdado do `X-Request-Id` do proxy, se houver), devolvido no cabeçalho e no corpo de **todo**
+  erro. O traceback vai para o log, nunca para a resposta. O handler de exceção não tratada lê
+  o id do `request.state` e não do `ContextVar`, porque ele roda no `ServerErrorMiddleware` —
+  mais externo que o middleware que popula o contexto.
 
 ### 7. ✅ Índices no banco
 
@@ -1120,27 +1179,73 @@ paginadas) é otimização, não pendência.
 
 ### 8. ⚠️ Logging e monitoramento
 
-Existe **auditoria de negócio** (§13: quem fez o quê, incluindo a LLM) e loggers por módulo. Não
-existe **logging estruturado** (sem `basicConfig`/`dictConfig`), nem **alerta de falha crítica**,
-nem coletor de exceções (Sentry ou equivalente). Hoje uma falha em produção só aparece se alguém
-abrir os logs do Render.
+**Metade feita** (29/jul/2026): logging configurado, id de correlação por requisição,
+persistência no Postgres e painel em `/admin/logs` (§16). **Falta a outra metade — alerta
+ativo:** ninguém é avisado de um erro; é preciso alguém abrir o painel para descobrir. Segue
+⚠️ até haver notificação (e-mail/push, ou Sentry) em falha crítica.
 
 ### 9. ⚠️ Estratégia de rollback
 
-O Render mantém deploys anteriores e permite **rollback de aplicação** com um clique, mas isso
-**nunca foi testado** e não é blue-green. Ponto de atenção específico deste projeto: **rollback
-de aplicação não desfaz migration**. A `0023_remover_content_sid` faz `DROP COLUMN`; voltar o
-código sem rodar o `downgrade` deixa o schema à frente da aplicação.
+O procedimento passou a ser **documentado passo a passo** em `docs/runbook-rollback.md`
+(Render, Vercel, Cloudflare Pages, `alembic downgrade` e restauração via Neon), mas **nunca foi
+executado** — segue ⚠️ até o ensaio descrito no próprio runbook. Dois pontos específicos deste
+projeto: **rollback de aplicação não desfaz migration** (a `0023_remover_content_sid` faz
+`DROP COLUMN`), e o `CMD` do container roda `alembic upgrade head` a cada restart, de modo que
+um `downgrade` é reaplicado se o serviço reiniciar antes de a aplicação ser revertida.
+
+### 10. ❌ Política de backup (item nosso, além da lista de origem)
+
+Existe apenas o **point-in-time recovery do Neon**, que cobre erro de operação recente mas mora
+**dentro do mesmo provedor**: perda de conta ou corrupção descoberta depois da janela de
+retenção não têm de onde voltar. Pesa mais aqui do que num sistema comum — a base guarda ficha
+de matrícula de menor, com dado sensível que só existe aqui. Política proposta (dump diário
+para armazenamento externo + teste trimestral de restauração) em `docs/backup.md`, **aguardando
+decisão**.
 
 ### Ordem sugerida
 
 1. ~~Autenticar `POST /api/broadcasts` e a rota de quota~~ · ~~decidir o destino do chat
    demo~~ — **feitos** em 27/jul/2026 (item 1).
-2. **Rate limit no login e no inbound** (item 5) — hoje o maior risco aberto: brute force
-   contra as senhas de admin.
-3. **Telas de erro + handler com id de correlação** (item 6).
-4. **Logging estruturado + alerta** (item 8).
-5. **Testar o rollback** do Render uma vez, com migration envolvida (item 9).
+2. ~~**Rate limit no login e no inbound**~~ (item 5) — **feito** em 29/jul/2026.
+3. ~~**Telas de erro + handler com id de correlação**~~ (item 6) — **feito** em 29/jul/2026.
+4. ~~**Logging estruturado**~~ (item 8) — **feito**; falta o **alerta ativo**.
+5. **Testar o rollback** uma vez, com migration envolvida (item 9) — o runbook existe, o
+   ensaio não.
+6. **Decidir e implementar a política de backup** (item 10).
+
+---
+
+## 16. Observabilidade — painel de Logs (super admin)
+
+Painel **exclusivo do super admin** (`/admin/logs`), inspirado no Laravel Horizon: primeiro o
+estado agregado da janela recente ("está tudo bem agora?"), depois a **fila de atendimentos do
+WhatsApp**, e só então o log linha a linha. Distinto de §13 (auditoria), que registra **decisões
+de negócio** e é escopado por escola; aqui é **operacional e cross-tenant** — traceback, rota,
+latência —, material que não é para a secretaria.
+
+- **Id de correlação por requisição** (`app/interfaces/middleware.py`): gerado ou herdado do
+  `X-Request-Id`, guardado em `ContextVar` (para qualquer log emitido durante o atendimento
+  carregá-lo) **e** no `request.state`. Devolvido no cabeçalho e no corpo de todo erro — é o
+  código que o usuário informa ao suporte.
+- **Coleta assíncrona** (`app/infrastructure/logs.py`): o `logging.Handler` apenas **enfileira**;
+  uma tarefa de fundo drena em lote e grava em `logs_aplicacao` (migration `0027`). Gravar no
+  caminho da requisição acoplaria a latência de cada resposta ao banco e, pior, um erro de banco
+  durante o log de um erro de banco viraria recursão. Fila cheia **descarta o mais antigo** —
+  perder log é ruim, travar o atendimento de um responsável para gravá-lo é pior.
+- **Retenção** `LOG_RETENCAO_DIAS` (default 14), limpa a cada 6h pelo próprio gravador.
+- **O que o painel mostra:** erros, alertas, requisições, taxa de erro, latência média e p95,
+  rotas mais lentas, erros mais frequentes; a fila de `inbound_atendimento` (respondidas / em
+  atendimento / falhas — §9e.1); e a listagem paginada com filtro por nível, módulo e texto,
+  com o traceback expansível.
+- **Saúde** (`ResumoLogs.saudavel`) exige zero erro **e** zero atendimento falho: um atendimento
+  falho não aparece como erro HTTP, mas significa que um responsável escreveu e não foi
+  respondido.
+- **Endpoints** (`app/interfaces/api/logs.py`, guarda `_exige_super_admin`):
+  `GET /api/admin/logs`, `/logs/resumo`, `/logs/atendimentos`.
+- **Prontidão:** `GET /health/pronto` toca o banco (`SELECT 1`), separado do `/health`
+  (liveness) — o `/health` respondia "ok" com o Neon inteiramente fora do ar.
+- **[Roadmap] Alerta ativo:** ninguém é notificado de um erro; é preciso abrir o painel. É o que
+  mantém o item 8 do checklist em ⚠️.
 
 ---
 
