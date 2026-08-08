@@ -872,6 +872,14 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     go-live**: o endpoint aceitava qualquer POST, permitindo forjar status de entrega e
     (após o inbound) conversas falsas.
   - [x] Remoção completa da Twilio (adaptador, webhook, testes, `TWILIO_*`, `content_sid`).
+  - [ ] **Publicar o app na Meta** ("Ao vivo", app id `3140942352961209`) — **bloqueante e
+    silencioso**: app não publicado recebe apenas webhooks de *teste*, então o inbound real não
+    chega e nenhum status de entrega é registrado, sem nada dar erro. Ver
+    `docs/producao-whatsapp.md` §1.1.
+  - [ ] **Verificar o número na WABA de produção** (id `2116419572321695`) — o número está
+    cadastrado mas "Não verificado": o código da Meta é tráfego internacional de entrada e não
+    chegou ao chip. Diagnóstico e regra de "não queime tentativas" em
+    `docs/producao-whatsapp.md` §2.1.
   - [x] `Tenant.meta_phone_number_id` (migration `0024_tenant_meta_phone_number_id`, único por
     índice UNIQUE parcial) + `TenantRepository.por_meta_phone_number_id` + campo no painel.
   - [x] `MetaMessageChannel` honrando o `remetente` (URL montada por envio), com
