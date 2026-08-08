@@ -16,7 +16,7 @@
 | Etapa | Situação |
 |---|---|
 | **Verificação da empresa** (Meta cruza CNPJ, site e dados do portfólio) | ✅ **Aprovada** (27/jul/2026) — portfólio TiEscolar, business_id `940840332344260` |
-| **App publicado** ("Ao vivo") | ⬜ **Pendente e bloqueante** — ver §1.1 |
+| **App publicado** ("Ao vivo") | ✅ **Publicado** (06/ago/2026) — ver §1.1 |
 | **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
 | **Número real registrado** | ⚠️ Cadastrado (`+55 15 99753-6978`) mas **"Não verificado"** — ver §2.1 |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
@@ -68,10 +68,16 @@ Ou seja: **com o app não publicado, o `POST /api/webhook/meta` não recebe mens
 o chatbot não atende e nenhum status de entrega chega, mesmo com número verificado, token válido e
 assinatura configurada. É um passo silencioso: nada dá erro, simplesmente não chega nada.
 
-Caminho: app → **Publicar** (menu lateral). Os requisitos que travavam a publicação (política de
-privacidade, termos, exclusão de dados, e-mail de contato, categoria) já estão preenchidos e
-apontam para `tiescolar.com.br` — a tela deve mostrar *"Todas as configurações necessárias do app
-foram concluídas"*.
+Caminho: app → **Publicar** (menu lateral) → botão **Publicar** no rodapé. Os requisitos que
+travavam a publicação (política de privacidade, termos, exclusão de dados, e-mail de contato,
+categoria) já estão preenchidos e apontam para `tiescolar.com.br` — a tela mostra *"Todas as
+configurações necessárias do app foram concluídas"*.
+
+**Publicar é reversível** (o mesmo rodapé passa a oferecer **"Tirar do ar"**) e é **ortogonal ao
+número**: o estado de publicação é do *app*, não da WABA nem do `phone_number_id`. Trocar de número
+depois não desfaz a publicação, nem os templates, nem o webhook — só muda o
+`Tenant.meta_phone_number_id` daquela escola. Publicar não inicia cobrança e não dispara análise
+da Meta.
 
 ---
 
@@ -253,7 +259,7 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 ## 10. Checklist consolidado
 
 - [x] Verificação da empresa aprovada
-- [ ] **App publicado ("Ao vivo")** — sem isso o webhook não recebe dado de produção nenhum (§1.1)
+- [x] **App publicado ("Ao vivo")** — sem isso o webhook não recebe dado de produção nenhum (§1.1)
 - [x] WABA de produção criada (id `2116419572321695`)
 - [ ] Número da escola registrado e **verificado** (chip nosso) — ver §2.1 se o código não chegar
 - [ ] Nome de exibição aprovado
