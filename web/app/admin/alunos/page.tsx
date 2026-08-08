@@ -13,8 +13,8 @@ import {
   ImportacaoResultado,
   LinhaImportacaoAluno,
   listarAlunos,
-  listarPais,
   listarSalas,
+  listarTodosOsPais,
   logout,
   Pai,
   previaImportacaoAlunos,
@@ -63,12 +63,12 @@ export default function Alunos() {
       listarSalas(),
       // Lista de seleção de responsáveis (para vincular a um aluno): precisa do
       // conjunto, não de uma página.
-      listarPais(1, 200),
+      listarTodosOsPais(),
     ]);
     setAlunos(as.itens);
     setMeta(as.meta);
     setSalas(ss);
-    setPais(ps.itens);
+    setPais(ps);
   }, [filtroSala, situacao, pagina, porPagina]);
 
   useEffect(() => {

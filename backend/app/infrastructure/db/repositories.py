@@ -113,17 +113,28 @@ class SqlConversaRepository:
         pagina: int | None = None,
         por_pagina: int | None = None,
     ) -> list[ResumoConversa]:
-        """Resumos das conversas, mais recentes primeiro.
+        """Resumos das conversas, com atividade mais recente primeiro.
 
         Com ``pagina``/``por_pagina``, o recorte é feito **no banco**: sem isso, uma
         escola com um ano de uso carregaria todas as conversas — e todas as mensagens de
         cada uma, por causa do ``selectinload`` — só para exibir dez linhas.
+
+        A ordenação por **última atividade** vive no ``ORDER BY``, não em memória: com
+        ``OFFSET``/``LIMIT``, reordenar depois do recorte reordena apenas a página, e
+        conversas passariam a pular ou repetir entre as páginas.
         """
+        ultima_atividade = func.coalesce(
+            select(func.max(MensagemORM.criado_em))
+            .where(MensagemORM.conversa_id == ConversaORM.id)
+            .correlate(ConversaORM)
+            .scalar_subquery(),
+            ConversaORM.criado_em,
+        )
         stmt = (
             select(ConversaORM)
             .where(ConversaORM.tenant_id == tenant_id)
             .options(selectinload(ConversaORM.mensagens))
-            .order_by(ConversaORM.criado_em.desc())
+            .order_by(ultima_atividade.desc(), ConversaORM.id.desc())
         )
         if pagina is not None and por_pagina is not None:
             stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
@@ -144,8 +155,6 @@ class SqlConversaRepository:
                     ultima_em=ultima.criado_em if ultima else None,
                 )
             )
-        # Conversas com atividade mais recente primeiro.
-        resumos.sort(key=lambda x: x.ultima_em or x.conversa.criado_em, reverse=True)
         return resumos
 
     async def obter_conversa(

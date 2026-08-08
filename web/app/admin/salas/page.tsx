@@ -13,8 +13,8 @@ import {
   desvincularPaiDaSala,
   getSessao,
   listarAlunos,
-  listarPais,
   listarSalas,
+  listarTodosOsPais,
   logout,
   notificarProfessor,
   Pai,
@@ -48,12 +48,12 @@ export default function SalasEPais() {
   const recarregar = useCallback(async () => {
     const [ss, ps, cobs] = await Promise.all([
       listarSalas(),
-      listarPais(1, 200),
+      listarTodosOsPais(),
       coberturaDasSalas(),
     ]);
     setSalas(ss);
     // Cadastro de pais da escola: usado para vincular às turmas, precisa do conjunto.
-    setPais(ps.itens);
+    setPais(ps);
     setCoberturas(Object.fromEntries(cobs.map((c) => [c.sala_id, c])));
     setSelecionada((atual) => (atual ? ss.find((s) => s.id === atual.id) ?? null : null));
   }, []);

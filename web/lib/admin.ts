@@ -614,6 +614,23 @@ export async function listarPais(
   return jsonOuErro(resp, "listar pais");
 }
 
+/**
+ * Todos os responsáveis da escola, percorrendo as páginas até o fim.
+ *
+ * As telas que **vinculam** um responsável (a uma turma, a um aluno) precisam do
+ * conjunto, não de uma página: pedir só a primeira faria sumir do seletor quem está
+ * além dela — e o vínculo com essa pessoa ficaria impossível pela tela.
+ */
+export async function listarTodosOsPais(porPagina = 200): Promise<Pai[]> {
+  const primeira = await listarPais(1, porPagina);
+  const todos = [...primeira.itens];
+  for (let pagina = 2; pagina <= primeira.meta.total_paginas; pagina++) {
+    const seguinte = await listarPais(pagina, porPagina);
+    todos.push(...seguinte.itens);
+  }
+  return todos;
+}
+
 export async function cadastrarPai(
   nome: string,
   telefone: string,
