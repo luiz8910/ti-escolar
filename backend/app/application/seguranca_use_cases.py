@@ -305,8 +305,8 @@ class AvaliarPosturaSeguranca:
         """O canal pedido pela env é o que a aplicação usa de fato?
 
         Só é ``ATENCAO`` no caso híbrido — pediu ``meta``, subiu ``demo``. Rodar em ``demo``
-        de propósito (o ambiente de vitrine) não é um problema de segurança e não pode virar
-        alarme falso no painel.
+        de propósito (desenvolvimento local, sem token da Meta) não é um problema de
+        segurança e não pode virar alarme falso no painel.
         """
         degradado = c.canal == "meta" and not c.meta_access_token_definido
         return MedidaSeguranca(

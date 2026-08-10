@@ -18,7 +18,6 @@ from app.interfaces.api import (
     avisos,
     broadcast,
     cadastro,
-    chat,
     comunicacao_interna,
     conhecimento,
     exportacao,
@@ -111,7 +110,6 @@ else:
         allow_headers=["*"],
     )
 
-app.include_router(chat.router)
 app.include_router(broadcast.router)
 app.include_router(admin.router)
 app.include_router(cadastro.router)

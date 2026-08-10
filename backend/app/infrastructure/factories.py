@@ -47,7 +47,10 @@ def criar_embedder(settings: Settings) -> Embedder:
     return FakeEmbedder(dimensao=settings.embedding_dim)
 
 
-# Canal "demo" é mantido como singleton de processo para inspeção no demo.
+# Singleton de processo: sem o demo Next.js, este canal é apenas o **fallback** de
+# ``criar_canal`` — o que sobra quando ``MESSAGE_CHANNEL=meta`` está sem token. Mantê-lo
+# como um objeto só evita perder os envios de uma instância a cada requisição, o que é o
+# que ``canal_efetivo`` precisa poder acusar.
 _demo_channel = DemoMessageChannel()
 
 
@@ -73,10 +76,6 @@ def criar_canal(settings: Settings) -> MessageChannel:
             phone_number_id=settings.meta_phone_number_id or "",
             access_token=settings.meta_access_token or "",
         )
-    return _demo_channel
-
-
-def canal_demo() -> DemoMessageChannel:
     return _demo_channel
 
 

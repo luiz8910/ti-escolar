@@ -51,15 +51,6 @@ const config: Config = {
         border: rgb("--border"),
         text: rgb("--text"),
         muted: rgb("--text-muted"),
-
-        // WhatsApp — apenas a tela de demo
-        wa: {
-          header: rgb("--wa-header"),
-          bg: rgb("--wa-bg"),
-          out: rgb("--wa-out"),
-          in: rgb("--wa-in"),
-          panel: rgb("--wa-panel"),
-        },
       },
       fontFamily: {
         sans: ["var(--font-sans)"],
