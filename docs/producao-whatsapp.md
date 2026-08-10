@@ -22,7 +22,7 @@
 | **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
 | **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado e no Render** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management` |
-| **Webhook apontado na Meta** (callback + campo `messages`) | ⬜ Pendente — URL preenchida, falta o verify token e **assinar `messages`** |
+| **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Configurado** (10/ago/2026) — callback `https://ti-escolar.onrender.com/api/webhook/meta`, handshake verificado, campo `messages` **Assinado** |
 | **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ✅ **Ligado** (10/ago/2026) — `/health` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **Templates aprovados** | ⬜ Pendente |
@@ -199,14 +199,29 @@ com o PIN de 6 dígitos do número (§2, passo 5).
 
 ## 5. Webhook
 
-Em **WhatsApp → Configuração → Webhooks**:
+Caminho no console: app → **Casos de uso** → *Conectar no WhatsApp* → **Etapa 2. Configuração de
+produção** → **Configurar webhooks**.
 
 - **Callback URL**: `https://<backend-no-render>/api/webhook/meta`
-- **Verify token**: o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN`
+- **Verify token**: o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN` → **Verificar e salvar**
 - **Assinar o campo `messages`** — traz mensagens recebidas *e* status de entrega no mesmo
   envelope.
 
-O `GET` de verificação já está implementado e responde ao `hub.challenge`.
+O `GET` de verificação já está implementado e responde ao `hub.challenge`. Quando o handshake
+passa, o sub-passo *Configurar webhooks* fica ✅ verde.
+
+**A assinatura é um segundo passo, e ele mente.** A lista *Campos do webhook* só aparece depois
+de salvar a URL, e nela o toggle de `messages` **muda de cor sem necessariamente salvar**: em
+10/ago o primeiro clique acendeu o botão e **nenhuma requisição saiu** — depois de recarregar, o
+campo estava de volta em *Cancelou a assinatura*. No clique que funcionou houve um
+`POST /async/webhooks/fields/edit/` com `200` e o rótulo virou **Assinado**.
+
+Como isso importa: URL salva **sem** o campo assinado deixa a tela verde e o endpoint mudo —
+não chega mensagem nem status de entrega, e nada dá erro. **Sempre recarregue a página e confira
+que `messages` está como "Assinado"**; ver o toggle azul logo após o clique não é prova.
+
+> **Feito em 10/ago/2026** para `https://ti-escolar.onrender.com/api/webhook/meta` — handshake
+> verificado e `messages` **Assinado**, confirmado após reload.
 
 **Segurança (obrigatório):** copiar o **app secret** (Meta for Developers → Configurações →
 Básico) para `META_APP_SECRET` e ligar `META_VALIDATE_SIGNATURE=true`. Sem isso o endpoint
@@ -352,8 +367,8 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [ ] Forma de pagamento na WABA de produção
 - [x] Token de usuário do sistema gerado e no Render (10/ago — `ti_escolar_backend`, sem
       expiração; ver §4 para o porquê de `Nunca`)
-- [ ] Webhook configurado e **campo `messages` assinado** — salvar a URL **não** inscreve em
-      nada; sem essa assinatura não chega mensagem nem status de entrega
+- [x] Webhook configurado e **campo `messages` assinado** (10/ago) — salvar a URL **não**
+      inscreve em nada, e o toggle acende sem salvar: confira após recarregar (§5)
 - [x] **`MESSAGE_CHANNEL=meta` no Render** (10/ago) — `/health` responde `canal: meta`
 - [x] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true` (medido de fora: `POST` sem assinatura → 403)
 - [ ] `JWT_SECRET` trocado · [x] `META_WEBHOOK_VERIFY_TOKEN` trocado (`changeme` → 403)
