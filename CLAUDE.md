@@ -22,14 +22,17 @@ O produto é **multi-tenant**: cada **escola é um tenant isolado**, com seus pr
 documentos, usuários, templates e cota de mensagens.
 
 **Usuários:**
-- Pais / responsáveis / alunos → interagem pelo WhatsApp (e pelo demo).
-- Secretaria / coordenação da escola → cadastram conteúdo, disparam avisos. **[Roadmap: painel admin]**
+- Pais / responsáveis / alunos → interagem pelo **WhatsApp**.
+- Secretaria / coordenação da escola → cadastram conteúdo, disparam avisos, pelo painel.
 
 **Front-ends:**
-- O front-end inicial é um **demo em Next.js que simula a interface do WhatsApp**, usado para
-  desenvolver e demonstrar o fluxo de conversa sem depender da homologação da Meta.
-- A UI/integração de **chat real** do WhatsApp (inbound) fica para **[Roadmap]**. O **outbound**
-  via Meta Cloud API já é considerado na arquitetura desde já.
+- O **painel** (`web/`, Next.js) é a interface da escola: administração do tenant, portal do
+  professor e super admin. É o único front do produto.
+- Não há mais simulador de chat. Até o inbound real entrar no ar (10/ago/2026), a raiz `/`
+  servia um **demo em Next.js que imitava a interface do WhatsApp**, atendido por rotas
+  públicas `/api/chat/*`; com o canal da Meta atendendo de verdade ele deixou de ter função e
+  foi removido — era a única superfície sem login que gravava conversa e consumia LLM. A raiz
+  agora redireciona para `/admin`.
 
 ---
 
@@ -61,8 +64,8 @@ documentos, usuários, templates e cota de mensagens.
 | Persistência | **PostgreSQL** + **pgvector**, **SQLAlchemy 2.0**, **Alembic** (migrations) |
 | LLM | Porta `LLMProvider` (abstração **multi-provider**); adaptadores em infra (ex.: Anthropic Claude, OpenAI), selecionáveis por env |
 | RAG / busca | Embeddings em **pgvector**; recuperação por similaridade |
-| Front-end demo | **Next.js** (App Router) + **TypeScript** + **Tailwind**, simulando o WhatsApp; fala com o back-end via **REST/WebSocket** |
-| Mensageria externa | **Meta WhatsApp Cloud API** (outbound) — adaptador em infra |
+| Front-end | **Next.js** (App Router) + **TypeScript** + **Tailwind** — painel admin e portal do professor; fala com o back-end via **REST** |
+| Mensageria externa | **Meta WhatsApp Cloud API** (inbound + outbound) — adaptador em infra |
 | Testes | **pytest** (back-end) |
 | Orquestração | **Docker** + **docker-compose** |
 | Qualidade | **ruff** + **black** (sugeridos), type hints obrigatórios |
@@ -99,9 +102,10 @@ O back-end segue **arquitetura limpa (hexagonal / ports & adapters)**. A **regra
 - `RateLimiter` / `QuotaPolicy` — controle de taxa e cota diária de envio.
 
 **Fluxo de uma dúvida (inbound):**
-`mensagem recebida` → `interfaces` (DTO) → caso de uso `ReceberMensagemRecebida` →
-`ResponderDuvida` (busca no `VectorStore` + `LLMProvider` para raciocinar/redigir) →
-resposta com fonte → `MessageChannel` (demo agora).
+`webhook da Meta` → `interfaces` (assinatura validada) → `ProcessarInboundMeta` (roteia a
+escola pelo `phone_number_id`) → `ReceberMensagemRecebida` → `ResponderDuvida` (busca no
+`VectorStore` + `LLMProvider` para raciocinar/redigir) → resposta com fonte →
+`MessageChannel` (Meta, pelo número da própria escola).
 
 ---
 
@@ -120,7 +124,7 @@ ti-escolar/
 │       ├── application/      # casos de uso
 │       ├── infrastructure/   # adaptadores: db, pgvector, llm, meta_api, mocks
 │       └── interfaces/       # FastAPI: rotas REST/WS, webhooks, DTOs
-├── web/                      # painel admin + demo Next.js (simula o WhatsApp)
+├── web/                      # painel admin + portal do professor (Next.js)
 └── site/                     # landing page institucional (tiescolar.com.br)
 ```
 
@@ -573,9 +577,11 @@ a porta `LLMProvider`, como a importação em massa). Todas escopadas por `tenan
 
 A porta **`MessageChannel`** cobre **inbound** (receber/responder) e **outbound** (disparo ativo).
 
-- **Agora:** adaptador do **demo Next.js** para o chat (inbound) via REST/WebSocket.
-- **Agora também:** adaptador **Meta WhatsApp Cloud API** para **outbound** (ver §9a).
-- **[Roadmap]:** UI/integração de **chat real** do WhatsApp para inbound (webhook da Meta).
+- **Único canal real:** adaptador **Meta WhatsApp Cloud API**, cobrindo **inbound** pelo
+  webhook (§9c, §9e.1) e **outbound** por template (§9a).
+- **`DemoMessageChannel`:** registra os envios em memória. É o canal de **desenvolvimento
+  local e de teste** — sem token, sem rede —, e o fallback silencioso de `criar_canal` que
+  `canal_efetivo` existe para acusar (§9c). Não é mais o canal de nenhuma tela.
 
 ### 9a. Mensagens ativas para pais (outbound via Meta Cloud API)
 
@@ -840,7 +846,7 @@ Tudo roda sob Docker. Serviços previstos no `docker-compose.yml`:
 
 - `db` — PostgreSQL + pgvector.
 - `backend` — FastAPI.
-- `web` — demo Next.js.
+- `web` — painel Next.js.
 
 Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de **migrations**
 (Alembic), **seed** de dados de demonstração e execução de **testes** (`pytest`).
@@ -872,7 +878,14 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 ## 12. Roadmap / Próximos passos
 
 - [ ] Scaffold do back-end (camadas hexagonais, FastAPI, SQLAlchemy/Alembic, pgvector).
-- [ ] Scaffold do demo Next.js (UI estilo WhatsApp + REST/WebSocket).
+- [x] **Chat de demonstração removido** (10/ago/2026): a raiz `/` do painel simulava a
+  interface do WhatsApp sobre as rotas públicas `/api/chat/*`. Existia para desenvolver e
+  demonstrar a conversa **sem depender da homologação da Meta**; com o inbound real no ar
+  ela virou uma segunda porta de entrada — a única sem login — que gravava conversa e
+  gastava LLM. Removidos: `app/interfaces/api/chat.py`, os DTOs de mensagem, as configs
+  `CHAT_DEMO_*`, `web/app/page.tsx` (agora redireciona para `/admin`), o link "Ver demo do
+  chat" da sidebar e os tokens de tema `--wa-*`. `AtenderConversa` **ficou sem ponto de
+  entrada** (o inbound usa `ReceberMensagemRecebida`) — ver a nota abaixo.
 - [ ] `docker-compose.yml` com `db` / `backend` / `web` + migrations + seed.
 - [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e **fila**
   (throttling, retry com backoff e agendamento — §9a).
@@ -991,16 +1004,27 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   por responsável (`ObterBroadcastDaEscola`, `web/app/admin/historico/disparos/`).
 - [x] **Histórico completo de conversas do WhatsApp** (mensagens recebidas e respostas da LLM),
   consultável no admin da escola (`web/app/admin/historico/conversas/`).
-- [x] **Log de auditoria de ações** — grava ações de **usuários logados** no painel (login,
-  criação de usuário/grupo, disparo a grupo) **e** ações da **LLM** (cada atendimento), com
-  quem/o quê/quando/payload. Base para rastreabilidade/compliance
-  (`web/app/admin/historico/auditoria/`).
+- [~] **Log de auditoria de ações** — grava ações de **usuários logados** no painel (login,
+  criação de usuário/grupo, disparo a grupo), com quem/o quê/quando/payload. Base para
+  rastreabilidade/compliance (`web/app/admin/historico/auditoria/`).
+  - [ ] **Auditar as ações da LLM no inbound real.** O `llm.resposta` só era emitido por
+    `AtenderConversa`, o caso de uso do chat de demonstração — removido em 10/ago/2026. O
+    caminho que atende os responsáveis de verdade (`ReceberMensagemRecebida`, chamado por
+    `ProcessarInboundMeta`) nunca auditou, então hoje **nenhuma resposta da LLM aparece no
+    log**. Duas saídas: instrumentar `ReceberMensagemRecebida` (menor) ou ligar o inbound em
+    `AtenderConversa`, que além da auditoria traz o **tool use** (o LLM decide quando buscar
+    conhecimento ou recuperar documento, em vez do roteamento por palavra-chave) — este é o
+    único uso que sobrou para `AtenderConversa`, que ficou **sem ponto de entrada**.
 
 **Limpeza de UI (remoções)**
 - [x] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"
   (não faz sentido manter).
 - [x] **Remover** o dropdown de seleção de escola dentro do **admin da escola**
   (tenant admin é amarrado a uma única escola — não faz sentido).
+- [x] **Remover o chat de demonstração** (10/ago/2026) — o simulador do WhatsApp na raiz `/`
+  existia para demonstrar a conversa antes da homologação da Meta. Com o inbound real no ar,
+  ele virou uma segunda porta de entrada, sem login, que gravava conversa e gastava LLM.
+  Ver §1 e §15 item 1.
 
 **Licenciamento / cobrança / bloqueio** _(ver §6e)_
 - [x] **Bloqueio de escola (tenant)** por falta de pagamento ou outro motivo — flag de status
@@ -1066,11 +1090,15 @@ sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escop
   `sistema`}, `acao`, `descricao`, `metadados` JSON) é persistida em `auditoria`
   (migration `0007_auditoria`) via porta `AuditLogRepository`. **Instrumentado:** ações de
   usuários logados no `app/interfaces/api/admin.py` (`login`, `usuario.criar`, `grupo.criar`,
-  `broadcast.grupo.enviar`) e **ações da LLM** — `AtenderConversa` registra `llm.resposta` a cada
-  atendimento (pergunta/resposta resumidas, fontes, documentos). Casos de uso
-  `RegistrarAuditoria`/`ListarAuditoria` (`app/application/auditoria_use_cases.py`); auditar é
-  **tolerante a falhas** (nunca derruba a ação auditada).
-  Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
+  `broadcast.grupo.enviar`). Casos de uso `RegistrarAuditoria`/`ListarAuditoria`
+  (`app/application/auditoria_use_cases.py`); auditar é **tolerante a falhas** (nunca derruba
+  a ação auditada). Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
+  - ⚠️ **Ações da LLM não estão sendo auditadas.** O `llm.resposta` (pergunta/resposta
+    resumidas, fontes, documentos) é gravado por `AtenderConversa`, que era o caso de uso do
+    chat de demonstração; o inbound real do WhatsApp passa por `ReceberMensagemRecebida`, que
+    **não audita**. Com o demo removido em 10/ago/2026, o `ator="llm"` deixou de aparecer no
+    log. Fechar isso é instrumentar `ReceberMensagemRecebida` (ou passar o inbound a usar
+    `AtenderConversa`) — ver o roadmap §12a.
 
 ---
 
@@ -1114,7 +1142,7 @@ enum `StatusMedida` em `entities.py`.
 - **Medida acrescentada em 09/ago/2026:** `canal_efetivo` — acusa o caso híbrido
   `MESSAGE_CHANNEL=meta` **sem** `META_ACCESS_TOKEN`, em que `criar_canal` cai no
   `DemoMessageChannel` **sem erro** e o WhatsApp simplesmente não está no ar. Rodar em `demo`
-  de propósito (vitrine) segue `ATIVA`, para não virar alarme falso. O campo `canal` da
+  de propósito (desenvolvimento local) segue `ATIVA`, para não virar alarme falso. O campo `canal` da
   resposta passou a ser o **efetivo**, não o valor da env. Ver §9c e `docs/producao-whatsapp.md`
   §6.1.1.
 - **Checklist de pré-deploy embutido:** os 9 itens da §15 são servidos pelo mesmo endpoint
@@ -1155,10 +1183,11 @@ revalidando no banco.
   só olhava `bloqueado` e **deixava passar escola cancelada**.
 - ✅ **`GET /api/broadcasts/quota/{tenant_id}`** — mesma dupla de guardas (a cota revela o
   consumo da escola). O painel já mandava o token nessa chamada, então nada quebrou.
-- ✅ **`POST /api/chat/mensagens` e `WS /api/chat/ws/{tenant_id}/{contato}`** — seguem
-  **públicas por desenho** (o demo é a vitrine e não tem login), mas agora **presas ao tenant de
-  vitrine** (`CHAT_DEMO_TENANT_ID`) e desligáveis com `CHAT_DEMO_HABILITADO=false`. Configuração
-  inválida **fecha** em vez de abrir. O WebSocket é recusado antes do `accept`.
+- ✅ **`POST /api/chat/mensagens` e `WS /api/chat/ws/{tenant_id}/{contato}`** — eram públicas
+  por desenho (o demo era a vitrine e não tinha login) e foram **presas ao tenant de vitrine**
+  em 27/jul. Em **10/ago/2026 foram removidas de vez** junto com o demo (§1): com o inbound
+  real atendendo, a última superfície pública que gravava conversa e consumia LLM deixou de
+  ter razão para existir. Não sobrou nenhuma rota sem autenticação que aceite `tenant_id`.
 
 Cobertura em `backend/tests/test_rotas_publicas.py` (testes de borda HTTP, únicos da suíte —
 o que se verifica é justamente o que o roteador exige antes do caso de uso).
@@ -1194,7 +1223,8 @@ daria ao atacante uma cota por instância e seria zerado a cada deploy.
   (reentrega da Meta não consome franquia do responsável) e **antes** da LLM, que é o recurso
   caro. A mensagem excedente é descartada e o webhook segue devolvendo `200` à Meta — um 429
   faria a Meta reenviar e penalizar a saúde do endpoint.
-- **Chat demo** — segue sem teto próprio; limitado ao tenant de vitrine (item 1). **[Roadmap]**
+- **Chat demo** — não existe mais (removido em 10/ago/2026); era a única entrada de LLM sem
+  teto próprio. O inbound do webhook é hoje o único caminho até a LLM, e ele tem limite.
 
 Código: `app/infrastructure/rate_limit.py` (adaptadores SQL e memória),
 `app/interfaces/api/rate_limit.py` (aplicação no login), `ProcessarInboundMeta` (inbound).

@@ -49,13 +49,6 @@
   --text:        var(--n-900);
   --text-muted:  var(--n-500);
 
-  /* --- WhatsApp (apenas a tela de demo /) ------------------------------- */
-  --wa-header: 0 128 105;
-  --wa-bg:   239 234 226;
-  --wa-out:  217 253 211;
-  --wa-in:   255 255 255;
-  --wa-panel:240 242 245;
-
   /* --- Raios ------------------------------------------------------------ */
   --radius-sm: 0.5rem;   /* 8  */
   --radius-md: 0.75rem;  /* 12 */
@@ -85,13 +78,6 @@ body {
   outline: 2px solid rgb(var(--brand-500));
   outline-offset: 2px;
   border-radius: var(--radius-sm);
-}
-
-/* Fundo estilo "papel de parede" do WhatsApp (tela de demo) */
-.wa-wallpaper {
-  background-color: rgb(var(--wa-bg));
-  background-image: radial-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px);
-  background-size: 16px 16px;
 }
 
 /* ============================================================================

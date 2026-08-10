@@ -8,24 +8,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-class MensagemEntrada(BaseModel):
-    tenant_id: UUID
-    contato: str = Field(..., examples=["+5511999998888"])
-    texto: str
-
-
-class DocumentoSaida(BaseModel):
-    nome: str
-    categoria: str
-    url: str
-
-
-class MensagemSaida(BaseModel):
-    texto: str
-    fontes: list[str] = []
-    documentos: list[DocumentoSaida] = []
-
-
 class DestinatarioEntrada(BaseModel):
     contato: str
     parametros: list[str] = []

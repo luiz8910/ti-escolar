@@ -1,7 +1,9 @@
-"""Canal "demo": registra envios em memória.
+"""Canal "demo": registra envios em memória, sem tocar em rede.
 
-No demo Next.js, as respostas do bot voltam de forma síncrona pela API REST/WS; este canal
-serve para o fluxo de documentos/outbound, registrando o que "seria enviado" ao WhatsApp.
+É o canal de **desenvolvimento local e de teste** — roda o fluxo de documentos/outbound
+inteiro registrando o que "seria enviado" ao WhatsApp, sem token nem chamada à Meta. Em
+produção ele nunca deve estar em uso: ``canal_efetivo`` existe justamente para acusar a
+instância que caiu aqui por falta de ``META_ACCESS_TOKEN`` (§9c).
 """
 
 from __future__ import annotations

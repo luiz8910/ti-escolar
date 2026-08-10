@@ -15,7 +15,6 @@ import {
   ChatBubbleIcon,
   BellIcon,
   FileIcon,
-  ExternalIcon,
   CloseIcon,
   SparkIcon,
   PrintIcon,
@@ -211,18 +210,6 @@ export function Sidebar({
             </>
           )}
         </nav>
-
-        <div className="border-t border-n-100 p-3">
-          <Link
-            href="/"
-            onClick={onClose}
-            className="flex items-center gap-3 rounded-[10px] bg-[#effbf8] px-[11px] py-2.5 text-[13px] font-semibold text-[#0d8a78] no-underline hover:bg-[#cdf3ea]"
-          >
-            <ChatBubbleIcon size={18} />
-            Ver demo do chat
-            <ExternalIcon size={14} className="ml-auto" />
-          </Link>
-        </div>
       </aside>
     </>
   );
