@@ -19,6 +19,7 @@
 | **App publicado** ("Ao vivo") | ✅ **Publicado** (06/ago/2026) — ver §1.1 |
 | **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
 | **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
+| **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
 | **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ⬜ Pendente — **bloqueia ligar o canal**, ver §6.1.1 |
 | **Webhook apontado na Meta** (callback + campo `messages`) | ⬜ Pendente |
@@ -342,7 +343,9 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [ ] Templates aprovados com nome/idioma batendo com o banco
 - [x] **`Tenant.meta_phone_number_id` implementado** (multi-tenant de envio + roteamento inbound)
 - [x] **Inbound do webhook implementado** (chatbot atendendo)
-- [ ] **`phone_number_id` cadastrado na escola** (por escola — sem ele o inbound é descartado)
+- [x] **`phone_number_id` cadastrado na escola** (10/ago/2026 — `1231892910008454`, junto com o
+      `whatsapp_numero` `+55 15 99753-6978`). Continua sendo **por escola**: cada nova escola
+      precisa do seu, senão o inbound dela é descartado
 - [ ] Teste de fumaça por escola
 
 ---
