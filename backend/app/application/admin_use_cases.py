@@ -60,6 +60,54 @@ class CriarUsuario:
         return await self._usuarios.criar(usuario)
 
 
+class AtualizarUsuario:
+    """Edita um usuário administrativo: nome, senha e situação (ativo/inativo).
+
+    Não mexe em ``papel`` nem em ``tenant_id``: mudar o papel de alguém é criar outro
+    tipo de conta, e permitir isso na tela de edição abriria a porta para um admin de
+    escola se promover a super admin. Para trocar de papel, cria-se um usuário novo.
+
+    ``ativo=False`` é a forma de **desligar** uma funcionária: a sessão dela cai na
+    requisição seguinte (``usuario_autenticado`` revalida no banco), mas o histórico do
+    que ela respondeu aos responsáveis permanece.
+    """
+
+    def __init__(self, *, usuarios: UsuarioRepository) -> None:
+        self._usuarios = usuarios
+
+    async def executar(
+        self,
+        *,
+        editor: Usuario,
+        usuario_id: UUID,
+        nome: str | None = None,
+        senha: str | None = None,
+        ativo: bool | None = None,
+    ) -> Usuario:
+        alvo = await self._usuarios.obter(usuario_id)
+        if alvo is None:
+            raise ValueError("Usuário não encontrado.")
+        if not editor.eh_super_admin:
+            if alvo.eh_super_admin or alvo.tenant_id != editor.tenant_id:
+                raise PermissionError("Você só pode editar usuários da própria escola.")
+
+        if nome is not None:
+            nome = nome.strip()
+            if not nome:
+                raise ValueError("O nome do usuário é obrigatório.")
+            alvo.nome = nome
+        if senha:
+            alvo.senha_hash = hash_senha(senha)
+        if ativo is not None:
+            # Desativar a si mesmo derruba a própria sessão e, no caso de um super admin
+            # sozinho, tranca a plataforma inteira para fora.
+            if not ativo and alvo.id == editor.id:
+                raise ValueError("Você não pode desativar a própria conta.")
+            alvo.ativo = ativo
+
+        return await self._usuarios.atualizar(alvo)
+
+
 class AutenticarUsuario:
     def __init__(self, *, usuarios: UsuarioRepository) -> None:
         self._usuarios = usuarios

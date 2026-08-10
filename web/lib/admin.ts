@@ -16,6 +16,9 @@ export interface Usuario {
   email: string;
   papel: "super_admin" | "tenant_admin";
   tenant_id: string | null;
+  /** Funcionária desligada continua no cadastro (histórico), mas sem acesso ao painel. */
+  ativo?: boolean;
+  criado_em?: string | null;
 }
 
 interface Sessao {
@@ -92,6 +95,18 @@ export interface FichaFinanceira {
   health_score: number;
 }
 
+/** Expediente da secretaria: decide se o assistente promete atendimento agora ou no
+ *  próximo dia útil (§6j). É campo da escola, não texto da base de conhecimento. */
+export interface Expediente {
+  /** Dias no padrão ISO: 1 = segunda … 7 = domingo. */
+  dias: number[];
+  inicio: string; // "HH:MM"
+  fim: string; // "HH:MM"
+  timezone: string;
+  descricao: string;
+  aberto_agora: boolean;
+}
+
 export interface Escola {
   id: string;
   nome: string;
@@ -100,6 +115,7 @@ export interface Escola {
   /** phone_number_id do número da escola na Meta: origem do outbound e roteamento do inbound. */
   meta_phone_number_id: string;
   telefone_contato: string;
+  expediente: Expediente | null;
   criado_em: string;
   total_conversas: number;
   total_contatos: number;
@@ -380,12 +396,21 @@ export async function obterEscola(id: string): Promise<Escola> {
   return resp.json();
 }
 
+/** Campos do expediente enviados no cadastro/edição. Omitidos = mantém o atual. */
+export interface ExpedienteEntrada {
+  expediente_dias?: number[];
+  expediente_inicio?: string;
+  expediente_fim?: string;
+  expediente_timezone?: string;
+}
+
 export async function criarEscola(
   nome: string,
   slug: string,
   whatsappNumero = "",
   telefoneContato = "",
-  metaPhoneNumberId = ""
+  metaPhoneNumberId = "",
+  expediente: ExpedienteEntrada = {}
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas`, {
     method: "POST",
@@ -396,6 +421,7 @@ export async function criarEscola(
       whatsapp_numero: whatsappNumero,
       telefone_contato: telefoneContato,
       meta_phone_number_id: metaPhoneNumberId,
+      ...expediente,
     }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar escola`);
@@ -408,7 +434,8 @@ export async function atualizarEscola(
   slug: string,
   whatsappNumero = "",
   telefoneContato = "",
-  metaPhoneNumberId = ""
+  metaPhoneNumberId = "",
+  expediente: ExpedienteEntrada = {}
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, {
     method: "PUT",
@@ -419,6 +446,7 @@ export async function atualizarEscola(
       whatsapp_numero: whatsappNumero,
       telefone_contato: telefoneContato,
       meta_phone_number_id: metaPhoneNumberId,
+      ...expediente,
     }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao atualizar escola`);
@@ -1749,5 +1777,162 @@ export async function listarAtendimentosInbound(
     headers: authHeaders(),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar os atendimentos`);
+  return resp.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Atendimento humano — a fila da secretaria (§6j)
+// --------------------------------------------------------------------------- //
+export type StatusAtendimento =
+  | "oferecido"
+  | "aberto"
+  | "em_atendimento"
+  | "resolvido"
+  | "descartado";
+
+export interface Atendimento {
+  id: string;
+  conversa_id: string;
+  contato: string;
+  contato_nome: string;
+  motivo: string;
+  status: StatusAtendimento;
+  fora_expediente: boolean;
+  atendente_id: string | null;
+  atendente_nome: string;
+  minutos_de_espera: number;
+  /** Janela de 24h da Meta. Fechada, o texto livre é recusado e só template reabre. */
+  janela_aberta: boolean;
+  janela_expira_em: string;
+  ofereceu_em: string | null;
+  confirmado_em: string | null;
+  assumido_em: string | null;
+  resolvido_em: string | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface MensagemAtendimento {
+  autor: "usuario" | "bot" | "atendente";
+  autor_nome: string;
+  texto: string;
+  fontes: string[];
+  criado_em: string;
+}
+
+export interface AtendimentoDetalhe {
+  atendimento: Atendimento;
+  mensagens: MensagemAtendimento[];
+}
+
+export interface AtendimentosPagina {
+  itens: Atendimento[];
+  meta: PaginaMeta;
+}
+
+export async function listarAtendimentos(opcoes: {
+  status?: string;
+  meus?: boolean;
+  pagina?: number;
+  porPagina?: number;
+} = {}): Promise<AtendimentosPagina> {
+  const params = new URLSearchParams({
+    pagina: String(opcoes.pagina ?? 1),
+    por_pagina: String(opcoes.porPagina ?? 25),
+  });
+  if (opcoes.status) params.set("status", opcoes.status);
+  if (opcoes.meus) params.set("meus", "true");
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/atendimentos/tenant/${tenantEmFoco()}?${params.toString()}`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao carregar a fila`);
+  return resp.json();
+}
+
+/** Contador do badge. Consultado em polling, então devolve só o número. */
+export async function contarAtendimentosPendentes(): Promise<number> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/atendimentos/tenant/${tenantEmFoco()}/pendentes`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao contar pendentes`);
+  const dados = (await resp.json()) as { pendentes: number };
+  return dados.pendentes;
+}
+
+export async function obterAtendimento(id: string): Promise<AtendimentoDetalhe> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/atendimentos/${id}?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao abrir o atendimento`);
+  return resp.json();
+}
+
+async function acaoAtendimento(
+  id: string,
+  acao: "assumir" | "resolver" | "reabrir",
+  extra = "",
+): Promise<Atendimento> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/atendimentos/${id}/${acao}?tenant_id=${tenantEmFoco()}${extra}`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao ${acao} o atendimento`);
+  return resp.json();
+}
+
+export const assumirAtendimento = (id: string) => acaoAtendimento(id, "assumir");
+export const resolverAtendimento = (id: string) => acaoAtendimento(id, "resolver");
+export const reabrirAtendimento = (id: string, liberar = false) =>
+  acaoAtendimento(id, "reabrir", liberar ? "&liberar=true" : "");
+
+export async function responderAtendimento(id: string, texto: string): Promise<Atendimento> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/atendimentos/${id}/responder?tenant_id=${tenantEmFoco()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ texto }),
+    },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao responder`);
+  return resp.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Usuários da escola (a equipe da secretaria que atende)
+// --------------------------------------------------------------------------- //
+export async function listarUsuarios(): Promise<Usuario[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/usuarios`, { headers: authHeaders() });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar usuários`);
+  return resp.json();
+}
+
+export async function criarUsuario(dados: {
+  nome: string;
+  email: string;
+  senha: string;
+}): Promise<Usuario> {
+  const resp = await apiFetch(`${API_URL}/api/admin/usuarios`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ...dados, papel: "tenant_admin", tenant_id: tenantEmFoco() }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar usuário`);
+  return resp.json();
+}
+
+export async function atualizarUsuario(
+  id: string,
+  dados: { nome?: string; senha?: string; ativo?: boolean },
+): Promise<Usuario> {
+  const resp = await apiFetch(`${API_URL}/api/admin/usuarios/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(dados),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao atualizar usuário`);
   return resp.json();
 }

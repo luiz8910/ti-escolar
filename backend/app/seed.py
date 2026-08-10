@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 
 from sqlalchemy import select
 
@@ -74,6 +74,7 @@ from app.infrastructure.security import hash_senha
 # Tenant fixo para o demo (o front-end usa este id).
 DEMO_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 DEMO_TEMPLATE_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+DEMO_TEMPLATE_RETOMADA_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a2")
 
 # Grupos de demonstração e seus contatos (nome, telefone E.164).
 _GRUPOS_DEMO = {
@@ -196,6 +197,13 @@ async def _seed() -> None:
                     # Preços da ficha financeira (centavos): R$ 299/mês, R$ 2.990/ano.
                     valor_mensal_centavos=29900,
                     valor_anual_centavos=299000,
+                    # Expediente da secretaria (§6j) — o mesmo da EM Rosa Cury. É o que
+                    # decide se o assistente encaminha para atendimento agora ou promete
+                    # o próximo dia útil.
+                    expediente_dias="1,2,3,4,5",
+                    expediente_inicio=time(7, 30),
+                    expediente_fim=time(17, 0),
+                    expediente_timezone="America/Sao_Paulo",
                 )
             )
             await session.flush()
@@ -228,6 +236,25 @@ async def _seed() -> None:
                     idioma="pt_BR",
                     corpo="Olá, {{1}}! Lembrete: {{2}}. Atenciosamente, Escola Demonstração.",
                     status="aprovado",
+                )
+            )
+
+        # Template de retomada do atendimento humano (§6j / §A9): reabre a conversa cuja
+        # janela de 24h expirou — o caso "o responsável escreveu sexta à noite e a
+        # secretaria só viu na segunda". Fica **pendente** de propósito: enquanto a Meta
+        # não aprovar o template de verdade, o painel precisa recusar a resposta com erro
+        # explícito, e não fingir que a mensagem saiu.
+        retomada = await session.get(TemplateORM, DEMO_TEMPLATE_RETOMADA_ID)
+        if retomada is None:
+            session.add(
+                TemplateORM(
+                    id=DEMO_TEMPLATE_RETOMADA_ID,
+                    tenant_id=DEMO_TENANT_ID,
+                    nome="retomada_atendimento",
+                    categoria="utility",
+                    idioma="pt_BR",
+                    corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}}",
+                    status="pendente",
                 )
             )
 

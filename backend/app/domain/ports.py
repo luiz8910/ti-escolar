@@ -6,11 +6,13 @@ A regra de dependência aponta para dentro: aqui não há framework/SDK.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from app.domain.entities import (
     Aluno,
+    AtendimentoHumano,
     AvisoFalta,
     AvisoTemporizado,
     Broadcast,
@@ -43,6 +45,7 @@ from app.domain.entities import (
     SolicitacaoImpressao,
     SolicitacaoInterna,
     SolicitacaoMatricula,
+    StatusAtendimentoHumano,
     StatusEntrega,
     StatusFalta,
     StatusImpressao,
@@ -271,7 +274,14 @@ class ConversaRepository(Protocol):
     async def obter_ou_criar(self, *, tenant_id: UUID, contato: str) -> Conversa: ...
 
     async def adicionar_mensagem(
-        self, *, conversa_id: UUID, autor: str, texto: str, fontes: list[str] | None = None
+        self,
+        *,
+        conversa_id: UUID,
+        autor: str,
+        texto: str,
+        fontes: list[str] | None = None,
+        # Nome de quem respondeu, quando ``autor`` é uma pessoa da secretaria (§6j).
+        autor_nome: str = "",
     ) -> None: ...
 
     async def historico(self, *, conversa_id: UUID, limite: int = 20) -> list[dict[str, str]]: ...
@@ -288,6 +298,14 @@ class ConversaRepository(Protocol):
 @runtime_checkable
 class TemplateRepository(Protocol):
     async def obter(self, *, tenant_id: UUID, template_id: UUID) -> MessageTemplate | None: ...
+
+    async def por_nome(self, *, tenant_id: UUID, nome: str) -> MessageTemplate | None:
+        """Template pelo nome aprovado na Meta (a chave que a Graph API entende).
+
+        Usado pela retomada de conversa fora da janela de 24h (§A9), onde o template é
+        escolhido por configuração — e não por um id que ninguém digitaria.
+        """
+        ...
 
 
 @runtime_checkable
@@ -327,9 +345,13 @@ class AuditLogRepository(Protocol):
 class UsuarioRepository(Protocol):
     async def por_email(self, email: str) -> Usuario | None: ...
 
+    async def obter(self, usuario_id: UUID) -> Usuario | None: ...
+
     async def criar(self, usuario: Usuario) -> Usuario: ...
 
     async def listar(self, *, tenant_id: UUID | None = None) -> list[Usuario]: ...
+
+    async def atualizar(self, usuario: Usuario) -> Usuario: ...
 
 
 @runtime_checkable
@@ -666,3 +688,49 @@ class SolicitacaoMatriculaRepository(Protocol):
     async def atualizar(
         self, solicitacao: SolicitacaoMatricula
     ) -> SolicitacaoMatricula: ...
+
+
+# --------------------------------------------------------------------------- #
+# Atendimento humano — o assistente entrega a conversa à secretaria (§6j)
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class AtendimentoHumanoRepository(Protocol):
+    """Fila de atendimentos encaminhados pelo assistente, por tenant."""
+
+    async def criar(self, atendimento: AtendimentoHumano) -> AtendimentoHumano: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, atendimento_id: UUID
+    ) -> AtendimentoHumano | None: ...
+
+    async def em_aberto_por_conversa(
+        self, *, conversa_id: UUID
+    ) -> AtendimentoHumano | None:
+        """Atendimento vivo da conversa — na fila **ou** apenas oferecido.
+
+        Consultado a cada mensagem recebida, antes de decidir se o assistente responde ou
+        fica em silêncio porque uma pessoa assumiu (ver ``AtendimentoHumano.na_fila``).
+        """
+        ...
+
+    async def listar(
+        self,
+        *,
+        tenant_id: UUID,
+        status: Sequence[StatusAtendimentoHumano] | None = None,
+        atendente_id: UUID | None = None,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[AtendimentoHumano]:
+        """Fila do tenant, mais antigos primeiro (quem espera há mais tempo)."""
+        ...
+
+    async def contar(
+        self,
+        *,
+        tenant_id: UUID,
+        status: Sequence[StatusAtendimentoHumano] | None = None,
+        atendente_id: UUID | None = None,
+    ) -> int: ...
+
+    async def atualizar(self, atendimento: AtendimentoHumano) -> AtendimentoHumano: ...

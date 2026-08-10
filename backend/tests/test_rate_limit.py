@@ -18,9 +18,8 @@ from fastapi import HTTPException, Request
 
 from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.use_cases import (
-    ReceberMensagemRecebida,
+    AtenderConversa,
     RecuperarEEnviarDocumento,
-    ResponderDuvida,
 )
 from app.config import Settings
 from app.domain.entities import Tenant
@@ -264,19 +263,21 @@ class LLMContada(FakeLLM):
         super().__init__()
         self.chamadas = 0
 
-    async def gerar(self, *, sistema: str, mensagens: list[dict[str, str]]) -> str:
+    async def gerar_com_ferramentas(self, *, sistema, turnos, ferramentas):
         self.chamadas += 1
-        return await super().gerar(sistema=sistema, mensagens=mensagens)
+        return await super().gerar_com_ferramentas(
+            sistema=sistema, turnos=turnos, ferramentas=ferramentas
+        )
 
 
 def _inbound(controle, *, limite: int) -> tuple[ProcessarInboundMeta, CanalEspiao, LLMContada]:
     llm = LLMContada()
     canal = CanalEspiao()
-    receber = ReceberMensagemRecebida(
+    atender = AtenderConversa(
         conversas=FakeConversaRepo(),
-        responder=ResponderDuvida(
-            embedder=fake_embedder(), store=FakeVectorStore(), llm=llm
-        ),
+        embedder=fake_embedder(),
+        store=FakeVectorStore(),
+        llm=llm,
         documentos=RecuperarEEnviarDocumento(
             source=FakeDocumentSource([]), canal=CanalEspiao()
         ),
@@ -290,7 +291,7 @@ def _inbound(controle, *, limite: int) -> tuple[ProcessarInboundMeta, CanalEspia
     )
     uc = ProcessarInboundMeta(
         tenants=FakeTenantRepoInbound([escola]),
-        receber=receber,
+        atender=atender,
         canal=canal,
         controle_taxa=controle,
         limite_por_remetente=limite,

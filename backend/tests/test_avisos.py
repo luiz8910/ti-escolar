@@ -19,9 +19,7 @@ from app.application.avisos_use_cases import (
 )
 from app.application.use_cases import (
     AtenderConversa,
-    ReceberMensagemRecebida,
     RecuperarEEnviarDocumento,
-    ResponderDuvida,
 )
 from app.domain.entities import _now
 from tests.fakes import (
@@ -137,14 +135,14 @@ async def test_isolamento_por_tenant():
 
 
 # --------------------- integração com o inbound --------------------------- #
-def _receber(avisos_repo):
-    responder = ResponderDuvida(
-        embedder=fake_embedder(), store=FakeVectorStore(), llm=FakeLLM()
-    )
+def _atender(avisos_repo):
+    """O caminho real do inbound (§9e.1): ``AtenderConversa`` com tool use."""
     docs = RecuperarEEnviarDocumento(source=FakeDocumentSource([]), canal=FakeChannel())
-    return ReceberMensagemRecebida(
+    return AtenderConversa(
         conversas=FakeConversaRepo(),
-        responder=responder,
+        embedder=fake_embedder(),
+        store=FakeVectorStore(),
+        llm=FakeLLM(),
         documentos=docs,
         avisos=avisos_repo,
     )
@@ -155,7 +153,7 @@ async def test_bot_anexa_aviso_vigente_na_resposta():
     await CriarAvisoTemporizado(avisos=avisos).executar(
         tenant_id=TENANT, mensagem="Por motivo de saúde, a secretaria não abre à tarde hoje."
     )
-    uc = _receber(avisos)
+    uc = _atender(avisos)
     resp = await uc.executar(tenant_id=TENANT, contato="+551199", texto="bom dia")
     assert "secretaria não abre à tarde hoje" in resp.texto
 
@@ -165,25 +163,7 @@ async def test_bot_sem_aviso_vigente_nao_altera_resposta():
     await CriarAvisoTemporizado(avisos=avisos).executar(
         tenant_id=TENANT, mensagem="aviso inativo", ativo=False
     )
-    uc = _receber(avisos)
+    uc = _atender(avisos)
     resp = await uc.executar(tenant_id=TENANT, contato="+551199", texto="bom dia")
     assert "📢" not in resp.texto
 
-
-async def test_atender_conversa_anexa_aviso_vigente():
-    # O atendimento por agente (usado no chat/demo) também anexa o aviso vigente.
-    avisos = FakeAvisoTemporizadoRepo()
-    await CriarAvisoTemporizado(avisos=avisos).executar(
-        tenant_id=TENANT, mensagem="Aviso do agente vigente."
-    )
-    docs = RecuperarEEnviarDocumento(source=FakeDocumentSource([]), canal=FakeChannel())
-    uc = AtenderConversa(
-        conversas=FakeConversaRepo(),
-        embedder=fake_embedder(),
-        store=FakeVectorStore(),
-        llm=FakeLLM(),
-        documentos=docs,
-        avisos=avisos,
-    )
-    resp = await uc.executar(tenant_id=TENANT, contato="+551199", texto="bom dia")
-    assert "Aviso do agente vigente." in resp.texto

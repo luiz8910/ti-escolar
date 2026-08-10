@@ -7,12 +7,14 @@ impressão) e A1 (mural do professor + confirmação de leitura). Tudo escopado 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import (
+    AtendimentoHumano,
     AvisoTemporizado,
     CategoriaSolicitacao,
     CotaImpressao,
@@ -22,10 +24,12 @@ from app.domain.entities import (
     Recado,
     SolicitacaoImpressao,
     SolicitacaoInterna,
+    StatusAtendimentoHumano,
     StatusImpressao,
     StatusSolicitacaoInterna,
 )
 from app.infrastructure.db.models import (
+    AtendimentoHumanoORM,
     AvisoTemporizadoORM,
     CotaImpressaoORM,
     LeituraRecadoORM,
@@ -584,3 +588,159 @@ class SqlCotaImpressaoRepository:
         await self._s.delete(row)
         await self._s.flush()
         return True
+
+
+# --------------------------------------------------------------------------- #
+# Atendimento humano — fila da secretaria (§6j)
+# --------------------------------------------------------------------------- #
+def _to_atendimento(row: AtendimentoHumanoORM) -> AtendimentoHumano:
+    return AtendimentoHumano(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        conversa_id=row.conversa_id,
+        contato=row.contato,
+        contato_nome=row.contato_nome,
+        motivo=row.motivo,
+        status=StatusAtendimentoHumano(row.status),
+        ofereceu_em=row.ofereceu_em,
+        confirmado_em=row.confirmado_em,
+        fora_expediente=row.fora_expediente,
+        atendente_id=row.atendente_id,
+        atendente_nome=row.atendente_nome,
+        ultima_mensagem_responsavel_em=row.ultima_mensagem_responsavel_em,
+        assumido_em=row.assumido_em,
+        resolvido_em=row.resolvido_em,
+        criado_em=row.criado_em,
+        atualizado_em=row.atualizado_em,
+    )
+
+
+class SqlAtendimentoHumanoRepository:
+    """Fila de atendimentos encaminhados pelo assistente à secretaria."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def criar(self, atendimento: AtendimentoHumano) -> AtendimentoHumano:
+        self._s.add(
+            AtendimentoHumanoORM(
+                id=atendimento.id,
+                tenant_id=atendimento.tenant_id,
+                conversa_id=atendimento.conversa_id,
+                contato=atendimento.contato,
+                contato_nome=atendimento.contato_nome,
+                motivo=atendimento.motivo,
+                status=atendimento.status.value,
+                ofereceu_em=atendimento.ofereceu_em,
+                confirmado_em=atendimento.confirmado_em,
+                fora_expediente=atendimento.fora_expediente,
+                atendente_id=atendimento.atendente_id,
+                atendente_nome=atendimento.atendente_nome,
+                ultima_mensagem_responsavel_em=atendimento.ultima_mensagem_responsavel_em,
+                assumido_em=atendimento.assumido_em,
+                resolvido_em=atendimento.resolvido_em,
+                criado_em=atendimento.criado_em,
+                atualizado_em=atendimento.atualizado_em,
+            )
+        )
+        await self._s.flush()
+        return atendimento
+
+    async def obter(
+        self, *, tenant_id: uuid.UUID, atendimento_id: uuid.UUID
+    ) -> AtendimentoHumano | None:
+        row = await self._s.get(AtendimentoHumanoORM, atendimento_id)
+        if row is None or row.tenant_id != tenant_id:
+            return None
+        return _to_atendimento(row)
+
+    async def em_aberto_por_conversa(
+        self, *, conversa_id: uuid.UUID
+    ) -> AtendimentoHumano | None:
+        """O atendimento vivo da conversa (na fila ou apenas oferecido), se houver.
+
+        Mais recente primeiro: uma conversa pode acumular ofertas recusadas ao longo do
+        ano, e o que importa é o estado atual.
+        """
+        stmt = (
+            select(AtendimentoHumanoORM)
+            .where(
+                AtendimentoHumanoORM.conversa_id == conversa_id,
+                AtendimentoHumanoORM.status.in_(
+                    [
+                        StatusAtendimentoHumano.OFERECIDO.value,
+                        StatusAtendimentoHumano.ABERTO.value,
+                        StatusAtendimentoHumano.EM_ATENDIMENTO.value,
+                    ]
+                ),
+            )
+            .order_by(AtendimentoHumanoORM.criado_em.desc())
+        )
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_atendimento(row) if row else None
+
+    def _filtrar(self, stmt, *, tenant_id, status, atendente_id):
+        stmt = stmt.where(AtendimentoHumanoORM.tenant_id == tenant_id)
+        if status:
+            stmt = stmt.where(
+                AtendimentoHumanoORM.status.in_([s.value for s in status])
+            )
+        if atendente_id is not None:
+            stmt = stmt.where(AtendimentoHumanoORM.atendente_id == atendente_id)
+        return stmt
+
+    async def listar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        status: Sequence[StatusAtendimentoHumano] | None = None,
+        atendente_id: uuid.UUID | None = None,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[AtendimentoHumano]:
+        # Mais antigos primeiro: a fila da secretaria é por tempo de espera, não por
+        # novidade — quem está aguardando há mais tempo aparece no topo.
+        stmt = self._filtrar(
+            select(AtendimentoHumanoORM),
+            tenant_id=tenant_id,
+            status=status,
+            atendente_id=atendente_id,
+        ).order_by(AtendimentoHumanoORM.criado_em)
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset((pagina - 1) * por_pagina).limit(por_pagina)
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_atendimento(r) for r in rows]
+
+    async def contar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        status: Sequence[StatusAtendimentoHumano] | None = None,
+        atendente_id: uuid.UUID | None = None,
+    ) -> int:
+        stmt = self._filtrar(
+            select(func.count()).select_from(AtendimentoHumanoORM),
+            tenant_id=tenant_id,
+            status=status,
+            atendente_id=atendente_id,
+        )
+        return int((await self._s.execute(stmt)).scalar_one() or 0)
+
+    async def atualizar(self, atendimento: AtendimentoHumano) -> AtendimentoHumano:
+        row = await self._s.get(AtendimentoHumanoORM, atendimento.id)
+        if row is None or row.tenant_id != atendimento.tenant_id:
+            raise ValueError("Atendimento não encontrado.")
+        row.contato_nome = atendimento.contato_nome
+        row.motivo = atendimento.motivo
+        row.status = atendimento.status.value
+        row.ofereceu_em = atendimento.ofereceu_em
+        row.confirmado_em = atendimento.confirmado_em
+        row.fora_expediente = atendimento.fora_expediente
+        row.atendente_id = atendimento.atendente_id
+        row.atendente_nome = atendimento.atendente_nome
+        row.ultima_mensagem_responsavel_em = atendimento.ultima_mensagem_responsavel_em
+        row.assumido_em = atendimento.assumido_em
+        row.resolvido_em = atendimento.resolvido_em
+        row.atualizado_em = _now()
+        await self._s.flush()
+        return _to_atendimento(row)

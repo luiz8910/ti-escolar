@@ -61,12 +61,34 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _dias_do_csv(bruto: str) -> tuple[int, ...]:
+    """``"1,2,3,4,5"`` → ``(1, 2, 3, 4, 5)``, ignorando lixo em vez de estourar.
+
+    Um dia inválido gravado por engano viraria exceção em **todo** carregamento da escola,
+    inclusive no login — caro demais para um campo de conveniência.
+    """
+    dias = []
+    for parte in (bruto or "").split(","):
+        parte = parte.strip()
+        if parte.isdigit() and 1 <= int(parte) <= 7 and int(parte) not in dias:
+            dias.append(int(parte))
+    return tuple(sorted(dias))
+
+
+def _dias_para_csv(dias: tuple[int, ...]) -> str:
+    return ",".join(str(d) for d in sorted(set(dias)))
+
+
 def _to_tenant(row: TenantORM) -> Tenant:
     return Tenant(
         id=row.id,
         nome=row.nome,
         slug=row.slug,
         criado_em=row.criado_em,
+        expediente_dias=_dias_do_csv(row.expediente_dias),
+        expediente_inicio=row.expediente_inicio,
+        expediente_fim=row.expediente_fim,
+        expediente_timezone=row.expediente_timezone,
         whatsapp_numero=row.whatsapp_numero,
         meta_phone_number_id=row.meta_phone_number_id,
         telefone_contato=row.telefone_contato,
@@ -135,6 +157,10 @@ class SqlTenantRepository:
                 valor_anual_centavos=tenant.valor_anual_centavos,
                 cancelado_em=tenant.cancelado_em,
                 motivo_cancelamento=tenant.motivo_cancelamento,
+                expediente_dias=_dias_para_csv(tenant.expediente_dias),
+                expediente_inicio=tenant.expediente_inicio,
+                expediente_fim=tenant.expediente_fim,
+                expediente_timezone=tenant.expediente_timezone,
             )
         )
         try:
@@ -244,6 +270,10 @@ class SqlTenantRepository:
         row.valor_anual_centavos = tenant.valor_anual_centavos
         row.cancelado_em = tenant.cancelado_em
         row.motivo_cancelamento = tenant.motivo_cancelamento
+        row.expediente_dias = _dias_para_csv(tenant.expediente_dias)
+        row.expediente_inicio = tenant.expediente_inicio
+        row.expediente_fim = tenant.expediente_fim
+        row.expediente_timezone = tenant.expediente_timezone
         try:
             await self._s.flush()
         except IntegrityError as e:
@@ -361,12 +391,26 @@ class SqlUsuarioRepository:
         await self._s.flush()
         return usuario
 
+    async def obter(self, usuario_id: uuid.UUID) -> Usuario | None:
+        row = await self._s.get(UsuarioORM, usuario_id)
+        return _to_usuario(row) if row else None
+
     async def listar(self, *, tenant_id: uuid.UUID | None = None) -> list[Usuario]:
-        stmt = select(UsuarioORM)
+        stmt = select(UsuarioORM).order_by(UsuarioORM.nome)
         if tenant_id is not None:
             stmt = stmt.where(UsuarioORM.tenant_id == tenant_id)
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_usuario(r) for r in rows]
+
+    async def atualizar(self, usuario: Usuario) -> Usuario:
+        row = await self._s.get(UsuarioORM, usuario.id)
+        if row is None:
+            raise ValueError("Usuário não encontrado.")
+        row.nome = usuario.nome
+        row.senha_hash = usuario.senha_hash
+        row.ativo = usuario.ativo
+        await self._s.flush()
+        return _to_usuario(row)
 
 
 def _to_auditoria(row: AuditoriaORM) -> RegistroAuditoria:

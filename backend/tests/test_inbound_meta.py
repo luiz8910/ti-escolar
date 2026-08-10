@@ -15,9 +15,8 @@ from app.application.inbound_use_cases import (
     normalizar_origem,
 )
 from app.application.use_cases import (
-    ReceberMensagemRecebida,
+    AtenderConversa,
     RecuperarEEnviarDocumento,
-    ResponderDuvida,
 )
 from app.domain.entities import EstadoAtendimento, Tenant
 from app.infrastructure.atendimento import RegistroAtendimentoMemoria
@@ -82,21 +81,24 @@ def _escolas() -> tuple[Tenant, Tenant]:
     return rosa, sao_jose
 
 
-def _montar(tenants: list[Tenant], *, atendimentos=None):
+def _montar(tenants: list[Tenant], *, atendimentos=None, mesa=None):
     conversas = FakeConversaRepo()
-    receber = ReceberMensagemRecebida(
+    # O inbound real atende por ``AtenderConversa`` (tool use); sem roteiro no FakeLLM ele
+    # responde direto, sem chamar ferramenta — que é o caso comum.
+    atender = AtenderConversa(
         conversas=conversas,
-        responder=ResponderDuvida(
-            embedder=fake_embedder(), store=FakeVectorStore(), llm=FakeLLM()
-        ),
+        embedder=fake_embedder(),
+        store=FakeVectorStore(),
+        llm=FakeLLM(),
         documentos=RecuperarEEnviarDocumento(
             source=FakeDocumentSource([]), canal=CanalEspiao()
         ),
+        mesa=mesa,
     )
     canal = CanalEspiao()
     uc = ProcessarInboundMeta(
         tenants=FakeTenantRepoInbound(tenants),
-        receber=receber,
+        atender=atender,
         canal=canal,
         atendimentos=atendimentos,
     )

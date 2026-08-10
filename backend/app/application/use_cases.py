@@ -9,8 +9,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from app.application.atendimento_humano_use_cases import (
+    EncaminhamentoRecusado,
+    MesaDeAtendimento,
+)
 from app.application.prompts import montar_sistema, montar_sistema_agente
 from app.domain.entities import (
     AtorAuditoria,
@@ -180,90 +185,29 @@ class RespostaMensagem:
     documentos: list[Documento]
 
 
-# Palavras que sinalizam intenção de obter documentos.
-_GATILHOS_DOC = ("boletim", "declaraç", "documento", "comprovante", "histórico", "historico")
+@runtime_checkable
+class Atendedor(Protocol):
+    """Quem atende uma mensagem recebida e devolve o que responder.
 
+    Contrato entre o transporte (o webhook da Meta, em ``ProcessarInboundMeta``) e o
+    atendimento propriamente dito (``AtenderConversa``). Existe para que o inbound não
+    dependa de uma classe concreta: quem trata o envelope da Meta não deve ter opinião
+    sobre como a resposta é produzida.
 
-class ReceberMensagemRecebida:
-    """Ponto de entrada do inbound: persiste, roteia (doc vs dúvida) e responde."""
-
-    def __init__(
-        self,
-        *,
-        conversas: ConversaRepository,
-        responder: ResponderDuvida,
-        documentos: RecuperarEEnviarDocumento,
-        avisos: AvisoTemporizadoRepository | None = None,
-        max_chars: int = 0,
-    ) -> None:
-        self._conversas = conversas
-        self._responder = responder
-        self._documentos = documentos
-        # Opcional: aviso temporizado vigente é anexado à resposta (ver §C2).
-        self._avisos = avisos
-        # Limite de caracteres da mensagem do responsável (§G1); <= 0 desativa.
-        self._max_chars = max_chars
+    ``texto`` vazio significa **não responder** — é como o assistente fica em silêncio
+    quando uma pessoa da secretaria assumiu a conversa (§6j).
+    """
 
     async def executar(
         self, *, tenant_id: UUID, contato: str, texto: str
-    ) -> RespostaMensagem:
-        conversa = await self._conversas.obter_ou_criar(tenant_id=tenant_id, contato=contato)
-        await self._conversas.adicionar_mensagem(
-            conversa_id=conversa.id, autor="usuario", texto=texto
-        )
-
-        # §G1 — mensagem "textão": pede objetividade sem acionar a LLM (assunto de
-        # secretaria pede recado curto). Só quando há limite configurado.
-        if self._max_chars > 0 and len(texto) > self._max_chars:
-            aviso_limite = (
-                f"Para agilizar o atendimento, envie mensagens de até {self._max_chars} "
-                "caracteres. Por gentileza, resuma a sua mensagem em poucas linhas e "
-                "reenvie — assim a secretaria consegue te responder mais rápido."
-            )
-            await self._conversas.adicionar_mensagem(
-                conversa_id=conversa.id, autor="bot", texto=aviso_limite
-            )
-            return RespostaMensagem(texto=aviso_limite, fontes=[], documentos=[])
-
-        historico = await self._conversas.historico(conversa_id=conversa.id)
-
-        docs: list[Documento] = []
-        if any(g in texto.lower() for g in _GATILHOS_DOC):
-            docs = await self._documentos.executar(
-                tenant_id=tenant_id, contato=contato, consulta=texto
-            )
-
-        resposta = await self._responder.executar(
-            tenant_id=tenant_id, pergunta=texto, historico=historico[:-1]
-        )
-
-        texto_final = resposta.texto
-        aviso = await self._aviso_vigente(tenant_id)
-        if aviso:
-            # Recado do dia em destaque, antes da resposta normal do bot.
-            texto_final = f"📢 {aviso}\n\n{texto_final}"
-        if docs:
-            lista = "\n".join(f"• {d.nome}" for d in docs)
-            texto_final += f"\n\nEnviei os seguintes documentos:\n{lista}"
-
-        await self._conversas.adicionar_mensagem(
-            conversa_id=conversa.id, autor="bot", texto=texto_final, fontes=resposta.fontes
-        )
-        return RespostaMensagem(texto=texto_final, fontes=resposta.fontes, documentos=docs)
-
-    async def _aviso_vigente(self, tenant_id: UUID) -> str:
-        """Mensagem do aviso temporizado vigente do tenant (ou string vazia)."""
-        if self._avisos is None:
-            return ""
-        aviso = await self._avisos.vigente(tenant_id=tenant_id)
-        return aviso.mensagem if aviso else ""
+    ) -> RespostaMensagem: ...
 
 
 # --------------------------------------------------------------------------- #
 # Atendimento por agente (inbound via tool use)
 # --------------------------------------------------------------------------- #
-# Ferramentas expostas ao LLM. O modelo decide quando chamá-las — substitui o
-# roteamento por palavra-chave de ``ReceberMensagemRecebida``.
+# Ferramentas expostas ao LLM. O modelo decide quando chamá-las — é o que substituiu o
+# antigo roteamento por palavra-chave do inbound.
 FERRAMENTA_CONHECIMENTO = FerramentaSpec(
     nome="buscar_conhecimento",
     descricao=(
@@ -280,6 +224,60 @@ FERRAMENTA_CONHECIMENTO = FerramentaSpec(
             }
         },
         "required": ["consulta"],
+    },
+)
+
+FERRAMENTA_OFERECER_HUMANO = FerramentaSpec(
+    nome="oferecer_atendimento_humano",
+    descricao=(
+        "Registra que você vai PERGUNTAR ao responsável se ele deseja falar com alguém da "
+        "secretaria. Use quando não conseguir resolver o pedido com a base de conhecimento "
+        "— por exemplo, quando o assunto exigir decisão da escola, tratar de um caso "
+        "específico de um aluno, ou for reclamação/ocorrência. NÃO use na primeira "
+        "mensagem da conversa: tente responder antes."
+    ),
+    parametros={
+        "type": "object",
+        "properties": {
+            "motivo": {
+                "type": "string",
+                "description": (
+                    "Resumo em uma frase do que o responsável precisa. É o que a "
+                    "secretaria lê antes de abrir a conversa."
+                ),
+            }
+        },
+        "required": ["motivo"],
+    },
+)
+
+FERRAMENTA_ESCALAR = FerramentaSpec(
+    nome="escalar_para_secretaria",
+    descricao=(
+        "Encaminha a conversa para uma pessoa da secretaria assumir. Use APENAS quando o "
+        "responsável já tiver CONFIRMADO que quer falar com alguém (depois de "
+        "`oferecer_atendimento_humano`), ou quando ele mesmo pedir explicitamente para "
+        "falar com uma pessoa — neste caso passe pedido_explicito=true."
+    ),
+    parametros={
+        "type": "object",
+        "properties": {
+            "motivo": {
+                "type": "string",
+                "description": (
+                    "Resumo em uma frase do que o responsável precisa, para a secretaria "
+                    "entender o caso sem reler a conversa inteira."
+                ),
+            },
+            "pedido_explicito": {
+                "type": "boolean",
+                "description": (
+                    "true somente quando o próprio responsável pediu para falar com uma "
+                    "pessoa/atendente/secretaria."
+                ),
+            },
+        },
+        "required": ["motivo"],
     },
 )
 
@@ -322,8 +320,10 @@ class AtenderConversa:
         prompts: PromptTenantRepository | None = None,
         auditoria: AuditLogRepository | None = None,
         avisos: AvisoTemporizadoRepository | None = None,
+        mesa: MesaDeAtendimento | None = None,
         k: int = 4,
         max_iteracoes: int = 4,
+        max_chars: int = 0,
     ) -> None:
         self._conversas = conversas
         self._embedder = embedder
@@ -334,8 +334,13 @@ class AtenderConversa:
         self._auditoria = auditoria
         # Opcional: aviso temporizado vigente é anexado à resposta (ver §C2).
         self._avisos = avisos
+        # Opcional: atendimento humano (§6j). Sem ela o assistente nunca encaminha — é o
+        # que mantém o caso de uso utilizável em testes e em instalações sem secretaria.
+        self._mesa = mesa
         self._k = k
         self._max_iteracoes = max_iteracoes
+        # Limite de caracteres da mensagem do responsável (§G1); <= 0 desativa.
+        self._max_chars = max_chars
 
     async def executar(
         self, *, tenant_id: UUID, contato: str, texto: str
@@ -344,10 +349,39 @@ class AtenderConversa:
         await self._conversas.adicionar_mensagem(
             conversa_id=conversa.id, autor="usuario", texto=texto
         )
+
+        # Alguém da secretaria já assumiu esta conversa (§6j): o assistente **cala**. Sem
+        # isso ele responderia por cima da pessoa, e o responsável receberia duas respostas
+        # possivelmente contraditórias pelo mesmo número. A mensagem é só registrada — e
+        # renova a janela de 24h de quem vai responder.
+        if self._mesa is not None:
+            atendimento = await self._mesa.vivo_na_conversa(conversa.id)
+            if atendimento is not None and atendimento.na_fila:
+                await self._mesa.registrar_retorno(atendimento)
+                return RespostaMensagem(texto="", fontes=[], documentos=[])
+
+        # §G1 — mensagem "textão": pede objetividade sem acionar a LLM (assunto de
+        # secretaria pede recado curto). Só quando há limite configurado.
+        if self._max_chars > 0 and len(texto) > self._max_chars:
+            aviso_limite = (
+                f"Para agilizar o atendimento, envie mensagens de até {self._max_chars} "
+                "caracteres. Por gentileza, resuma a sua mensagem em poucas linhas e "
+                "reenvie — assim a secretaria consegue te responder mais rápido."
+            )
+            await self._conversas.adicionar_mensagem(
+                conversa_id=conversa.id, autor="bot", texto=aviso_limite
+            )
+            return RespostaMensagem(texto=aviso_limite, fontes=[], documentos=[])
+
         historico = await self._conversas.historico(conversa_id=conversa.id)
         turnos = [TurnoConversa(papel=m["role"], texto=m["content"]) for m in historico]
+        # Quantas vezes o assistente já respondeu nesta conversa — insumo da trava "não
+        # encaminhar nas primeiras mensagens" (§6j).
+        respostas_anteriores = sum(1 for m in historico if m["role"] == "assistant")
 
         ferramentas = [FERRAMENTA_CONHECIMENTO, FERRAMENTA_DOCUMENTO]
+        if self._mesa is not None:
+            ferramentas += [FERRAMENTA_OFERECER_HUMANO, FERRAMENTA_ESCALAR]
         fontes: list[str] = []
         docs: list[Documento] = []
 
@@ -371,7 +405,13 @@ class AtenderConversa:
             resultados: list[ResultadoFerramenta] = []
             for chamada in resposta.chamadas:
                 conteudo = await self._executar_ferramenta(
-                    chamada, tenant_id=tenant_id, contato=contato, fontes=fontes, docs=docs
+                    chamada,
+                    tenant_id=tenant_id,
+                    contato=contato,
+                    conversa_id=conversa.id,
+                    fontes=fontes,
+                    docs=docs,
+                    respostas_anteriores=respostas_anteriores,
                 )
                 resultados.append(ResultadoFerramenta(id=chamada.id, conteudo=conteudo))
             turnos.append(TurnoConversa(papel="user", resultados=resultados))
@@ -439,9 +479,20 @@ class AtenderConversa:
         *,
         tenant_id: UUID,
         contato: str,
+        conversa_id: UUID,
         fontes: list[str],
         docs: list[Documento],
+        respostas_anteriores: int = 0,
     ) -> str:
+        if chamada.nome in (FERRAMENTA_OFERECER_HUMANO.nome, FERRAMENTA_ESCALAR.nome):
+            return await self._ferramenta_atendimento_humano(
+                chamada,
+                tenant_id=tenant_id,
+                contato=contato,
+                conversa_id=conversa_id,
+                respostas_anteriores=respostas_anteriores,
+            )
+
         consulta = str(chamada.argumentos.get("consulta", "")).strip()
 
         if chamada.nome == FERRAMENTA_CONHECIMENTO.nome:
@@ -469,6 +520,67 @@ class AtenderConversa:
             return f"Documentos enviados ao responsável: {nomes}."
 
         return f"Ferramenta desconhecida: {chamada.nome}."
+
+    async def _ferramenta_atendimento_humano(
+        self,
+        chamada,
+        *,
+        tenant_id: UUID,
+        contato: str,
+        conversa_id: UUID,
+        respostas_anteriores: int,
+    ) -> str:
+        """Oferta e encaminhamento à secretaria (§6j).
+
+        As travas ("não nas primeiras mensagens", "oferecer antes de encaminhar") ficam no
+        caso de uso, não aqui e não no prompt: o modelo pode ignorar uma instrução de
+        texto, e o efeito seria criar fila de atendimento indevida — trabalho para uma
+        pessoa real do outro lado.
+        """
+        if self._mesa is None:  # defensivo: a ferramenta nem é oferecida sem mesa
+            return "Encaminhamento para a secretaria não está disponível nesta escola."
+
+        motivo = str(chamada.argumentos.get("motivo", "")).strip()
+
+        if chamada.nome == FERRAMENTA_OFERECER_HUMANO.nome:
+            await self._mesa.oferecer(
+                tenant_id=tenant_id,
+                conversa_id=conversa_id,
+                contato=contato,
+                motivo=motivo,
+            )
+            expediente = await self._mesa.expediente(tenant_id)
+            horario = f" A secretaria atende {expediente}." if expediente else ""
+            return (
+                "Oferta registrada. Agora PERGUNTE ao responsável, de forma cordial, se "
+                "ele deseja que alguém da secretaria assuma o atendimento, e aguarde a "
+                f"resposta dele.{horario}"
+            )
+
+        pedido_explicito = bool(chamada.argumentos.get("pedido_explicito", False))
+        try:
+            await self._mesa.escalar(
+                tenant_id=tenant_id,
+                conversa_id=conversa_id,
+                contato=contato,
+                motivo=motivo,
+                pedido_explicito=pedido_explicito,
+                respostas_anteriores=respostas_anteriores,
+            )
+        except EncaminhamentoRecusado as recusa:
+            # Não é erro: é o caso de uso dizendo ao modelo o que fazer em vez disso.
+            return recusa.orientacao
+
+        previsao = await self._mesa.previsao_de_retorno(tenant_id)
+        quando = (
+            f" Informe que o retorno será {previsao}." if previsao and previsao != "agora" else
+            " A secretaria está em expediente agora."
+        )
+        return (
+            "Atendimento encaminhado à secretaria. Confirme ao responsável que alguém da "
+            "escola vai assumir a conversa por aqui mesmo, neste WhatsApp."
+            f"{quando} Não prometa nenhum outro prazo."
+        )
 
 
 # --------------------------------------------------------------------------- #

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _now() -> datetime:
@@ -40,6 +41,36 @@ class PlanoTenant(str, enum.Enum):
 
     MENSAL = "mensal"
     ANUAL = "anual"
+
+
+# Dias da semana no padrão ISO (o mesmo de ``datetime.isoweekday``).
+_DIAS_SEMANA = {
+    1: "segunda-feira",
+    2: "terça-feira",
+    3: "quarta-feira",
+    4: "quinta-feira",
+    5: "sexta-feira",
+    6: "sábado",
+    7: "domingo",
+}
+
+# Como a escola escreve o expediente: "segunda a sexta", não "segunda-feira a sexta-feira".
+_DIAS_SEMANA_CURTO = {
+    1: "segunda",
+    2: "terça",
+    3: "quarta",
+    4: "quinta",
+    5: "sexta",
+    6: "sábado",
+    7: "domingo",
+}
+
+TIMEZONE_PADRAO = "America/Sao_Paulo"
+
+
+def formatar_hora(h: time) -> str:
+    """``07:30`` → ``7h30``; ``17:00`` → ``17h`` (como a escola escreve)."""
+    return f"{h.hour}h{h.minute:02d}" if h.minute else f"{h.hour}h"
 
 
 @dataclass
@@ -87,6 +118,16 @@ class Tenant:
     # Cancelamento (churn): quando a escola deixou a plataforma e por quê.
     cancelado_em: datetime | None = None
     motivo_cancelamento: str = ""
+    # --- Expediente da secretaria (§6j) --------------------------------------------- #
+    # Quando há gente da escola para assumir um atendimento encaminhado pelo assistente.
+    # É **campo estruturado, e não texto na base de conhecimento**, de propósito: a base
+    # responde a quem *pergunta* o horário (RAG), mas aqui o horário **governa
+    # comportamento** — se o recall falhasse, o assistente prometeria atendimento imediato
+    # às 23h. Dias no padrão ISO (1 = segunda … 7 = domingo); horas na hora local da escola.
+    expediente_dias: tuple[int, ...] = (1, 2, 3, 4, 5)
+    expediente_inicio: time = time(7, 30)
+    expediente_fim: time = time(17, 0)
+    expediente_timezone: str = TIMEZONE_PADRAO
 
     @property
     def remetente_canal(self) -> str:
@@ -98,6 +139,86 @@ class Tenant:
         número (demo) e para escolas ainda sem id cadastrado. Vazio = número padrão do canal.
         """
         return self.meta_phone_number_id.strip() or self.whatsapp_numero.strip()
+
+    # --- Expediente ------------------------------------------------------------------ #
+    @property
+    def _zona(self) -> ZoneInfo:
+        """Fuso da escola, com queda para o padrão se o nome for inválido.
+
+        Um fuso digitado errado no painel não pode derrubar o atendimento: o pior caso
+        aceitável é responder no horário de Brasília.
+        """
+        try:
+            return ZoneInfo(self.expediente_timezone or TIMEZONE_PADRAO)
+        except (ZoneInfoNotFoundError, ValueError):
+            return ZoneInfo(TIMEZONE_PADRAO)
+
+    def hora_local(self, quando: datetime | None = None) -> datetime:
+        """Um instante convertido para a hora local da escola.
+
+        É o que permite falar com o responsável no relógio dele ("amanhã às 7h30") sem
+        espalhar ``ZoneInfo`` pela camada de aplicação.
+        """
+        return (quando or _now()).astimezone(self._zona)
+
+    @property
+    def tem_expediente(self) -> bool:
+        """Há uma janela de atendimento válida configurada."""
+        return bool(self.expediente_dias) and self.expediente_inicio < self.expediente_fim
+
+    def dentro_do_expediente(self, agora: datetime | None = None) -> bool:
+        """A secretaria está aberta neste instante (hora local da escola)?"""
+        if not self.tem_expediente:
+            return False
+        local = (agora or _now()).astimezone(self._zona)
+        if local.isoweekday() not in self.expediente_dias:
+            return False
+        return self.expediente_inicio <= local.time() < self.expediente_fim
+
+    def proxima_abertura(self, agora: datetime | None = None) -> datetime | None:
+        """Quando a secretaria abre de novo (em UTC), ou ``None`` sem expediente.
+
+        Devolve o próprio instante quando já está aberta — quem pergunta "quando abre"
+        estando aberto quer ouvir "agora".
+        """
+        if not self.tem_expediente:
+            return None
+        agora = agora or _now()
+        if self.dentro_do_expediente(agora):
+            return agora
+
+        local = agora.astimezone(self._zona)
+        # Hoje ainda conta se o expediente não começou; a partir de amanhã, sempre na
+        # abertura. Sete dias bastam: os dias configurados se repetem toda semana.
+        for offset in range(0, 8):
+            dia = (local + timedelta(days=offset)).date()
+            if dia.isoweekday() not in self.expediente_dias:
+                continue
+            abertura = datetime.combine(dia, self.expediente_inicio, tzinfo=self._zona)
+            if abertura > local:
+                return abertura.astimezone(timezone.utc)
+        return None
+
+    @property
+    def descricao_expediente(self) -> str:
+        """Expediente em texto ("segunda a sexta, das 7h30 às 17h").
+
+        É o que o assistente diz ao responsável — por isso nasce do campo, e não da base
+        de conhecimento: a promessa feita a quem espera tem uma fonte só.
+        """
+        if not self.tem_expediente:
+            return ""
+        dias = sorted(self.expediente_dias)
+        nomes = [_DIAS_SEMANA_CURTO[d] for d in dias]
+        if len(dias) > 1 and dias == list(range(dias[0], dias[-1] + 1)):
+            rotulo = f"{nomes[0]} a {nomes[-1]}"
+        elif len(nomes) > 1:
+            rotulo = f"{', '.join(nomes[:-1])} e {nomes[-1]}"
+        else:
+            rotulo = nomes[0]
+        inicio = formatar_hora(self.expediente_inicio)
+        fim = formatar_hora(self.expediente_fim)
+        return f"{rotulo}, das {inicio} às {fim}"
 
     @property
     def bloqueado(self) -> bool:
@@ -528,6 +649,10 @@ class ResultadoImportacaoAlunos:
 class Autor(str, enum.Enum):
     USUARIO = "usuario"
     BOT = "bot"
+    # Uma pessoa da secretaria respondendo pelo mesmo fio, depois de o assistente
+    # encaminhar o atendimento (§6j). Do lado do responsável não há transferência
+    # visível — é a mesma conversa, com alguém melhor respondendo.
+    ATENDENTE = "atendente"
 
 
 @dataclass
@@ -539,6 +664,8 @@ class Mensagem:
     criado_em: datetime = field(default_factory=_now)
     # Fontes (RAG) que embasaram uma resposta do bot.
     fontes: list[str] = field(default_factory=list)
+    # Quem da secretaria respondeu (só quando ``autor`` é ``ATENDENTE``).
+    autor_nome: str = ""
 
 
 @dataclass
@@ -1600,3 +1727,92 @@ class PosturaSeguranca:
     def pronto_para_producao(self) -> bool:
         """Só quando nenhuma medida e nenhum item de checklist exige ação."""
         return not self.total_atencao and not self.total_pendentes and not self.checklist_pendentes
+
+
+# --------------------------------------------------------------------------- #
+# Atendimento humano: o assistente passa a conversa para a secretaria (§6j)
+# --------------------------------------------------------------------------- #
+# Janela da Meta para texto livre: 24h desde a última mensagem do responsável. Passado
+# esse prazo, só template aprovado reabre a conversa (§9a).
+JANELA_ATENDIMENTO_HORAS = 24
+
+
+class StatusAtendimentoHumano(str, enum.Enum):
+    """Ciclo de um encaminhamento do assistente para a secretaria.
+
+    ``OFERECIDO`` é o estado que separa esta feature de um encaminhamento cego: o
+    assistente **pergunta** antes ("quer que eu chame alguém da secretaria?") e só o
+    "sim" do responsável leva a ``ABERTO``. Uma oferta ignorada vira ``DESCARTADO`` — e a
+    razão entre oferecido e descartado é o termômetro de o assistente estar desistindo
+    cedo demais.
+    """
+
+    OFERECIDO = "oferecido"
+    ABERTO = "aberto"
+    EM_ATENDIMENTO = "em_atendimento"
+    RESOLVIDO = "resolvido"
+    DESCARTADO = "descartado"
+
+
+# Estados que ocupam a fila da secretaria e silenciam o assistente na conversa.
+STATUS_ATENDIMENTO_NA_FILA = (
+    StatusAtendimentoHumano.ABERTO,
+    StatusAtendimentoHumano.EM_ATENDIMENTO,
+)
+
+
+@dataclass
+class AtendimentoHumano:
+    """Uma conversa que o assistente entregou a uma pessoa da secretaria (§6j).
+
+    O responsável continua no **mesmo fio de WhatsApp**: a resposta do atendente entra na
+    mesma ``Conversa`` (como ``Mensagem`` de autor ``atendente``) e sai pelo número da
+    própria escola. Do lado do responsável, não há transferência visível — há alguém
+    respondendo melhor.
+
+    ``ultima_mensagem_responsavel_em`` existe para uma razão específica: é dela que sai a
+    **janela de 24h** da Meta. Sem esse carimbo, o atendente escreve, a Graph API recusa o
+    texto livre e a resposta some sem ninguém notar.
+    """
+
+    tenant_id: UUID
+    conversa_id: UUID
+    contato: str  # E.164 do responsável
+    contato_nome: str = ""
+    # Resumo escrito pelo próprio assistente — é o que a secretaria lê antes de abrir.
+    motivo: str = ""
+    status: StatusAtendimentoHumano = StatusAtendimentoHumano.OFERECIDO
+    # As duas etapas do gatilho (§6j): a oferta e o "sim" do responsável.
+    ofereceu_em: datetime | None = None
+    confirmado_em: datetime | None = None
+    # Encaminhado com a secretaria fechada: entra na fila do próximo dia útil.
+    fora_expediente: bool = False
+    atendente_id: UUID | None = None
+    atendente_nome: str = ""
+    ultima_mensagem_responsavel_em: datetime = field(default_factory=_now)
+    assumido_em: datetime | None = None
+    resolvido_em: datetime | None = None
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
+
+    @property
+    def na_fila(self) -> bool:
+        """Ocupa a fila da secretaria — e, portanto, silencia o assistente."""
+        return self.status in STATUS_ATENDIMENTO_NA_FILA
+
+    @property
+    def janela_expira_em(self) -> datetime:
+        """Limite para responder em texto livre (24h da última mensagem do responsável)."""
+        return self.ultima_mensagem_responsavel_em + timedelta(
+            hours=JANELA_ATENDIMENTO_HORAS
+        )
+
+    def janela_aberta(self, agora: datetime | None = None) -> bool:
+        return (agora or _now()) < self.janela_expira_em
+
+    def minutos_de_espera(self, agora: datetime | None = None) -> int:
+        """Há quanto tempo o responsável aguarda (do encaminhamento até assumir)."""
+        fim = self.assumido_em or agora or _now()
+        base = self.confirmado_em or self.criado_em
+        return max(0, int((fim - base).total_seconds() // 60))

@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from app.application.use_cases import ReceberMensagemRecebida
+from app.application.use_cases import Atendedor
 from app.domain.entities import EstadoAtendimento
 from app.domain.ports import (
     ControleTaxa,
@@ -54,6 +54,10 @@ class ResultadoInboundMeta:
     ignoradas: int = 0
     # Recusadas pelo limite de taxa por remetente (número em loop / abuso).
     limitadas: int = 0
+    # Registradas sem resposta automática porque a secretaria assumiu a conversa (§6j).
+    # Contada à parte de ``respondidas``: sem isso, um silêncio deliberado ficaria
+    # indistinguível de uma falha de atendimento no painel de logs (§16).
+    silenciadas: int = 0
 
 
 def normalizar_origem(bruto: str) -> str:
@@ -77,7 +81,7 @@ class ProcessarInboundMeta:
         self,
         *,
         tenants: TenantRepository,
-        receber: ReceberMensagemRecebida,
+        atender: Atendedor,
         canal: MessageChannel,
         atendimentos: RegistroAtendimento | None = None,
         controle_taxa: ControleTaxa | None = None,
@@ -85,7 +89,7 @@ class ProcessarInboundMeta:
         janela_taxa_segundos: int = 60,
     ) -> None:
         self._tenants = tenants
-        self._receber = receber
+        self._atender = atender
         self._canal = canal
         self._atendimentos = atendimentos
         self._controle_taxa = controle_taxa
@@ -212,12 +216,14 @@ class ProcessarInboundMeta:
 
         resultado.recebidas += 1
         try:
-            resposta = await self._receber.executar(
+            resposta = await self._atender.executar(
                 tenant_id=escola.id, contato=origem, texto=texto
             )
 
             # A Meta não aceita a resposta no corpo do webhook: é uma nova chamada à API,
-            # saindo do número da própria escola.
+            # saindo do número da própria escola. Texto vazio é silêncio deliberado — a
+            # conversa está com uma pessoa da secretaria (§6j) e o assistente não fala por
+            # cima dela.
             if resposta.texto.strip():
                 await self._canal.enviar_texto(
                     contato=origem,
@@ -225,6 +231,13 @@ class ProcessarInboundMeta:
                     remetente=escola.remetente_canal or None,
                 )
                 resultado.respondidas += 1
+            else:
+                resultado.silenciadas += 1
+                logger.info(
+                    "Inbound Meta registrado sem resposta automática (escola %s): a "
+                    "conversa está em atendimento humano",
+                    escola.slug,
+                )
         except Exception as erro:
             # Falha na LLM ou no envio: libera a reserva para que a reentrega da Meta —
             # ou a próxima tentativa — possa atender de verdade, em vez de encontrar a

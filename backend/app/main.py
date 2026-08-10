@@ -15,6 +15,7 @@ from app.infrastructure.factories import canal_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
 from app.interfaces.api import (
     admin,
+    atendimento_humano,
     avisos,
     broadcast,
     cadastro,
@@ -119,6 +120,7 @@ app.include_router(avisos.router)
 app.include_router(impressao.router)
 app.include_router(mural.router)
 app.include_router(comunicacao_interna.router)
+app.include_router(atendimento_humano.router)
 app.include_router(mediacao.router)
 app.include_router(progressao.router)
 app.include_router(professor.router)

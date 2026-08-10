@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application.admin_use_cases import (
     AdicionarContatoAoGrupo,
+    AtualizarUsuario,
     AutenticarUsuario,
     CriarGrupo,
     CriarUsuario,
@@ -71,6 +72,7 @@ from app.interfaces.deps import (
     get_usuario_repo,
 )
 from app.interfaces.dto import (
+    AtualizarUsuarioEntrada,
     AuditoriaPaginaSaida,
     AvisoLicencaSaida,
     BloqueioEntrada,
@@ -90,6 +92,7 @@ from app.interfaces.dto import (
     EscolaEntrada,
     EscolaResumoSaida,
     EscolaSaida,
+    ExpedienteSaida,
     FichaFinanceiraSaida,
     GrupoEntrada,
     GrupoSaida,
@@ -124,7 +127,13 @@ def _meta(pagina) -> PaginaMeta:
 
 def _usuario_saida(u: Usuario) -> UsuarioSaida:
     return UsuarioSaida(
-        id=u.id, nome=u.nome, email=u.email, papel=u.papel.value, tenant_id=u.tenant_id
+        id=u.id,
+        nome=u.nome,
+        email=u.email,
+        papel=u.papel.value,
+        tenant_id=u.tenant_id,
+        ativo=u.ativo,
+        criado_em=u.criado_em,
     )
 
 
@@ -294,6 +303,43 @@ async def listar_usuarios(
     return [_usuario_saida(u) for u in await usuarios.listar(tenant_id=escopo)]
 
 
+@router.put("/usuarios/{usuario_id}", response_model=UsuarioSaida)
+async def atualizar_usuario(
+    usuario_id: UUID,
+    payload: AtualizarUsuarioEntrada,
+    editor: Usuario = Depends(usuario_autenticado),
+    usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> UsuarioSaida:
+    """Edita nome, senha e situação de um usuário (papel e escola não mudam aqui)."""
+    try:
+        usuario = await AtualizarUsuario(usuarios=usuarios).executar(
+            editor=editor,
+            usuario_id=usuario_id,
+            nome=payload.nome,
+            senha=payload.senha,
+            ativo=payload.ativo,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=editor,
+        acao="usuario.atualizar",
+        tenant_id=usuario.tenant_id,
+        descricao=f"Atualizou o usuário {usuario.email}",
+        metadados={
+            "usuario_id": str(usuario.id),
+            "ativo": usuario.ativo,
+            # Só o fato, nunca a senha — nem o tamanho dela.
+            "senha_alterada": bool(payload.senha),
+        },
+    )
+    return _usuario_saida(usuario)
+
+
 # --------------------------------------------------------------------------- #
 # Grupos e contatos
 # --------------------------------------------------------------------------- #
@@ -435,6 +481,18 @@ def _licenca_saida(t: Tenant) -> LicencaSaida:
     )
 
 
+def _expediente_saida(t: Tenant) -> ExpedienteSaida:
+    """Expediente da secretaria pronto para o painel (§6j)."""
+    return ExpedienteSaida(
+        dias=list(t.expediente_dias),
+        inicio=t.expediente_inicio.strftime("%H:%M"),
+        fim=t.expediente_fim.strftime("%H:%M"),
+        timezone=t.expediente_timezone,
+        descricao=t.descricao_expediente,
+        aberto_agora=t.dentro_do_expediente(),
+    )
+
+
 def _escola_saida(t: Tenant) -> EscolaSaida:
     return EscolaSaida(
         id=t.id,
@@ -443,6 +501,7 @@ def _escola_saida(t: Tenant) -> EscolaSaida:
         whatsapp_numero=t.whatsapp_numero,
         meta_phone_number_id=t.meta_phone_number_id,
         telefone_contato=t.telefone_contato,
+        expediente=_expediente_saida(t),
         criado_em=t.criado_em,
         licenca=_licenca_saida(t),
     )
@@ -462,6 +521,10 @@ async def criar_escola(
             whatsapp_numero=payload.whatsapp_numero,
             telefone_contato=payload.telefone_contato,
             meta_phone_number_id=payload.meta_phone_number_id,
+            expediente_dias=payload.expediente_dias,
+            expediente_inicio=payload.expediente_inicio,
+            expediente_fim=payload.expediente_fim,
+            expediente_timezone=payload.expediente_timezone,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
@@ -487,6 +550,7 @@ async def listar_escolas(
             whatsapp_numero=r.tenant.whatsapp_numero,
             meta_phone_number_id=r.tenant.meta_phone_number_id,
             telefone_contato=r.tenant.telefone_contato,
+            expediente=_expediente_saida(r.tenant),
             criado_em=r.tenant.criado_em,
             total_conversas=r.total_conversas,
             total_contatos=r.total_contatos,
@@ -530,6 +594,10 @@ async def atualizar_escola(
             whatsapp_numero=payload.whatsapp_numero,
             telefone_contato=payload.telefone_contato,
             meta_phone_number_id=payload.meta_phone_number_id,
+            expediente_dias=payload.expediente_dias,
+            expediente_inicio=payload.expediente_inicio,
+            expediente_fim=payload.expediente_fim,
+            expediente_timezone=payload.expediente_timezone,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e

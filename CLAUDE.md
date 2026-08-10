@@ -103,9 +103,11 @@ O back-end segue **arquitetura limpa (hexagonal / ports & adapters)**. A **regra
 
 **Fluxo de uma dúvida (inbound):**
 `webhook da Meta` → `interfaces` (assinatura validada) → `ProcessarInboundMeta` (roteia a
-escola pelo `phone_number_id`) → `ReceberMensagemRecebida` → `ResponderDuvida` (busca no
-`VectorStore` + `LLMProvider` para raciocinar/redigir) → resposta com fonte →
-`MessageChannel` (Meta, pelo número da própria escola).
+escola pelo `phone_number_id`) → `AtenderConversa` (**tool use**: o LLM decide entre buscar
+no `VectorStore`, recuperar documento ou chamar a secretaria — §6j) → resposta com fonte →
+`MessageChannel` (Meta, pelo número da própria escola). O contrato entre o transporte e o
+atendimento é a porta `Atendedor`; **texto vazio significa não responder** (a conversa está
+com uma pessoa).
 
 ---
 
@@ -142,8 +144,9 @@ ti-escolar/
   `SolicitacaoInterna` (canal professor→escola), `MensagemMediada` (canal pai↔professor),
   `CotaImpressao` (franquia mensal de impressão), `AvisoFalta` (falta de professor +
   chamada de eventual), `FichaMatricula` (ficha de matrícula digital, 1:1 com `Aluno`) e
-  `SolicitacaoMatricula` (matrícula self-service pelo WhatsApp). `Contato` tem flag `ativo`
-  (responsável inativo — todos os alunos já são ex-alunos).
+  `SolicitacaoMatricula` (matrícula self-service pelo WhatsApp) e
+  `AtendimentoHumano` (fila da secretaria quando o assistente encaminha a conversa).
+  `Contato` tem flag `ativo` (responsável inativo — todos os alunos já são ex-alunos).
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
 - **Migrations:** `0001_initial` → `0002_admins_grupos` → `0003_salas` →
@@ -155,7 +158,8 @@ ti-escolar/
   `0017_mensagens_mediadas` → `0018_cota_impressao` → `0019_contato_ativo` →
   `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula` →
   `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id` → `0025_controle_taxa` →
-  `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete`.
+  `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete` →
+  `0029_atendimento_humano`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -423,8 +427,8 @@ LLM novo:** reusam o RAG existente (que já chama o `LLMProvider`).
   da Rosa Cury. Painel `web/app/admin/respostas-rapidas/`.
 - **C2 · Aviso geral temporizado (`AvisoTemporizado`):** recado do dia com **janela de vigência**
   opcional (`inicia_em`/`expira_em`) e `ativo`. Enquanto **vigente** (`vigente_em`), é **anexado à
-  resposta do bot** a quem inicia a conversa (integrado em `ReceberMensagemRecebida` **e**
-  `AtenderConversa`, via `AvisoTemporizadoRepository` opcional) — "sem mexer no celular". Casos de
+  resposta do bot** a quem inicia a conversa (integrado em `AtenderConversa`, via
+  `AvisoTemporizadoRepository` opcional) — "sem mexer no celular". Casos de
   uso em `app/application/avisos_use_cases.py`. Repositório `SqlAvisoTemporizadoRepository`
   (`repositories_comunicacao.py`). Rotas `app/interfaces/api/avisos.py` (`/api/admin/avisos`).
   Migration `0013_avisos_temporizados`. Painel `web/app/admin/avisos/`.
@@ -544,7 +548,7 @@ a porta `LLMProvider`, como a importação em massa). Todas escopadas por `tenan
   `concluida`, `cancelada`}. Casos de uso em `app/application/matricula_use_cases.py`;
   repositório `SqlSolicitacaoMatriculaRepository`; rotas `app/interfaces/api/matricula.py`
   (`/api/admin/matriculas`). Migration `0022_solicitacoes_matricula`.
-- **G1 · Limite de caracteres na mensagem do pai:** `ReceberMensagemRecebida` recebe
+- **G1 · Limite de caracteres na mensagem do pai:** `AtenderConversa` recebe
   `max_chars` (config `MENSAGEM_PAI_MAX_CHARS`, default 1000; 0 desativa); acima do limite,
   o bot pede objetividade **sem acionar a LLM** (assunto de secretaria pede recado curto).
 - **Seed:** o tenant demo ganha um `AvisoFalta` (professor demo), uma `FichaMatricula` do
@@ -552,6 +556,90 @@ a porta `LLMProvider`, como a importação em massa). Todas escopadas por `tenan
 - **Remoção de tenant** (`SqlTenantRepository.remover`): a cascata explícita passa a apagar
   `fichas_matricula` e `solicitacoes_matricula` (antes dos alunos) e `avisos_falta` (antes
   dos professores), pois as FKs a `tenants` não têm `ON DELETE CASCADE`.
+
+### 6j. Atendimento humano — o assistente entrega a conversa à secretaria
+
+O produto passou a **atender** com o inbound real (§9e.1), mas atender não é responder
+tudo: matrícula específica, reclamação, ocorrência com aluno — há assunto que exige
+decisão de gente. Esta é a ponte, e ela tem **três regras que valem mais que o código**:
+
+1. **Nunca encaminhar de saída.** O assistente tenta responder primeiro. Encaminhamento na
+   primeira mensagem transformaria o produto num formulário de contato caro.
+2. **Perguntar antes.** Ao desistir, ele *oferece* ("quer que eu chame alguém da
+   secretaria?") e só o "sim" do responsável abre o atendimento. Exceção: quem já pediu
+   uma pessoa explicitamente — aí a pergunta é burocracia.
+3. **Respeitar o expediente.** Fora do horário o atendimento **entra na fila mesmo assim**
+   (recusar perderia justamente o recado de quem escreve à noite), mas o que se promete ao
+   responsável é o próximo dia útil.
+
+Do lado do responsável **não existe transferência**: é a mesma conversa de WhatsApp, com a
+resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro lado.
+
+- **Quem atende:** não há entidade nova. É o `Usuario` com `papel = tenant_admin` — a mesma
+  conta que entra no painel. O que faltava era a tela: `web/app/admin/usuarios/`
+  (+ `AtualizarUsuario` e `PUT /api/admin/usuarios/{id}`), porque até aqui criar uma
+  funcionária exigia bater na API à mão. **Não há "excluir":** quem sai é **desativada**
+  (`ativo=False`), perde o acesso na requisição seguinte e mantém o histórico do que
+  respondeu. Editar não muda `papel` nem `tenant_id` — seria a porta para um admin de
+  escola se promover a super admin.
+- **`AtendimentoHumano`** (migration `0029_atendimento_humano`, tabela
+  `atendimentos_humanos`): `status` ∈ {`oferecido`, `aberto`, `em_atendimento`,
+  `resolvido`, `descartado`}; só `aberto`/`em_atendimento` ocupam a fila. `OFERECIDO` é o
+  estado que separa esta feature de um encaminhamento cego, e a razão
+  **oferecido × descartado** é o termômetro de o assistente estar desistindo cedo demais.
+  `ultima_mensagem_responsavel_em` é a base da **janela de 24h** da Meta: sem esse carimbo o
+  atendente escreve, a Graph API recusa o texto livre e a resposta some.
+- **Expediente da escola (`Tenant.expediente_dias/_inicio/_fim/_timezone`):** o horário da
+  secretaria é **campo estruturado, não texto na base de conhecimento**. A base responde a
+  quem *pergunta* o horário (RAG); aqui o horário **governa comportamento**, e se o recall
+  falhasse o assistente prometeria atendimento imediato às 23h. Propriedades de domínio
+  `dentro_do_expediente`, `proxima_abertura`, `descricao_expediente`, `hora_local`. Default
+  = o da EM Rosa Cury (seg–sex, 7h30–17h). **Limitação declarada:** feriado e recesso não
+  são modelados — emenda de feriado promete atendimento que não acontece.
+- **As travas são código, não prompt.** `escalar_para_secretaria` valida em
+  `EscalarParaSecretaria`: (a) mínimo de `MIN_RESPOSTAS_ANTES_DE_ENCAMINHAR` (2) respostas
+  do assistente na conversa, salvo pedido explícito; (b) oferta registrada antes do
+  encaminhamento. A recusa levanta `EncaminhamentoRecusado`, cuja mensagem **volta ao
+  modelo como orientação** (não como erro) — ele então responde ou pergunta, em vez de
+  encaminhar. Oferta sem resposta vence em `OFERTA_VALIDA_HORAS` (24) e vira `descartado`,
+  senão uma oferta ignorada em março autorizaria encaminhamento direto em agosto.
+- **Duas ferramentas** no `AtenderConversa`: `oferecer_atendimento_humano` (registra a
+  intenção e manda perguntar) e `escalar_para_secretaria` (`motivo`, `pedido_explicito`).
+  Diretrizes correspondentes em `montar_sistema_agente`.
+- **O assistente cala quando a secretaria assume.** Com atendimento `na_fila`,
+  `AtenderConversa` só registra a mensagem, renova a janela de 24h e devolve **texto
+  vazio** — o inbound entende isso como "não responder" e conta em
+  `ResultadoInboundMeta.silenciadas`, separado de `respondidas` para o silêncio deliberado
+  não parecer falha no painel de logs (§16). Sem essa trava, o responsável receberia duas
+  respostas da escola se contradizendo pelo mesmo número.
+- **Responder** (`ResponderAtendimento`): envia **antes** de gravar — gravar primeiro
+  deixaria no histórico uma resposta que o responsável nunca recebeu, e a escola acreditaria
+  ter respondido. A mensagem entra na mesma `Conversa` como `Mensagem` de autor
+  `atendente` (+ `autor_nome`, migration `0029`), pelo `Tenant.remetente_canal`. Responder é
+  assumir; dois atendentes no mesmo caso é recusado.
+- **Fora da janela de 24h (§A9):** a resposta sai por **template utility aprovado**
+  (`TEMPLATE_RETOMADA_ATENDIMENTO`, buscado por `TemplateRepository.por_nome`). Sem template
+  aprovado, o painel **recusa com erro explícito** em vez de deixar a mensagem sumir na
+  Graph API. O seed cria `retomada_atendimento` como **pendente** de propósito: enquanto a
+  Meta não aprovar, o comportamento honesto é recusar.
+- **Casos de uso** em `app/application/atendimento_humano_use_cases.py`
+  (`OferecerAtendimentoHumano`, `EscalarParaSecretaria`, `RegistrarRetornoDoResponsavel`,
+  `ListarAtendimentos`, `ContarAtendimentosPendentes`, `Assumir`/`Responder`/`Resolver`/
+  `ReabrirAtendimento`), com a fachada **`MesaDeAtendimento`** — que existe para não
+  despejar cinco colaboradores no construtor de `AtenderConversa`. Repositório
+  `SqlAtendimentoHumanoRepository` (`repositories_comunicacao.py`); rotas
+  `app/interfaces/api/atendimento_humano.py` (`/api/admin/atendimentos`), com
+  `_exige_tenant_ativo` na resposta (consome canal).
+- **Painel:** `web/app/admin/atendimentos/` (fila Na fila / Meus / Resolvidos, motivo já
+  resumido pelo assistente, tempo de espera, selo de fora do expediente, contador da janela
+  de 24h e a thread completa com caixa de resposta) e **badge de contagem no `Sidebar`**
+  (polling de 20s em `/pendentes`) — é a notificação in-app. Expediente editável no
+  cadastro de escola (`components/admin/CamposExpediente.tsx`).
+- **Cobertura:** `tests/test_atendimento_humano.py` (28 testes: expediente e a armadilha do
+  "amanhã" no sábado, as duas travas, oferta vencida, idempotência, trava do atendente,
+  janela de 24h com e sem template, silêncio do assistente, isolamento entre escolas).
+- **[Roadmap]** notificar o atendente por WhatsApp/e-mail (exige `Usuario.telefone`);
+  feriados no expediente.
 
 ## 7. Camada de LLM
 
@@ -750,8 +838,8 @@ número. Como ficou:
      de um responsável na caixa de outra escola;
    - **normaliza o `from`** para E.164 com `+` (a Meta o entrega sem), senão cada mensagem
      abriria uma `Conversa` nova e não casaria com o `Contato` cadastrado;
-   - delega a `ReceberMensagemRecebida`, herdando o limite de caracteres (§G1) e os avisos
-     temporizados (§C2);
+   - delega ao `Atendedor` — hoje `AtenderConversa` (tool use), herdando o limite de
+     caracteres (§G1), os avisos temporizados (§C2) e o encaminhamento à secretaria (§6j);
    - **responde ativamente**: a Meta exige `200 OK` e não aceita a resposta no corpo do webhook,
      então a resposta sai por uma **segunda chamada** à API (`MessageChannel.enviar_texto`), a
      partir do número da própria escola;
@@ -884,8 +972,9 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   ela virou uma segunda porta de entrada — a única sem login — que gravava conversa e
   gastava LLM. Removidos: `app/interfaces/api/chat.py`, os DTOs de mensagem, as configs
   `CHAT_DEMO_*`, `web/app/page.tsx` (agora redireciona para `/admin`), o link "Ver demo do
-  chat" da sidebar e os tokens de tema `--wa-*`. `AtenderConversa` **ficou sem ponto de
-  entrada** (o inbound usa `ReceberMensagemRecebida`) — ver a nota abaixo.
+  chat" da sidebar e os tokens de tema `--wa-*`. `AtenderConversa` ficou sem ponto de
+  entrada por um tempo; em 10/ago/2026 **passou a ser o caminho do inbound real** (§6j), e
+  `ReceberMensagemRecebida` foi removido no lugar dele.
 - [ ] `docker-compose.yml` com `db` / `backend` / `web` + migrations + seed.
 - [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e **fila**
   (throttling, retry com backoff e agendamento — §9a).
@@ -931,7 +1020,7 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] **Canal Meta WhatsApp Cloud API** como canal único do produto, com a **assinatura
   `X-Hub-Signature-256`** validada no webhook. Ver §9c e §9e.2.
 - [x] **Inbound real do WhatsApp** pelo webhook da Meta: mensagens recebidas são roteadas à
-  escola pelo `phone_number_id`, atendidas por `ReceberMensagemRecebida` e respondidas por uma
+  escola pelo `phone_number_id`, atendidas por `AtenderConversa` e respondidas por uma
   segunda chamada à API, a partir do número da própria escola. O produto passou a **atender**,
   não só disparar (`app/application/inbound_use_cases.py`). Ver §9e.1.
 - [ ] Integrações reais de `DocumentSource` (substituir mocks).
@@ -1007,14 +1096,29 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [~] **Log de auditoria de ações** — grava ações de **usuários logados** no painel (login,
   criação de usuário/grupo, disparo a grupo), com quem/o quê/quando/payload. Base para
   rastreabilidade/compliance (`web/app/admin/historico/auditoria/`).
-  - [ ] **Auditar as ações da LLM no inbound real.** O `llm.resposta` só era emitido por
-    `AtenderConversa`, o caso de uso do chat de demonstração — removido em 10/ago/2026. O
-    caminho que atende os responsáveis de verdade (`ReceberMensagemRecebida`, chamado por
-    `ProcessarInboundMeta`) nunca auditou, então hoje **nenhuma resposta da LLM aparece no
-    log**. Duas saídas: instrumentar `ReceberMensagemRecebida` (menor) ou ligar o inbound em
-    `AtenderConversa`, que além da auditoria traz o **tool use** (o LLM decide quando buscar
-    conhecimento ou recuperar documento, em vez do roteamento por palavra-chave) — este é o
-    único uso que sobrou para `AtenderConversa`, que ficou **sem ponto de entrada**.
+  - [x] **Auditar as ações da LLM no inbound real** (10/ago/2026). O `llm.resposta` só era
+    emitido por `AtenderConversa`, que atendia o chat de demonstração; o caminho real
+    (`ReceberMensagemRecebida`) nunca auditou. Resolvido pela via mais completa das duas:
+    o inbound **passou a usar `AtenderConversa`**, que além da auditoria traz o **tool use**
+    (o LLM decide quando buscar conhecimento, recuperar documento ou chamar a secretaria, em
+    vez do roteamento por palavra-chave). `ReceberMensagemRecebida` foi removido. Ver §6j.
+
+**Atendimento humano** _(ver §6j)_
+- [x] **Fila de atendimento da secretaria** — o assistente oferece atendimento humano
+  quando não resolve, o responsável confirma, e o caso cai numa fila no painel. A
+  secretaria responde **no mesmo fio de WhatsApp**, pelo número da escola.
+  (`app/application/atendimento_humano_use_cases.py`, `web/app/admin/atendimentos/`).
+- [x] **Inbound migrado para `AtenderConversa`** (tool use), fechando de quebra a auditoria
+  da LLM no caminho real; `ReceberMensagemRecebida` removido.
+- [x] **Expediente por escola** (`Tenant.expediente_*`) governando o que o assistente
+  promete ao responsável. **Falta:** feriados/recesso.
+- [x] **Tela de usuários da secretaria** (`web/app/admin/usuarios/`) — antes só existia a API.
+- [ ] **Notificar o atendente por WhatsApp/e-mail** — hoje a notificação é in-app (badge com
+  polling na sidebar). Exige um telefone no `Usuario`.
+- [ ] **Aprovar o template `retomada_atendimento` na Meta** e preencher
+  `TEMPLATE_RETOMADA_ATENDIMENTO`: sem ele, conversa com mais de 24h não pode ser
+  respondida (o painel recusa com erro explícito, §A9). É um passo manual no WhatsApp
+  Manager.
 
 **Limpeza de UI (remoções)**
 - [x] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"
@@ -1093,12 +1197,10 @@ sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escop
   `broadcast.grupo.enviar`). Casos de uso `RegistrarAuditoria`/`ListarAuditoria`
   (`app/application/auditoria_use_cases.py`); auditar é **tolerante a falhas** (nunca derruba
   a ação auditada). Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
-  - ⚠️ **Ações da LLM não estão sendo auditadas.** O `llm.resposta` (pergunta/resposta
-    resumidas, fontes, documentos) é gravado por `AtenderConversa`, que era o caso de uso do
-    chat de demonstração; o inbound real do WhatsApp passa por `ReceberMensagemRecebida`, que
-    **não audita**. Com o demo removido em 10/ago/2026, o `ator="llm"` deixou de aparecer no
-    log. Fechar isso é instrumentar `ReceberMensagemRecebida` (ou passar o inbound a usar
-    `AtenderConversa`) — ver o roadmap §12a.
+  - ✅ **Ações da LLM auditadas no inbound real** (10/ago/2026): o inbound passou a usar
+    `AtenderConversa`, que grava `llm.resposta` (pergunta/resposta resumidas, fontes,
+    documentos) com `ator="llm"`. As ações da secretaria na fila de atendimento humano
+    (§6j) também entram, como `atendimento.assumir` / `.responder` / `.resolver`.
 
 ---
 

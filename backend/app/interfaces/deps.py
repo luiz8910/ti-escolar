@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.admin_use_cases import EnviarBroadcastParaGrupo
 from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.tenant_use_cases import NotificarLicencasAVencer
+from app.application.atendimento_humano_use_cases import (
+    MesaDeAtendimento,
+    ResponderAtendimento,
+)
 from app.application.use_cases import (
     AtenderConversa,
     EnviarBroadcast,
-    ReceberMensagemRecebida,
     RecuperarEEnviarDocumento,
-    ResponderDuvida,
 )
 from app.config import Settings, get_settings
 from app.domain.ports import LLMProvider, MessageChannel
@@ -37,6 +39,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlUsuarioRepository,
 )
 from app.infrastructure.db.repositories_comunicacao import (
+    SqlAtendimentoHumanoRepository,
     SqlAvisoTemporizadoRepository,
     SqlCotaImpressaoRepository,
     SqlMediacaoRepository,
@@ -89,25 +92,12 @@ def get_settings_dep() -> Settings:
     return get_settings()
 
 
-def get_receber_mensagem(
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings_dep),
-) -> ReceberMensagemRecebida:
-    embedder = criar_embedder(settings)
-    llm = criar_llm(settings)
-    canal = criar_canal(settings)
-    store = PgVectorStore(session)
-
-    prompts = SqlPromptTenantRepository(session)
-    responder = ResponderDuvida(embedder=embedder, store=store, llm=llm, prompts=prompts)
-    documentos = RecuperarEEnviarDocumento(source=MockDocumentSource(), canal=canal)
-    conversas = SqlConversaRepository(session)
-    return ReceberMensagemRecebida(
-        conversas=conversas,
-        responder=responder,
-        documentos=documentos,
-        avisos=SqlAvisoTemporizadoRepository(session),
-        max_chars=settings.mensagem_pai_max_chars,
+def get_mesa_atendimento(session: AsyncSession) -> MesaDeAtendimento:
+    """Atendimento humano (§6j) — o que o assistente usa para chamar a secretaria."""
+    return MesaDeAtendimento(
+        atendimentos=SqlAtendimentoHumanoRepository(session),
+        tenants=SqlTenantRepository(session),
+        contatos=SqlContatoRepository(session),
     )
 
 
@@ -118,7 +108,10 @@ def get_processar_inbound_meta(
     """Inbound do webhook da Meta: roteia a mensagem à escola e responde por ela (§9e.1)."""
     return ProcessarInboundMeta(
         tenants=SqlTenantRepository(session),
-        receber=get_receber_mensagem(session=session, settings=settings),
+        # O inbound real atende por ``AtenderConversa`` (tool use): é o modelo que decide
+        # buscar conhecimento, recuperar documento ou chamar a secretaria — e é esse
+        # caminho que registra a resposta da LLM na auditoria (§13).
+        atender=get_atender_conversa(session=session, settings=settings),
         canal=criar_canal(settings),
         atendimentos=_atendimentos_inbound,
         controle_taxa=_controle_taxa,
@@ -148,6 +141,8 @@ def get_atender_conversa(
         prompts=SqlPromptTenantRepository(session),
         auditoria=SqlAuditLogRepository(session),
         avisos=SqlAvisoTemporizadoRepository(session),
+        mesa=get_mesa_atendimento(session),
+        max_chars=settings.mensagem_pai_max_chars,
     )
 
 
@@ -311,6 +306,27 @@ def get_solicitacao_interna_repo(
     session: AsyncSession = Depends(get_session),
 ) -> SqlSolicitacaoInternaRepository:
     return SqlSolicitacaoInternaRepository(session)
+
+
+def get_atendimento_humano_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAtendimentoHumanoRepository:
+    return SqlAtendimentoHumanoRepository(session)
+
+
+def get_responder_atendimento(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ResponderAtendimento:
+    """Resposta da secretaria ao responsável, pelo número da própria escola (§6j)."""
+    return ResponderAtendimento(
+        atendimentos=SqlAtendimentoHumanoRepository(session),
+        conversas=SqlConversaRepository(session),
+        canal=criar_canal(settings),
+        tenants=SqlTenantRepository(session),
+        templates=SqlTemplateRepository(session),
+        template_retomada=settings.template_retomada_atendimento,
+    )
 
 
 def get_mediacao_repo(
