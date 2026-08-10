@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.infrastructure.db.session import SessionLocal
+from app.infrastructure.factories import canal_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
 from app.interfaces.api import (
     admin,
@@ -38,6 +39,13 @@ from app.interfaces.middleware import ContextoRequisicaoMiddleware, registrar_ha
 
 settings = get_settings()
 
+# Único texto do aviso, para o log do boot e o /health dizerem a mesma coisa.
+_MOTIVO_CANAL_DEGRADADO = (
+    "MESSAGE_CHANNEL=meta sem META_ACCESS_TOKEN: a aplicação subiu no canal demo. "
+    "Nenhuma mensagem chega ao WhatsApp — o inbound é atendido, cobra LLM e a resposta "
+    "se perde. Configure o token do usuário do sistema (docs/producao-whatsapp.md §4)."
+)
+
 _coletor = ColetorDeLogs(
     capacidade=settings.log_fila_capacidade,
     nivel_minimo=logging.getLevelName(settings.log_nivel_persistido.upper()),
@@ -59,6 +67,10 @@ async def lifespan(_: FastAPI):
     if settings.log_persistir:
         logging.getLogger().addHandler(_coletor)
         _gravador.iniciar()
+    if canal_efetivo(settings) != settings.message_channel:
+        # Um deploy que pede "meta" e recebe "demo" não falha em lugar nenhum: as mensagens
+        # são aceitas e descartadas em memória. Gritar no boot é a única chance de alguém ver.
+        logging.getLogger("canal").error(_MOTIVO_CANAL_DEGRADADO)
     try:
         yield
     finally:
@@ -124,8 +136,19 @@ app.include_router(webhook.router)
 @app.get("/health", tags=["infra"])
 async def health() -> dict:
     """Liveness: o processo está de pé. Não toca no banco de propósito — se o Postgres
-    cair, derrubar também o processo (que o Render reiniciaria em laço) só piora."""
-    return {"status": "ok", "llm": settings.llm_provider, "canal": settings.message_channel}
+    cair, derrubar também o processo (que o Render reiniciaria em laço) só piora.
+
+    ``canal`` é o adaptador **efetivo**, não o valor de ``MESSAGE_CHANNEL``: com a env em
+    ``meta`` e sem token a aplicação sobe falando pelo canal demo, e ecoar a env aqui
+    afirmaria que o WhatsApp está no ar enquanto nenhuma mensagem sai. Quando os dois
+    divergem o corpo diz qual foi pedido e por quê caiu.
+    """
+    efetivo = canal_efetivo(settings)
+    corpo = {"status": "ok", "llm": settings.llm_provider, "canal": efetivo}
+    if efetivo != settings.message_channel:
+        corpo["canal_configurado"] = settings.message_channel
+        corpo["canal_alerta"] = _MOTIVO_CANAL_DEGRADADO
+    return corpo
 
 
 @app.get("/health/pronto", tags=["infra"])

@@ -70,6 +70,7 @@ def test_sem_app_secret_nada_e_aceito():
 def _config(**over) -> ConfiguracaoSeguranca:
     base = dict(
         canal="meta",
+        meta_access_token_definido=True,
         meta_validate_signature=True,
         meta_app_secret_definido=True,
         meta_verify_token_padrao=False,
@@ -96,6 +97,25 @@ def test_ambiente_endurecido_nao_tem_alertas_de_configuracao():
     postura = AvaliarPosturaSeguranca().executar(config=_config())
     assert postura.total_atencao == 0
     assert _medida(postura, "webhook_assinatura").status is StatusMedida.ATIVA
+
+
+def test_canal_meta_sem_token_vira_atencao():
+    """O caso híbrido: pediu "meta", subiu "demo" — e nada disso dá erro em runtime."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(canal="meta", meta_access_token_definido=False)
+    )
+    medida = _medida(postura, "canal_efetivo")
+    assert medida.status is StatusMedida.ATENCAO
+    assert "META_ACCESS_TOKEN" in medida.detalhe
+    assert not postura.pronto_para_producao
+
+
+def test_canal_demo_proposital_nao_e_alerta():
+    """Rodar em demo de propósito (vitrine) não pode virar alarme falso."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(canal="demo", meta_access_token_definido=False)
+    )
+    assert _medida(postura, "canal_efetivo").status is StatusMedida.ATIVA
 
 
 def test_assinatura_desligada_vira_atencao():

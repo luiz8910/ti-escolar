@@ -21,6 +21,7 @@ from app.application.seguranca_use_cases import (
 )
 from app.config import Settings
 from app.domain.entities import Usuario
+from app.infrastructure.factories import canal_efetivo
 from app.interfaces.api.admin import _exige_super_admin, usuario_autenticado
 from app.interfaces.deps import get_settings_dep
 from app.interfaces.dto import (
@@ -35,7 +36,9 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 def _config_atual(settings: Settings) -> ConfiguracaoSeguranca:
     """Traduz as ``Settings`` em sinais booleanos — o caso de uso não vê env nem segredo."""
     return ConfiguracaoSeguranca(
+        # O canal **pedido**: é a divergência entre ele e o token que a medida detecta.
         canal=settings.message_channel,
+        meta_access_token_definido=bool(settings.meta_access_token),
         meta_validate_signature=settings.meta_validate_signature,
         meta_app_secret_definido=bool(settings.meta_app_secret),
         meta_verify_token_padrao=(
@@ -95,6 +98,8 @@ async def obter_postura_seguranca(
         checklist_pendentes=postura.checklist_pendentes,
         pronto_para_producao=postura.pronto_para_producao,
         ambiente=settings.app_env,
-        canal=settings.message_channel,
+        # O canal **efetivo**: exibir a env aqui afirmaria "meta" numa instância que subiu
+        # no demo por falta de token, que é justamente o que a medida canal_efetivo acusa.
+        canal=canal_efetivo(settings),
         gerado_em=datetime.now(timezone.utc),
     )
