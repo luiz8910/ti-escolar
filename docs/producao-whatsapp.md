@@ -19,11 +19,14 @@
 | **App publicado** ("Ao vivo") | ✅ **Publicado** (06/ago/2026) — ver §1.1 |
 | **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
 | **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
+| **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
-| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ⬜ Pendente — **bloqueia ligar o canal**, ver §6.1.1 |
-| **Webhook apontado na Meta** (callback + campo `messages`) | ⬜ Pendente |
-| **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ⬜ Pendente — o serviço responde `canal: demo` |
+| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado e no Render** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management` |
+| **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Configurado** (10/ago/2026) — callback `https://ti-escolar.onrender.com/api/webhook/meta`, handshake verificado, campo `messages` **Assinado** |
+| **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ✅ **Ligado** (10/ago/2026) — `/health` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
+| **WABA inscrita no app** (`subscribed_apps`) | ✅ **Feita** (10/ago/2026) — sem interface no console, ver §5.1 |
+| **Inbound real ponta a ponta** | ✅ **Funcionando** (10/ago/2026) — mensagem de WhatsApp real recebida, respondida pelo bot e registrada no histórico da escola |
 | **Templates aprovados** | ⬜ Pendente |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
@@ -174,23 +177,103 @@ Adicionar cartão **na WABA de produção** (a de teste não gera cobrança e n�
 O token exibido na tela de Configuração da API **expira em 24h** e não serve para produção.
 
 1. Business Manager → **Usuários do sistema** → criar um system user com papel **admin**.
-2. Atribuir a ele o **app** e a **WABA de produção**, com controle total.
+   O primeiro clique em *Adicionar* pede o **aceite da Política de Não Discriminação** da Meta,
+   em nome da empresa — é um passo só, mas é um aceite legal, não um diálogo de UI.
+2. Atribuir a ele o **app** e a **WABA de produção**, com controle total. As duas WABAs aparecem
+   na mesma lista: escolher **`TI-Escolar`**, não a *Test WhatsApp Business Account*.
 3. Gerar token com as permissões **`whatsapp_business_messaging`** e
-   **`whatsapp_business_management`**.
+   **`whatsapp_business_management`**. Existe também `whatsapp_business_manage_events`, que o
+   produto **não usa** — deixar desmarcada.
 4. Guardar na hora — o valor não é exibido de novo. Vai para `META_ACCESS_TOKEN` no Render.
+
+**Expiração: escolhemos `Nunca`** (a Meta sugere 60 dias). O motivo é o formato do produto: o
+WhatsApp é o **canal único**, não há rotação de token automatizada e **não há alerta ativo**
+(item 8 do checklist §15 segue ⚠️). Um token de 60 dias seria uma quebra agendada que ninguém
+seria avisado de que chegou — o erro apareceria só no painel de Logs, que ninguém abre sem
+motivo. O preço dessa escolha é que um token vazado vale para sempre: a única revogação é o
+botão **Anular tokens** na tela do usuário do sistema. Guardar no gerenciador de senhas, junto
+com o PIN de 6 dígitos do número (§2, passo 5).
+
+> **Feito em 10/ago/2026:** system user `ti_escolar_backend`, id `61592805104592`, Admin, com o
+> app `3140942352961209` e a WABA `2116419572321695` atribuídos.
 
 ---
 
 ## 5. Webhook
 
-Em **WhatsApp → Configuração → Webhooks**:
+Caminho no console: app → **Casos de uso** → *Conectar no WhatsApp* → **Etapa 2. Configuração de
+produção** → **Configurar webhooks**.
 
 - **Callback URL**: `https://<backend-no-render>/api/webhook/meta`
-- **Verify token**: o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN`
+- **Verify token**: o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN` → **Verificar e salvar**
 - **Assinar o campo `messages`** — traz mensagens recebidas *e* status de entrega no mesmo
   envelope.
 
-O `GET` de verificação já está implementado e responde ao `hub.challenge`.
+O `GET` de verificação já está implementado e responde ao `hub.challenge`. Quando o handshake
+passa, o sub-passo *Configurar webhooks* fica ✅ verde.
+
+**A assinatura é um segundo passo, e ele mente.** A lista *Campos do webhook* só aparece depois
+de salvar a URL, e nela o toggle de `messages` **muda de cor sem necessariamente salvar**: em
+10/ago o primeiro clique acendeu o botão e **nenhuma requisição saiu** — depois de recarregar, o
+campo estava de volta em *Cancelou a assinatura*. No clique que funcionou houve um
+`POST /async/webhooks/fields/edit/` com `200` e o rótulo virou **Assinado**.
+
+Como isso importa: URL salva **sem** o campo assinado deixa a tela verde e o endpoint mudo —
+não chega mensagem nem status de entrega, e nada dá erro. **Sempre recarregue a página e confira
+que `messages` está como "Assinado"**; ver o toggle azul logo após o clique não é prova.
+
+> **Feito em 10/ago/2026** para `https://ti-escolar.onrender.com/api/webhook/meta` — handshake
+> verificado e `messages` **Assinado**, confirmado após reload.
+
+### 5.1 Inscrever a WABA no app — o passo que não está no console
+
+**Assinar o campo `messages` não basta.** São duas coisas diferentes, e só a primeira tem
+interface:
+
+| | O que declara | Onde |
+|---|---|---|
+| Assinar o campo `messages` | *este app quer eventos desse tipo* | console (§5) |
+| **Inscrever a WABA no app** | *esta conta manda os eventos dela para este app* | **só pela Graph API** |
+
+Faltando a segunda, a Meta **não envia nada e não reporta erro em lugar nenhum**: console todo
+verde, webhook configurado, número Conectado, e o endpoint nunca é chamado. É o mesmo padrão
+silencioso do app não publicado (§1.1) e do canal sem token (§6.1.1) — a terceira vez que ele
+aparece neste go-live.
+
+```bash
+# conferir (pode devolver "(#200) Provide valid app ID" mesmo estando tudo bem — o GET é
+# menos confiável que o POST aqui; não conclua nada por ele)
+curl -s "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer $(cat ~/.meta_token)"
+
+# inscrever — é esta chamada que resolve
+curl -s -X POST "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer $(cat ~/.meta_token)"
+# {"success":true}
+```
+
+Use o `META_ACCESS_TOKEN` (o do system user); é a permissão `whatsapp_business_management` que
+autoriza. Guarde-o num arquivo (`~/.meta_token`, `chmod 600`) em vez de passar na linha de
+comando — assim ele não fica no histórico do shell.
+
+**É por WABA.** Ao abrir uma segunda WABA (§9e.3, ao passar de 20 números), repita a chamada,
+senão as escolas daquela WABA nascem sem inbound.
+
+> **Feito em 10/ago/2026** na WABA `2116419572321695` → `{"success":true}`.
+
+#### Diagnóstico: o botão *Teste* separa as causas
+
+Cada campo na lista *Campos do webhook* tem um link **Teste** → *Enviar para meu servidor*, que
+dispara um POST assinado com um payload de exemplo. Vale mais do que parece, porque **separa
+"nosso código está errado" de "a Meta não está enviando"**:
+
+- **chega no log** → URL, `META_APP_SECRET` e o parsing estão certos. O payload de exemplo traz
+  `phone_number_id: "123456123"`, então o esperado é `Inbound Meta descartado: nenhuma escola
+  cadastrada com o phone_number_id` — um descarte limpo prova o caminho inteiro;
+- **não chega** → o problema está antes de nós: assinatura da WABA (§5.1), campo não assinado
+  ou URL errada.
+
+Foi assim que se achou o §5.1 em 10/ago: o teste chegou com `200`, a mensagem real não chegava.
 
 **Segurança (obrigatório):** copiar o **app secret** (Meta for Developers → Configurações →
 Básico) para `META_APP_SECRET` e ligar `META_VALIDATE_SIGNATURE=true`. Sem isso o endpoint
@@ -226,19 +309,25 @@ em execução e sinaliza segredo default, assinatura desligada e CORS liberado (
 
 | Sinal | Medido | Leitura |
 |---|---|---|
-| `GET /health` | `{"canal": "demo"}` | **`MESSAGE_CHANNEL` ainda é `demo`** — nada sai pela Meta enquanto não virar `meta`, mesmo com número inscrito |
+| `GET /health` | `{"canal": "meta"}` **(10/ago)** | ✅ canal ligado. Antes era `demo`. Como o campo é o adaptador **efetivo** (§6.1.1), `meta` aqui prova que o `META_ACCESS_TOKEN` está presente e válido o bastante para instanciar o canal — não é só o eco da env |
 | `GET /api/webhook/meta` com `verify_token=changeme` | `403` | `META_WEBHOOK_VERIFY_TOKEN` já foi trocado pelo valor de exemplo ✅ |
 | `POST /api/webhook/meta` sem `X-Hub-Signature-256` | `403` | `META_VALIDATE_SIGNATURE=true` ligado ✅ |
 | `GET /health/pronto` | `200 {"banco":"ok"}` | **o deploy alcançou a `main`** ✅ — esse endpoint entrou em 29/jul (CLAUDE.md §16); com ele no ar, o painel de Logs e o rate limiting também estão |
 
 O `/health/pronto` respondia `404` na primeira medição do dia e passou a responder `200` na
-segunda: o serviço estava desatualizado e alcançou a `main` sozinho. **Confirme o commit em
-execução no Render antes de configurar o webhook na Meta** — apontar o webhook para um serviço
-atrasado esconde o problema, porque o handshake passa e o inbound cai numa versão antiga do
-código.
+segunda. **Não foi sozinho:** o Render deste serviço **não tem Auto-Deploy** — todo evento na
+aba *Events* diz *"Manually triggered by you via Dashboard"*. O que entrou no ar foi um deploy
+manual do PR #36, disparado no meio do dia.
 
-Restou, portanto, **uma única variável a mexer no Render**: `MESSAGE_CHANNEL`. E ela tem uma
-ordem obrigatória, abaixo.
+É a explicação de por que o serviço vive atrás da `main`, e a razão de **mergear não ser
+publicar** neste projeto: depois de todo merge é preciso ir ao painel → **Manual Deploy** →
+*Deploy latest commit*. **Confirme o commit em execução no Render antes de configurar o webhook
+na Meta** — apontar o webhook para um serviço atrasado esconde o problema, porque o handshake
+passa e o inbound cai numa versão antiga do código.
+
+Em 10/ago/2026 o `META_ACCESS_TOKEN` e o `MESSAGE_CHANNEL=meta` entraram no Render, nessa ordem,
+e o `/health` passou a responder `canal: meta`. **Salvar uma variável no Render dispara redeploy
+automático** — é a única automação de deploy que este serviço tem; o push à `main`, não.
 
 #### 6.1.1 `META_ACCESS_TOKEN` antes de `MESSAGE_CHANNEL=meta` — falha silenciosa
 
@@ -316,6 +405,16 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 7. Nos logs, `webhook.meta` não deve mostrar `Inbound Meta descartado`; se mostrar, o
    `phone_number_id` daquele número não está cadastrado em nenhuma escola.
 
+> **Passo 5 executado com sucesso em 10/ago/2026** — primeira conversa real do produto pelo
+> WhatsApp: mensagem enviada ao número da escola, **respondida pelo bot** e registrada em
+> `/admin/historico/conversas`. O ciclo inbound completo (webhook → assinatura → roteamento por
+> `phone_number_id` → RAG/LLM → resposta pelo número da escola → histórico) está **provado em
+> ambiente real**, não só em teste.
+>
+> Faltam do roteiro os passos **2 e 3** (broadcast por template), que dependem da forma de
+> pagamento (§3) e de templates aprovados (§7); e o **6**, que só faz sentido com uma segunda
+> escola cadastrada.
+
 ---
 
 ## 10. Checklist consolidado
@@ -328,17 +427,26 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)
 - [ ] Nome de exibição aprovado
 - [ ] Forma de pagamento na WABA de produção
-- [ ] Token de usuário do sistema gerado e no Render **(antes de ligar o canal — §6.1.1)**
-- [ ] Webhook configurado e campo `messages` assinado
-- [ ] **`MESSAGE_CHANNEL=meta` no Render** — o último passo, depois do token
+- [x] Token de usuário do sistema gerado e no Render (10/ago — `ti_escolar_backend`, sem
+      expiração; ver §4 para o porquê de `Nunca`)
+- [x] Webhook configurado e **campo `messages` assinado** (10/ago) — salvar a URL **não**
+      inscreve em nada, e o toggle acende sem salvar: confira após recarregar (§5)
+- [x] **WABA inscrita no app** via `POST /{waba-id}/subscribed_apps` (10/ago) — passo **sem
+      interface no console** e sem o qual a Meta não envia nada, calada (§5.1). Repetir a cada
+      WABA nova
+- [x] **`MESSAGE_CHANNEL=meta` no Render** (10/ago) — `/health` responde `canal: meta`
 - [x] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true` (medido de fora: `POST` sem assinatura → 403)
 - [ ] `JWT_SECRET` trocado · [x] `META_WEBHOOK_VERIFY_TOKEN` trocado (`changeme` → 403)
 - [ ] `/admin/seguranca` sem itens em Atenção
 - [ ] Templates aprovados com nome/idioma batendo com o banco
 - [x] **`Tenant.meta_phone_number_id` implementado** (multi-tenant de envio + roteamento inbound)
 - [x] **Inbound do webhook implementado** (chatbot atendendo)
-- [ ] **`phone_number_id` cadastrado na escola** (por escola — sem ele o inbound é descartado)
-- [ ] Teste de fumaça por escola
+- [x] **`phone_number_id` cadastrado na escola** (10/ago/2026 — `1231892910008454`, junto com o
+      `whatsapp_numero` `+55 15 99753-6978`). Continua sendo **por escola**: cada nova escola
+      precisa do seu, senão o inbound dela é descartado
+- [~] Teste de fumaça por escola — **inbound provado em real** (10/ago: mensagem recebida,
+      respondida e no histórico). Falta a parte de **outbound**, que depende de pagamento e
+      templates, e o teste cruzado entre duas escolas (§9)
 
 ---
 
