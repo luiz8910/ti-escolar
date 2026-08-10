@@ -223,6 +223,56 @@ que `messages` está como "Assinado"**; ver o toggle azul logo após o clique n�
 > **Feito em 10/ago/2026** para `https://ti-escolar.onrender.com/api/webhook/meta` — handshake
 > verificado e `messages` **Assinado**, confirmado após reload.
 
+### 5.1 Inscrever a WABA no app — o passo que não está no console
+
+**Assinar o campo `messages` não basta.** São duas coisas diferentes, e só a primeira tem
+interface:
+
+| | O que declara | Onde |
+|---|---|---|
+| Assinar o campo `messages` | *este app quer eventos desse tipo* | console (§5) |
+| **Inscrever a WABA no app** | *esta conta manda os eventos dela para este app* | **só pela Graph API** |
+
+Faltando a segunda, a Meta **não envia nada e não reporta erro em lugar nenhum**: console todo
+verde, webhook configurado, número Conectado, e o endpoint nunca é chamado. É o mesmo padrão
+silencioso do app não publicado (§1.1) e do canal sem token (§6.1.1) — a terceira vez que ele
+aparece neste go-live.
+
+```bash
+# conferir (pode devolver "(#200) Provide valid app ID" mesmo estando tudo bem — o GET é
+# menos confiável que o POST aqui; não conclua nada por ele)
+curl -s "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer $(cat ~/.meta_token)"
+
+# inscrever — é esta chamada que resolve
+curl -s -X POST "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer $(cat ~/.meta_token)"
+# {"success":true}
+```
+
+Use o `META_ACCESS_TOKEN` (o do system user); é a permissão `whatsapp_business_management` que
+autoriza. Guarde-o num arquivo (`~/.meta_token`, `chmod 600`) em vez de passar na linha de
+comando — assim ele não fica no histórico do shell.
+
+**É por WABA.** Ao abrir uma segunda WABA (§9e.3, ao passar de 20 números), repita a chamada,
+senão as escolas daquela WABA nascem sem inbound.
+
+> **Feito em 10/ago/2026** na WABA `2116419572321695` → `{"success":true}`.
+
+#### Diagnóstico: o botão *Teste* separa as causas
+
+Cada campo na lista *Campos do webhook* tem um link **Teste** → *Enviar para meu servidor*, que
+dispara um POST assinado com um payload de exemplo. Vale mais do que parece, porque **separa
+"nosso código está errado" de "a Meta não está enviando"**:
+
+- **chega no log** → URL, `META_APP_SECRET` e o parsing estão certos. O payload de exemplo traz
+  `phone_number_id: "123456123"`, então o esperado é `Inbound Meta descartado: nenhuma escola
+  cadastrada com o phone_number_id` — um descarte limpo prova o caminho inteiro;
+- **não chega** → o problema está antes de nós: assinatura da WABA (§5.1), campo não assinado
+  ou URL errada.
+
+Foi assim que se achou o §5.1 em 10/ago: o teste chegou com `200`, a mensagem real não chegava.
+
 **Segurança (obrigatório):** copiar o **app secret** (Meta for Developers → Configurações →
 Básico) para `META_APP_SECRET` e ligar `META_VALIDATE_SIGNATURE=true`. Sem isso o endpoint
 aceita qualquer POST e um terceiro pode forjar status de entrega — mascarando como `delivered`
@@ -369,6 +419,9 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
       expiração; ver §4 para o porquê de `Nunca`)
 - [x] Webhook configurado e **campo `messages` assinado** (10/ago) — salvar a URL **não**
       inscreve em nada, e o toggle acende sem salvar: confira após recarregar (§5)
+- [x] **WABA inscrita no app** via `POST /{waba-id}/subscribed_apps` (10/ago) — passo **sem
+      interface no console** e sem o qual a Meta não envia nada, calada (§5.1). Repetir a cada
+      WABA nova
 - [x] **`MESSAGE_CHANNEL=meta` no Render** (10/ago) — `/health` responde `canal: meta`
 - [x] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true` (medido de fora: `POST` sem assinatura → 403)
 - [ ] `JWT_SECRET` trocado · [x] `META_WEBHOOK_VERIFY_TOKEN` trocado (`changeme` → 403)
