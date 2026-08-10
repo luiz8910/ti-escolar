@@ -883,8 +883,11 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     insistir**. Registrar o número exige ainda um **PIN de 6 dígitos** que a Meta não reexibe —
     guardado fora do repositório. Ver `docs/producao-whatsapp.md` §2 (passo 5) e §2.1.
   - [ ] **Ligar o canal em homologação**: o Render responde `{"canal": "demo"}` — `MESSAGE_CHANNEL`
-    ainda não é `meta` — e não serve `/health/pronto`, ou seja, **o deploy está atrás da `main`**.
-    Medições em `docs/producao-whatsapp.md` §6.1.
+    ainda não é `meta`. O deploy **já alcançou a `main`** (o `/health/pronto`, que era 404 na
+    manhã de 09/ago, responde), então restou **uma única env var**. Mas ela vem **depois** do
+    `META_ACCESS_TOKEN`: sem token, `criar_canal` cai no `DemoMessageChannel` **sem erro**, e o
+    inbound passa a ser atendido e cobrado na LLM com a resposta indo para o vazio. Medições e a
+    ordem obrigatória em `docs/producao-whatsapp.md` §6.1 e §6.1.1.
   - [x] `Tenant.meta_phone_number_id` (migration `0024_tenant_meta_phone_number_id`, único por
     índice UNIQUE parcial) + `TenantRepository.por_meta_phone_number_id` + campo no painel.
   - [x] `MetaMessageChannel` honrando o `remetente` (URL montada por envio), com

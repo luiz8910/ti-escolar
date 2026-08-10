@@ -20,6 +20,10 @@
 | **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
 | **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
+| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ⬜ Pendente — **bloqueia ligar o canal**, ver §6.1.1 |
+| **Webhook apontado na Meta** (callback + campo `messages`) | ⬜ Pendente |
+| **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ⬜ Pendente — o serviço responde `canal: demo` |
+| **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **Templates aprovados** | ⬜ Pendente |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
@@ -225,11 +229,37 @@ em execução e sinaliza segredo default, assinatura desligada e CORS liberado (
 | `GET /health` | `{"canal": "demo"}` | **`MESSAGE_CHANNEL` ainda é `demo`** — nada sai pela Meta enquanto não virar `meta`, mesmo com número inscrito |
 | `GET /api/webhook/meta` com `verify_token=changeme` | `403` | `META_WEBHOOK_VERIFY_TOKEN` já foi trocado pelo valor de exemplo ✅ |
 | `POST /api/webhook/meta` sem `X-Hub-Signature-256` | `403` | `META_VALIDATE_SIGNATURE=true` ligado ✅ |
-| `GET /health/pronto` | `404` | **o deploy está atrás da `main`**: esse endpoint entrou em 29/jul (CLAUDE.md §16) e não está no ar — o painel de Logs e o rate limiting provavelmente também não |
+| `GET /health/pronto` | `200 {"banco":"ok"}` | **o deploy alcançou a `main`** ✅ — esse endpoint entrou em 29/jul (CLAUDE.md §16); com ele no ar, o painel de Logs e o rate limiting também estão |
 
-Os dois primeiros itens são pré-requisito do go-live: **apontar o webhook da Meta para um serviço
-desatualizado esconde o problema** (o handshake passa, o inbound cai numa versão antiga do código).
-Confirme o commit em execução no Render antes de configurar o webhook na Meta.
+O `/health/pronto` respondia `404` na primeira medição do dia e passou a responder `200` na
+segunda: o serviço estava desatualizado e alcançou a `main` sozinho. **Confirme o commit em
+execução no Render antes de configurar o webhook na Meta** — apontar o webhook para um serviço
+atrasado esconde o problema, porque o handshake passa e o inbound cai numa versão antiga do
+código.
+
+Restou, portanto, **uma única variável a mexer no Render**: `MESSAGE_CHANNEL`. E ela tem uma
+ordem obrigatória, abaixo.
+
+#### 6.1.1 `META_ACCESS_TOKEN` antes de `MESSAGE_CHANNEL=meta` — falha silenciosa
+
+`criar_canal` (`app/infrastructure/factories.py`) só devolve o `MetaMessageChannel` quando
+**`MESSAGE_CHANNEL=meta` *e* `META_ACCESS_TOKEN` está preenchido**. Faltando o token, ele **cai
+no `DemoMessageChannel` sem erro nenhum** — o processo sobe normalmente. Ligar o canal antes de
+ter o token (§4) produz o pior estado possível do go-live:
+
+- o **inbound é atendido e cobrado**: `ProcessarInboundMeta` roteia a mensagem, chama a LLM e
+  marca o `RegistroAtendimento` como `concluida` — mas a resposta sai pelo canal demo e **nunca
+  chega ao responsável**. Para o painel de Logs (§16) a saúde continua verde: zero erro, zero
+  atendimento falho;
+- o **outbound grava id externo falso**: o demo devolve `demo-N` como id da mensagem, que jamais
+  casa com um `wamid` de webhook. Todos os destinatários ficam presos em `ENVIADO` sem
+  confirmação e a não-entrega reativa (§9b) passa a acusar **a escola inteira** como não
+  recebida.
+
+Por isso a ordem é **§4 (token) → §5 (webhook) → `MESSAGE_CHANNEL=meta`**, e não o contrário.
+Desde 09/ago/2026 o `/health` devolve o canal **efetivo** (o adaptador que foi realmente
+instanciado), não o valor da env: se ele disser `"canal": "demo"` com a env em `meta`, o token
+está faltando. O painel `/admin/seguranca` sinaliza o mesmo caso.
 
 ### 6.2 Número por escola (multi-tenant)
 
@@ -273,7 +303,9 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 
 ## 9. Teste de fumaça pós go-live (por escola)
 
-1. `GET /health` responde `{"canal": "meta"}`.
+1. `GET /health` responde `{"canal": "meta"}`. É o canal **efetivo**, então `demo` aqui com a env
+   em `meta` significa `META_ACCESS_TOKEN` faltando (§6.1.1) — faça este passo **antes** dos
+   demais, senão eles falham sem dizer por quê.
 2. Enviar um **broadcast de teste** para um número próprio → chega pelo número **da escola**.
 3. Conferir em `/admin/historico/disparos` o status evoluindo para `delivered`/`read`.
 4. Forçar um webhook com assinatura inválida → deve responder **403** (valida §5).
@@ -293,12 +325,14 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [x] WABA de produção criada (id `2116419572321695`)
 - [x] Número registrado, **verificado e inscrito** (chip nosso) — `phone_number_id`
       `1231892910008454`; PIN de 6 dígitos guardado fora do repositório (§2, passo 5)
+- [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)
 - [ ] Nome de exibição aprovado
 - [ ] Forma de pagamento na WABA de produção
-- [ ] Token de usuário do sistema gerado e no Render
+- [ ] Token de usuário do sistema gerado e no Render **(antes de ligar o canal — §6.1.1)**
 - [ ] Webhook configurado e campo `messages` assinado
-- [ ] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true`
-- [ ] `JWT_SECRET` e `META_WEBHOOK_VERIFY_TOKEN` trocados
+- [ ] **`MESSAGE_CHANNEL=meta` no Render** — o último passo, depois do token
+- [x] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true` (medido de fora: `POST` sem assinatura → 403)
+- [ ] `JWT_SECRET` trocado · [x] `META_WEBHOOK_VERIFY_TOKEN` trocado (`changeme` → 403)
 - [ ] `/admin/seguranca` sem itens em Atenção
 - [ ] Templates aprovados com nome/idioma batendo com o banco
 - [x] **`Tenant.meta_phone_number_id` implementado** (multi-tenant de envio + roteamento inbound)
