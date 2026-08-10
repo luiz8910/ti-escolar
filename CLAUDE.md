@@ -892,12 +892,16 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     trocar chip nem método: o bloqueio era transitório, e a regra que vale é **esperar em vez de
     insistir**. Registrar o número exige ainda um **PIN de 6 dígitos** que a Meta não reexibe —
     guardado fora do repositório. Ver `docs/producao-whatsapp.md` §2 (passo 5) e §2.1.
-  - [ ] **Ligar o canal em homologação**: o Render responde `{"canal": "demo"}` — `MESSAGE_CHANNEL`
-    ainda não é `meta`. O deploy **já alcançou a `main`** (o `/health/pronto`, que era 404 na
-    manhã de 09/ago, responde), então restou **uma única env var**. Mas ela vem **depois** do
-    `META_ACCESS_TOKEN`: sem token, `criar_canal` cai no `DemoMessageChannel` **sem erro**, e o
-    inbound passa a ser atendido e cobrado na LLM com a resposta indo para o vazio. Medições e a
-    ordem obrigatória em `docs/producao-whatsapp.md` §6.1 e §6.1.1.
+  - [x] **Canal ligado e inbound provado em real** (10/ago/2026). O `/health` responde
+    `{"canal": "meta"}` e a **primeira conversa real do produto** aconteceu: mensagem de WhatsApp
+    ao número da escola → webhook → assinatura validada → roteamento por `phone_number_id` →
+    RAG/LLM → resposta pelo número da escola → registro em `/admin/historico/conversas`.
+    Três armadilhas silenciosas seguraram esse passo, todas registradas em
+    `docs/producao-whatsapp.md`: o **app não publicado** (§1.1), o **canal sem token** (§6.1.1 —
+    `criar_canal` cai no `DemoMessageChannel` sem erro) e a **WABA não inscrita no app**
+    (§5.1 — `POST /{waba-id}/subscribed_apps`, que não tem interface no console). Nas três, o
+    console fica verde e o sintoma é ausência de sinal. **Ainda falta o outbound real**
+    (pagamento na WABA + templates aprovados).
   - [x] `Tenant.meta_phone_number_id` (migration `0024_tenant_meta_phone_number_id`, único por
     índice UNIQUE parcial) + `TenantRepository.por_meta_phone_number_id` + campo no painel.
   - [x] `MetaMessageChannel` honrando o `remetente` (URL montada por envio), com

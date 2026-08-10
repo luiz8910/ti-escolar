@@ -25,6 +25,8 @@
 | **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Configurado** (10/ago/2026) — callback `https://ti-escolar.onrender.com/api/webhook/meta`, handshake verificado, campo `messages` **Assinado** |
 | **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ✅ **Ligado** (10/ago/2026) — `/health` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
+| **WABA inscrita no app** (`subscribed_apps`) | ✅ **Feita** (10/ago/2026) — sem interface no console, ver §5.1 |
+| **Inbound real ponta a ponta** | ✅ **Funcionando** (10/ago/2026) — mensagem de WhatsApp real recebida, respondida pelo bot e registrada no histórico da escola |
 | **Templates aprovados** | ⬜ Pendente |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
@@ -403,6 +405,16 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 7. Nos logs, `webhook.meta` não deve mostrar `Inbound Meta descartado`; se mostrar, o
    `phone_number_id` daquele número não está cadastrado em nenhuma escola.
 
+> **Passo 5 executado com sucesso em 10/ago/2026** — primeira conversa real do produto pelo
+> WhatsApp: mensagem enviada ao número da escola, **respondida pelo bot** e registrada em
+> `/admin/historico/conversas`. O ciclo inbound completo (webhook → assinatura → roteamento por
+> `phone_number_id` → RAG/LLM → resposta pelo número da escola → histórico) está **provado em
+> ambiente real**, não só em teste.
+>
+> Faltam do roteiro os passos **2 e 3** (broadcast por template), que dependem da forma de
+> pagamento (§3) e de templates aprovados (§7); e o **6**, que só faz sentido com uma segunda
+> escola cadastrada.
+
 ---
 
 ## 10. Checklist consolidado
@@ -432,7 +444,9 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [x] **`phone_number_id` cadastrado na escola** (10/ago/2026 — `1231892910008454`, junto com o
       `whatsapp_numero` `+55 15 99753-6978`). Continua sendo **por escola**: cada nova escola
       precisa do seu, senão o inbound dela é descartado
-- [ ] Teste de fumaça por escola
+- [~] Teste de fumaça por escola — **inbound provado em real** (10/ago: mensagem recebida,
+      respondida e no histórico). Falta a parte de **outbound**, que depende de pagamento e
+      templates, e o teste cruzado entre duas escolas (§9)
 
 ---
 
