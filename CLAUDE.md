@@ -951,7 +951,11 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   apontar `tiescolar.com.br` (hoje sem registro A/CNAME) — pré-requisito para reenviar a
   verificação da empresa na Meta.
 - [x] **Deploy automatizado**: são **três destinos**, um por camada —
-  **back-end (FastAPI) → Render** (Auto-Deploy nativo no push à `main`);
+  **back-end (FastAPI) → Render**, que **NÃO tem Auto-Deploy**: apesar do que esta linha
+  afirmava, todo evento na aba *Events* do serviço é *"Manually triggered by you via
+  Dashboard"*. **Mergear não publica o back-end** — depois do merge é preciso ir ao painel do
+  Render → **Manual Deploy** → *Deploy latest commit*, senão o serviço fica atrás da `main`
+  (foi o que aconteceu em 09/ago, quando `/health/pronto` respondia 404 em produção);
   **painel admin (`web/`) → Vercel**, que consome a API do Render;
   **landing page (`site/`) → Cloudflare Pages**, via `.github/workflows/site.yml` (§9d).
   O CI (`.github/workflows/ci.yml`) roda três jobs em PRs e na `main`, como portão de

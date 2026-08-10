@@ -232,10 +232,15 @@ em execução e sinaliza segredo default, assinatura desligada e CORS liberado (
 | `GET /health/pronto` | `200 {"banco":"ok"}` | **o deploy alcançou a `main`** ✅ — esse endpoint entrou em 29/jul (CLAUDE.md §16); com ele no ar, o painel de Logs e o rate limiting também estão |
 
 O `/health/pronto` respondia `404` na primeira medição do dia e passou a responder `200` na
-segunda: o serviço estava desatualizado e alcançou a `main` sozinho. **Confirme o commit em
-execução no Render antes de configurar o webhook na Meta** — apontar o webhook para um serviço
-atrasado esconde o problema, porque o handshake passa e o inbound cai numa versão antiga do
-código.
+segunda. **Não foi sozinho:** o Render deste serviço **não tem Auto-Deploy** — todo evento na
+aba *Events* diz *"Manually triggered by you via Dashboard"*. O que entrou no ar foi um deploy
+manual do PR #36, disparado no meio do dia.
+
+É a explicação de por que o serviço vive atrás da `main`, e a razão de **mergear não ser
+publicar** neste projeto: depois de todo merge é preciso ir ao painel → **Manual Deploy** →
+*Deploy latest commit*. **Confirme o commit em execução no Render antes de configurar o webhook
+na Meta** — apontar o webhook para um serviço atrasado esconde o problema, porque o handshake
+passa e o inbound cai numa versão antiga do código.
 
 Restou, portanto, **uma única variável a mexer no Render**: `MESSAGE_CHANNEL`. E ela tem uma
 ordem obrigatória, abaixo.
