@@ -52,6 +52,9 @@ class ConfiguracaoSeguranca:
     # Observabilidade: logs persistidos e por quantos dias.
     logs_persistidos: bool = False
     logs_retencao_dias: int = 0
+    # Token da Meta presente. Com ``canal`` diz se o WhatsApp está mesmo no ar: pedir "meta"
+    # sem token faz a aplicação subir no canal demo, calada.
+    meta_access_token_definido: bool = False
 
 
 # Segredos que vêm no .env.example e nunca devem sobreviver ao deploy.
@@ -295,7 +298,44 @@ class AvaliarPosturaSeguranca:
                 ),
                 referencia="app/interfaces/api/webhook.py · verificar()",
             ),
+            self._canal_efetivo(c),
         ]
+
+    def _canal_efetivo(self, c: ConfiguracaoSeguranca) -> MedidaSeguranca:
+        """O canal pedido pela env é o que a aplicação usa de fato?
+
+        Só é ``ATENCAO`` no caso híbrido — pediu ``meta``, subiu ``demo``. Rodar em ``demo``
+        de propósito (o ambiente de vitrine) não é um problema de segurança e não pode virar
+        alarme falso no painel.
+        """
+        degradado = c.canal == "meta" and not c.meta_access_token_definido
+        return MedidaSeguranca(
+            chave="canal_efetivo",
+            titulo="Canal de mensagens efetivo",
+            categoria="Integridade de dados",
+            descricao=(
+                "O adaptador de WhatsApp em uso é o que MESSAGE_CHANNEL pede. A fábrica só "
+                "devolve o canal da Meta com MESSAGE_CHANNEL=meta e META_ACCESS_TOKEN "
+                "preenchido; faltando o token ela cai no canal demo."
+            ),
+            risco=(
+                "A queda para o demo é silenciosa e o processo sobe normal. O inbound segue "
+                "sendo roteado, chamando a LLM (custo real) e marcado como concluído, mas a "
+                "resposta some — o responsável escreve para a escola e nunca é respondido, "
+                "sem erro em lugar nenhum. No outbound o demo devolve um id 'demo-N' que "
+                "jamais casa com um wamid, então todo destinatário fica preso em ENVIADO e a "
+                "não-entrega reativa passa a acusar a escola inteira."
+            ),
+            status=StatusMedida.ATENCAO if degradado else StatusMedida.ATIVA,
+            detalhe=(
+                "MESSAGE_CHANNEL=meta, mas META_ACCESS_TOKEN está vazio: a aplicação está no "
+                "canal demo e NADA chega ao WhatsApp. Gere o token de usuário do sistema "
+                "(docs/producao-whatsapp.md §4)."
+                if degradado
+                else f"Canal '{c.canal}' ativo, coerente com a configuração."
+            ),
+            referencia="app/infrastructure/factories.py · canal_efetivo()",
+        )
 
     # -- Autenticação e sessão --------------------------------------------
 

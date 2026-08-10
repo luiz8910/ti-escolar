@@ -51,13 +51,27 @@ def criar_embedder(settings: Settings) -> Embedder:
 _demo_channel = DemoMessageChannel()
 
 
-def criar_canal(settings: Settings) -> MessageChannel:
+def canal_efetivo(settings: Settings) -> str:
+    """Qual adaptador ``criar_canal`` devolve **de fato** — nem sempre o da env.
+
+    ``MESSAGE_CHANNEL=meta`` sem ``META_ACCESS_TOKEN`` cai no canal demo sem erro nenhum, e
+    esse é o estado mais perigoso do go-live: o inbound é roteado, chama a LLM (custo real) e
+    marca o atendimento como concluído, mas a resposta sai pelo demo e nunca chega ao
+    responsável — sem nada aparecer como falha. Reportar a env em vez do adaptador real
+    esconde exatamente esse caso, então quem quiser exibir o canal usa esta função.
+    """
     if settings.message_channel == "meta" and settings.meta_access_token:
+        return "meta"
+    return "demo"
+
+
+def criar_canal(settings: Settings) -> MessageChannel:
+    if canal_efetivo(settings) == "meta":
         from app.infrastructure.channel.meta_channel import MetaMessageChannel
 
         return MetaMessageChannel(
             phone_number_id=settings.meta_phone_number_id or "",
-            access_token=settings.meta_access_token,
+            access_token=settings.meta_access_token or "",
         )
     return _demo_channel
 

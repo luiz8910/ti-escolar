@@ -645,6 +645,16 @@ foi **removida do código em 27/jul/2026** quando a verificação foi aprovada �
   `META_WEBHOOK_VERIFY_TOKEN`, `META_DAILY_TIER_LIMIT`, `META_APP_SECRET` e
   `META_VALIDATE_SIGNATURE`. A fábrica `criar_canal` (`app/infrastructure/factories.py`)
   escolhe o adaptador pelo `MESSAGE_CHANNEL` (`demo` | `meta`).
+- **`MESSAGE_CHANNEL=meta` exige `META_ACCESS_TOKEN`.** Sem o token, `criar_canal` devolve o
+  `DemoMessageChannel` **sem erro nenhum** — o processo sobe e o WhatsApp não está no ar. É a
+  falha mais perigosa do go-live porque é muda nas duas pontas: o inbound é roteado, chama a
+  LLM (custo real) e marca `RegistroAtendimento` como `concluida`, mas a resposta vai para
+  uma lista em memória e o responsável nunca é atendido — sem erro no painel de Logs; e o
+  outbound grava `demo-N` como id externo, que jamais casa com um `wamid`, deixando todo
+  destinatário preso em `ENVIADO` e fazendo a não-entrega reativa (§9b) acusar a escola
+  inteira. Por isso **`canal_efetivo(settings)` é a fonte única** de qual adaptador está em
+  uso: `criar_canal` decide por ela, o `/health` e o `/admin/seguranca` reportam por ela
+  (§14, §16), e o boot loga em `error` quando o pedido diverge do efetivo.
 - **Templates:** identificados por `nome` + `idioma`, que precisam bater com o template
   aprovado no WhatsApp Manager. Não há mais `content_sid` (era o `ContentSid` da Content API da
   Twilio; removido na migration `0023_remover_content_sid`).
@@ -1093,6 +1103,12 @@ enum `StatusMedida` em `entities.py`.
 - **Medidas acrescentadas em 29/jul/2026:** `rate_limit_login`, `rate_limit_inbound` (deixou
   de ser `PENDENTE`), `seed_producao` (alerta se `SEED_DEMO` estiver ligado com
   `APP_ENV=production`) e `observabilidade` (logs persistidos e consultáveis).
+- **Medida acrescentada em 09/ago/2026:** `canal_efetivo` — acusa o caso híbrido
+  `MESSAGE_CHANNEL=meta` **sem** `META_ACCESS_TOKEN`, em que `criar_canal` cai no
+  `DemoMessageChannel` **sem erro** e o WhatsApp simplesmente não está no ar. Rodar em `demo`
+  de propósito (vitrine) segue `ATIVA`, para não virar alarme falso. O campo `canal` da
+  resposta passou a ser o **efetivo**, não o valor da env. Ver §9c e `docs/producao-whatsapp.md`
+  §6.1.1.
 - **Checklist de pré-deploy embutido:** os 9 itens da §15 são servidos pelo mesmo endpoint
   (`ItemChecklist`, com `numero`/`exigencia`/`situacao` e as `medidas_relacionadas`), com a
   **numeração e a ordem da fonte preservadas** para conferência 1:1 — quem audita precisa
@@ -1260,6 +1276,12 @@ latência —, material que não é para a secretaria.
   `GET /api/admin/logs`, `/logs/resumo`, `/logs/atendimentos`.
 - **Prontidão:** `GET /health/pronto` toca o banco (`SELECT 1`), separado do `/health`
   (liveness) — o `/health` respondia "ok" com o Neon inteiramente fora do ar.
+- **Canal efetivo no `/health`:** o campo `canal` é o adaptador **realmente instanciado**
+  (`canal_efetivo`, em `factories.py`), não o valor de `MESSAGE_CHANNEL`. Ecoar a env
+  afirmaria de fora que o WhatsApp está no ar numa instância que subiu no canal demo por
+  falta de token. Divergindo, o corpo ganha `canal_configurado` + `canal_alerta` e o boot
+  loga o motivo em `error` — é o único momento em que alguém repara. Ver §9c e
+  `docs/producao-whatsapp.md` §6.1.1.
 - **[Roadmap] Alerta ativo:** ninguém é notificado de um erro; é preciso abrir o painel. É o que
   mantém o item 8 do checklist em ⚠️.
 

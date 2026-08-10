@@ -131,3 +131,88 @@ async def test_broadcast_de_escola_sem_id_na_meta_usa_o_e164():
     )
     canal = await _disparar(escola)
     assert canal.remetentes == ["+5515333330000"]
+
+
+# --------------------------------------------------------------------------- #
+# Seleção do canal: MESSAGE_CHANNEL=meta sem token cai no demo, calado (§6.1.1)
+# --------------------------------------------------------------------------- #
+
+
+def _settings(**kw):
+    from app.config import Settings
+
+    return Settings(_env_file=None, **kw)
+
+
+def test_meta_sem_token_cai_no_demo():
+    """A fábrica exige env **e** token; sem o token o WhatsApp não está no ar.
+
+    O perigo não é a queda em si, é ela ser silenciosa: o processo sobe, o inbound é
+    atendido, cobra LLM e a resposta vai para uma lista em memória.
+    """
+    from app.infrastructure.channel.demo_channel import DemoMessageChannel
+    from app.infrastructure.factories import canal_efetivo, criar_canal
+
+    s = _settings(message_channel="meta", meta_access_token=None)
+    assert canal_efetivo(s) == "demo"
+    assert isinstance(criar_canal(s), DemoMessageChannel)
+
+
+def test_meta_com_token_usa_o_canal_da_meta():
+    from app.infrastructure.factories import canal_efetivo, criar_canal
+
+    s = _settings(
+        message_channel="meta", meta_access_token="tok", meta_phone_number_id=PADRAO
+    )
+    assert canal_efetivo(s) == "meta"
+    assert isinstance(criar_canal(s), MetaMessageChannel)
+
+
+def test_canal_efetivo_concorda_com_criar_canal():
+    """Fonte única de verdade: relatar um canal e instanciar outro é o bug original."""
+    from app.infrastructure.factories import canal_efetivo, criar_canal
+
+    for s in (
+        _settings(message_channel="demo"),
+        _settings(message_channel="demo", meta_access_token="tok"),
+        _settings(message_channel="meta"),
+        _settings(message_channel="meta", meta_access_token="tok"),
+    ):
+        esperado = "meta" if canal_efetivo(s) == "meta" else "demo"
+        obtido = "meta" if isinstance(criar_canal(s), MetaMessageChannel) else "demo"
+        assert obtido == esperado, s.message_channel
+
+
+def test_health_reporta_canal_efetivo_e_alerta():
+    """De fora, o /health é o único sinal — ele não pode ecoar a env e dizer 'meta'."""
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    original = main.settings
+    try:
+        main.settings = _settings(message_channel="meta", meta_access_token=None)
+        with TestClient(main.app) as cliente:
+            corpo = cliente.get("/health").json()
+        assert corpo["canal"] == "demo"
+        assert corpo["canal_configurado"] == "meta"
+        assert "META_ACCESS_TOKEN" in corpo["canal_alerta"]
+    finally:
+        main.settings = original
+
+
+def test_health_sem_divergencia_nao_polui_o_corpo():
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    original = main.settings
+    try:
+        main.settings = _settings(message_channel="meta", meta_access_token="tok")
+        with TestClient(main.app) as cliente:
+            corpo = cliente.get("/health").json()
+        assert corpo["canal"] == "meta"
+        assert "canal_configurado" not in corpo
+        assert "canal_alerta" not in corpo
+    finally:
+        main.settings = original
