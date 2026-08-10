@@ -18,7 +18,7 @@
 | **Verificação da empresa** (Meta cruza CNPJ, site e dados do portfólio) | ✅ **Aprovada** (27/jul/2026) — portfólio TiEscolar, business_id `940840332344260` |
 | **App publicado** ("Ao vivo") | ✅ **Publicado** (06/ago/2026) — ver §1.1 |
 | **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
-| **Número real registrado** | ⚠️ Cadastrado (`+55 15 99753-6978`) mas **"Não verificado"** — ver §2.1 |
+| **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
 | **Templates aprovados** | ⬜ Pendente |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
@@ -104,11 +104,26 @@ O console não usa mais a lista de "Produtos": o WhatsApp vive sob **Casos de us
    - **Verificar número**: código de 6 dígitos por SMS ou ligação.
 4. **Verificar o número.** Nós compramos o chip, colocamos num aparelho nosso e lemos o código — a
    escola não participa (CLAUDE.md §9e.3). Ver §2.1: no Brasil este é o passo que trava.
-5. Anotar o **`phone_number_id`** do número e **cadastrá-lo na escola** (painel do super admin →
+5. **Inscrever o número (`Registrar`) com um PIN de 6 dígitos.** Verificar **não** é registrar:
+   depois do código o número passa de *Não verificado* para **"Não registrado"**, e o botão vira
+   **Registrar**. Esse passo pede um **PIN de 6 dígitos** (verificação em duas etapas do número),
+   que a Meta **não exibe de novo** e que é exigido para **reinscrever o número no futuro**
+   (troca de WABA, re-registro após incidente). Anote no gerenciador de senhas — ele **não** vai
+   para `.env` nem para o git: a aplicação não o usa, só o console da Meta. Concluído o registro,
+   o status vira **"Inscrito"**.
+6. Anotar o **`phone_number_id`** do número e **cadastrá-lo na escola** (painel do super admin →
    Escolas → campo *phone_number_id da Meta*). É ele — não o E.164 — que a API usa para enviar e
    que roteia o WhatsApp recebido para a escola certa. **Sem ele a escola não recebe mensagens.**
 
 ### 2.1 Quando a verificação do número não chega (Brasil)
+
+> **Desfecho (09/ago/2026): resolvido esperando.** Três dias depois das tentativas frustradas de
+> 06/ago, uma **única tentativa por SMS** no mesmo chip Vivo entregou o código na hora, sem trocar
+> nada — nem operadora, nem aparelho, nem método. Ou seja, o que travava era **transitório**
+> (provavelmente o bloqueio por excesso de reenvios descrito abaixo, somado à instabilidade da rota
+> A2P internacional), não uma incompatibilidade da linha. **A lição operacional é a regra de não
+> insistir:** depois de duas tentativas falhas, o movimento certo é **parar por algumas horas** e
+> tentar de novo, não trocar de chip. A verificação não expira e o número fica esperando.
 
 Aprendido no primeiro registro real (06/ago/2026), com chip **Vivo pré-pago** novo:
 
@@ -124,9 +139,11 @@ Aprendido no primeiro registro real (06/ago/2026), com chip **Vivo pré-pago** n
   falhos, e é justamente a tentativa seguinte que se perde. A verificação **não expira**: o número
   fica "Não verificado" na WABA e é retomável por *Gerenciador do WhatsApp → Números de telefone →
   engrenagem na linha*.
-- **Prefira "Ligação telefônica" a SMS**: a rota de SMS A2P internacional para o Brasil é
-  notoriamente instável. Trocar o método na tela de verificação já dispara a nova tentativa —
-  clicar em "Reenviar código" depois disso duplica a solicitação.
+- **Sobre o método:** a rota de SMS A2P internacional para o Brasil é instável, mas **não é
+  inviável** — foi por SMS que a verificação passou em 09/ago. Trocar de método é uma alternativa
+  se o SMS falhar repetidamente, **não** a primeira reação a uma falha isolada; **esperar** é.
+  Cuidado com a mecânica da tela: trocar o método já dispara a nova tentativa — clicar em
+  "Reenviar código" depois disso duplica a solicitação e ajuda a queimar a franquia.
 - Se o número for trocado, apagar a linha não verificada pelo ícone de lixeira e recadastrar; o
   **perfil da WABA** (nome de exibição, categoria, fuso) permanece e não é refeito.
 - **Consequência de processo:** registre o **primeiro** número como o nosso (nome de exibição
@@ -201,6 +218,19 @@ APP_ENV=production
 Confira o resultado em **`/admin/seguranca`** no painel (super admin): a página lê a configuração
 em execução e sinaliza segredo default, assinatura desligada e CORS liberado (CLAUDE.md §14).
 
+**Estado do serviço no Render, medido de fora em 09/ago/2026** (`https://ti-escolar.onrender.com`):
+
+| Sinal | Medido | Leitura |
+|---|---|---|
+| `GET /health` | `{"canal": "demo"}` | **`MESSAGE_CHANNEL` ainda é `demo`** — nada sai pela Meta enquanto não virar `meta`, mesmo com número inscrito |
+| `GET /api/webhook/meta` com `verify_token=changeme` | `403` | `META_WEBHOOK_VERIFY_TOKEN` já foi trocado pelo valor de exemplo ✅ |
+| `POST /api/webhook/meta` sem `X-Hub-Signature-256` | `403` | `META_VALIDATE_SIGNATURE=true` ligado ✅ |
+| `GET /health/pronto` | `404` | **o deploy está atrás da `main`**: esse endpoint entrou em 29/jul (CLAUDE.md §16) e não está no ar — o painel de Logs e o rate limiting provavelmente também não |
+
+Os dois primeiros itens são pré-requisito do go-live: **apontar o webhook da Meta para um serviço
+desatualizado esconde o problema** (o handshake passa, o inbound cai numa versão antiga do código).
+Confirme o commit em execução no Render antes de configurar o webhook na Meta.
+
 ### 6.2 Número por escola (multi-tenant)
 
 Cada escola tem **dois** campos de número, e eles não são intercambiáveis:
@@ -261,7 +291,8 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [x] Verificação da empresa aprovada
 - [x] **App publicado ("Ao vivo")** — sem isso o webhook não recebe dado de produção nenhum (§1.1)
 - [x] WABA de produção criada (id `2116419572321695`)
-- [ ] Número da escola registrado e **verificado** (chip nosso) — ver §2.1 se o código não chegar
+- [x] Número registrado, **verificado e inscrito** (chip nosso) — `phone_number_id`
+      `1231892910008454`; PIN de 6 dígitos guardado fora do repositório (§2, passo 5)
 - [ ] Nome de exibição aprovado
 - [ ] Forma de pagamento na WABA de produção
 - [ ] Token de usuário do sistema gerado e no Render

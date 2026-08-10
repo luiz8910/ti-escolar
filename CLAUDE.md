@@ -876,10 +876,15 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     **bloqueante e silencioso**: app não publicado recebe apenas webhooks de *teste*, então o
     inbound real não chega e nenhum status de entrega é registrado, sem nada dar erro. Ver
     `docs/producao-whatsapp.md` §1.1.
-  - [ ] **Verificar o número na WABA de produção** (id `2116419572321695`) — o número está
-    cadastrado mas "Não verificado": o código da Meta é tráfego internacional de entrada e não
-    chegou ao chip. Diagnóstico e regra de "não queime tentativas" em
-    `docs/producao-whatsapp.md` §2.1.
+  - [x] **Número verificado e inscrito na WABA de produção** (id `2116419572321695`) em
+    09/ago/2026 — `+55 15 99753-6978`, `phone_number_id` `1231892910008454`. O código não chegava
+    em 06/ago (tráfego internacional de entrada); três dias depois **um único SMS entregou**, sem
+    trocar chip nem método: o bloqueio era transitório, e a regra que vale é **esperar em vez de
+    insistir**. Registrar o número exige ainda um **PIN de 6 dígitos** que a Meta não reexibe —
+    guardado fora do repositório. Ver `docs/producao-whatsapp.md` §2 (passo 5) e §2.1.
+  - [ ] **Ligar o canal em homologação**: o Render responde `{"canal": "demo"}` — `MESSAGE_CHANNEL`
+    ainda não é `meta` — e não serve `/health/pronto`, ou seja, **o deploy está atrás da `main`**.
+    Medições em `docs/producao-whatsapp.md` §6.1.
   - [x] `Tenant.meta_phone_number_id` (migration `0024_tenant_meta_phone_number_id`, único por
     índice UNIQUE parcial) + `TenantRepository.por_meta_phone_number_id` + campo no painel.
   - [x] `MetaMessageChannel` honrando o `remetente` (URL montada por envio), com
