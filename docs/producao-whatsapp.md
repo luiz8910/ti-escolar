@@ -16,7 +16,9 @@
 | Etapa | Situação |
 |---|---|
 | **Verificação da empresa** (Meta cruza CNPJ, site e dados do portfólio) | ✅ **Aprovada** (27/jul/2026) — portfólio TiEscolar, business_id `940840332344260` |
-| **WABA de produção** com número real | ⬜ Pendente — só existe a *Test WhatsApp Business Account* |
+| **App publicado** ("Ao vivo") | ✅ **Publicado** (06/ago/2026) — ver §1.1 |
+| **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
+| **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
 | **Templates aprovados** | ⬜ Pendente |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
@@ -38,8 +40,10 @@
 
 - [ ] **Meta Business Account** verificada (feito) e uma **conta pessoal do Facebook** com papel
       de **admin** no portfólio.
-- [ ] **App** em `developers.facebook.com` com o produto **WhatsApp** adicionado
-      (app id `314094235296120`).
+- [ ] **App** em `developers.facebook.com` com o caso de uso **"Conectar-se com clientes pelo
+      WhatsApp"** adicionado (app id **`3140942352961209`** — 16 dígitos; este doc registrava
+      15, truncado, e a URL direta com o id errado silenciosamente redireciona para a lista de
+      apps em vez de dar erro).
 - [ ] **Um chip novo por escola**, que:
   - **não** esteja ativo no **WhatsApp/WhatsApp Business**. Se estiver, apague a conta naquele
     número antes — isso **destrói o histórico** dele;
@@ -51,6 +55,30 @@
 - [ ] **Nome de exibição** por escola que cumpra as regras da Meta (ex.: "EM Rosa Cury") — nada
       genérico ou enganoso. **Passa por revisão assíncrona: dispare cedo, é o caminho crítico.**
 
+### 1.1 Publicar o app — bloqueante para o inbound
+
+O app precisa estar **publicado** ("Ao vivo"), não em "Modo: Em desenvolvimento". A própria tela
+de webhooks da Meta declara o motivo:
+
+> "Os apps só poderão receber webhooks de **teste** enviados do painel de apps enquanto o app não
+> for publicado. **Não serão fornecidos dados de produção**, incluindo dados de administradores,
+> desenvolvedores e testadores do app, a menos que o app tenha sido publicado."
+
+Ou seja: **com o app não publicado, o `POST /api/webhook/meta` não recebe mensagem real nenhuma** —
+o chatbot não atende e nenhum status de entrega chega, mesmo com número verificado, token válido e
+assinatura configurada. É um passo silencioso: nada dá erro, simplesmente não chega nada.
+
+Caminho: app → **Publicar** (menu lateral) → botão **Publicar** no rodapé. Os requisitos que
+travavam a publicação (política de privacidade, termos, exclusão de dados, e-mail de contato,
+categoria) já estão preenchidos e apontam para `tiescolar.com.br` — a tela mostra *"Todas as
+configurações necessárias do app foram concluídas"*.
+
+**Publicar é reversível** (o mesmo rodapé passa a oferecer **"Tirar do ar"**) e é **ortogonal ao
+número**: o estado de publicação é do *app*, não da WABA nem do `phone_number_id`. Trocar de número
+depois não desfaz a publicação, nem os templates, nem o webhook — só muda o
+`Tenant.meta_phone_number_id` daquela escola. Publicar não inicia cobrança e não dispara análise
+da Meta.
+
 ---
 
 ## 2. Criar a WABA de produção e registrar o número
@@ -59,15 +87,69 @@ O modelo é **uma WABA nossa com o número de cada escola dentro dela** (até 20
 ao esgotar, cria-se outra sob o mesmo portfólio). Qualidade e tier de envio são **por número**,
 então uma escola não derruba o limite das outras.
 
-1. `developers.facebook.com` → app **Ti-Escolar** → **WhatsApp → Configuração da API**.
-2. No seletor "De", **Adicionar número de telefone**. É esse fluxo que cria a WABA real ao lado
-   da de teste.
-3. Preencher **nome de exibição**, categoria e descrição do negócio.
-4. **Verificar o número** por SMS ou ligação. Nós compramos o chip, colocamos num aparelho nosso
-   e lemos o código — a escola não participa (CLAUDE.md §9e.3).
-5. Anotar o **`phone_number_id`** do número e **cadastrá-lo na escola** (painel do super admin →
+O console não usa mais a lista de "Produtos": o WhatsApp vive sob **Casos de uso**.
+
+1. `developers.facebook.com` → app **Ti-Escolar** → **Casos de uso** → "Conectar-se com clientes
+   pelo WhatsApp" → **Personalizar**.
+2. **Etapa 2. Configuração de produção** — a Meta guia os 4 sub-passos: configurar webhooks ·
+   registrar número · forma de pagamento · enviar mensagem. (Etapa 1 "Experimente" e Etapa 3
+   "Verificação da empresa" já estão concluídas.)
+3. Em "Registre seu número de telefone do WhatsApp" → **Adicionar novo número**. É esse fluxo que
+   cria a WABA real ao lado da de teste. O assistente tem 3 etapas:
+   - **Perfil**: nome de exibição, **fuso** (já vem `America/Sao_Paulo`), **categoria**
+     (`Educação`) e descrição. Nada é persistido até o fim — fechar o diálogo no meio perde tudo e
+     recomeça em branco.
+   - **Adicionar número**: o seletor de país **começa em `US +1`** — trocar para `BR +55` antes de
+     digitar, senão o número é interpretado como americano.
+   - **Verificar número**: código de 6 dígitos por SMS ou ligação.
+4. **Verificar o número.** Nós compramos o chip, colocamos num aparelho nosso e lemos o código — a
+   escola não participa (CLAUDE.md §9e.3). Ver §2.1: no Brasil este é o passo que trava.
+5. **Inscrever o número (`Registrar`) com um PIN de 6 dígitos.** Verificar **não** é registrar:
+   depois do código o número passa de *Não verificado* para **"Não registrado"**, e o botão vira
+   **Registrar**. Esse passo pede um **PIN de 6 dígitos** (verificação em duas etapas do número),
+   que a Meta **não exibe de novo** e que é exigido para **reinscrever o número no futuro**
+   (troca de WABA, re-registro após incidente). Anote no gerenciador de senhas — ele **não** vai
+   para `.env` nem para o git: a aplicação não o usa, só o console da Meta. Concluído o registro,
+   o status vira **"Inscrito"**.
+6. Anotar o **`phone_number_id`** do número e **cadastrá-lo na escola** (painel do super admin →
    Escolas → campo *phone_number_id da Meta*). É ele — não o E.164 — que a API usa para enviar e
    que roteia o WhatsApp recebido para a escola certa. **Sem ele a escola não recebe mensagens.**
+
+### 2.1 Quando a verificação do número não chega (Brasil)
+
+> **Desfecho (09/ago/2026): resolvido esperando.** Três dias depois das tentativas frustradas de
+> 06/ago, uma **única tentativa por SMS** no mesmo chip Vivo entregou o código na hora, sem trocar
+> nada — nem operadora, nem aparelho, nem método. Ou seja, o que travava era **transitório**
+> (provavelmente o bloqueio por excesso de reenvios descrito abaixo, somado à instabilidade da rota
+> A2P internacional), não uma incompatibilidade da linha. **A lição operacional é a regra de não
+> insistir:** depois de duas tentativas falhas, o movimento certo é **parar por algumas horas** e
+> tentar de novo, não trocar de chip. A verificação não expira e o número fica esperando.
+
+Aprendido no primeiro registro real (06/ago/2026), com chip **Vivo pré-pago** novo:
+
+- **O código da Meta é tráfego internacional de entrada** — SMS A2P internacional ou ligação
+  internacional. Isso é uma categoria diferente do SMS e da ligação comuns.
+- Sintoma observado: **SMS nacional chegava e ligação nacional completava**, mas **nem o SMS nem a
+  ligação da Meta chegaram** — nem como chamada perdida no registro do aparelho. Linha já
+  regularizada (CPF + selfie + CNH) e com a recarga que vinha no chip.
+- **O diagnóstico decisivo é o registro de chamadas:** se a ligação da Meta aparece como perdida,
+  a rota funciona e o problema é filtro de "silenciar desconhecidos" no aparelho; se **não aparece
+  nada**, o tráfego internacional não está alcançando a linha e não há nada a configurar na Meta.
+- **Não insista nas tentativas.** A Meta trava a verificação por horas depois de alguns reenvios
+  falhos, e é justamente a tentativa seguinte que se perde. A verificação **não expira**: o número
+  fica "Não verificado" na WABA e é retomável por *Gerenciador do WhatsApp → Números de telefone →
+  engrenagem na linha*.
+- **Sobre o método:** a rota de SMS A2P internacional para o Brasil é instável, mas **não é
+  inviável** — foi por SMS que a verificação passou em 09/ago. Trocar de método é uma alternativa
+  se o SMS falhar repetidamente, **não** a primeira reação a uma falha isolada; **esperar** é.
+  Cuidado com a mecânica da tela: trocar o método já dispara a nova tentativa — clicar em
+  "Reenviar código" depois disso duplica a solicitação e ajuda a queimar a franquia.
+- Se o número for trocado, apagar a linha não verificada pelo ícone de lixeira e recadastrar; o
+  **perfil da WABA** (nome de exibição, categoria, fuso) permanece e não é refeito.
+- **Consequência de processo:** registre o **primeiro** número como o nosso (nome de exibição
+  `TI-Escolar`), não o da escola-âncora. Descobrir qual operadora entrega a verificação da Meta é
+  aprendizado que não deve acontecer no número do cliente — e trocar o chip depois de verificado
+  custa a identidade do canal.
 
 ---
 
@@ -136,6 +218,19 @@ APP_ENV=production
 Confira o resultado em **`/admin/seguranca`** no painel (super admin): a página lê a configuração
 em execução e sinaliza segredo default, assinatura desligada e CORS liberado (CLAUDE.md §14).
 
+**Estado do serviço no Render, medido de fora em 09/ago/2026** (`https://ti-escolar.onrender.com`):
+
+| Sinal | Medido | Leitura |
+|---|---|---|
+| `GET /health` | `{"canal": "demo"}` | **`MESSAGE_CHANNEL` ainda é `demo`** — nada sai pela Meta enquanto não virar `meta`, mesmo com número inscrito |
+| `GET /api/webhook/meta` com `verify_token=changeme` | `403` | `META_WEBHOOK_VERIFY_TOKEN` já foi trocado pelo valor de exemplo ✅ |
+| `POST /api/webhook/meta` sem `X-Hub-Signature-256` | `403` | `META_VALIDATE_SIGNATURE=true` ligado ✅ |
+| `GET /health/pronto` | `404` | **o deploy está atrás da `main`**: esse endpoint entrou em 29/jul (CLAUDE.md §16) e não está no ar — o painel de Logs e o rate limiting provavelmente também não |
+
+Os dois primeiros itens são pré-requisito do go-live: **apontar o webhook da Meta para um serviço
+desatualizado esconde o problema** (o handshake passa, o inbound cai numa versão antiga do código).
+Confirme o commit em execução no Render antes de configurar o webhook na Meta.
+
 ### 6.2 Número por escola (multi-tenant)
 
 Cada escola tem **dois** campos de número, e eles não são intercambiáveis:
@@ -194,8 +289,10 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 ## 10. Checklist consolidado
 
 - [x] Verificação da empresa aprovada
-- [ ] WABA de produção criada
-- [ ] Número da escola registrado e verificado (chip nosso)
+- [x] **App publicado ("Ao vivo")** — sem isso o webhook não recebe dado de produção nenhum (§1.1)
+- [x] WABA de produção criada (id `2116419572321695`)
+- [x] Número registrado, **verificado e inscrito** (chip nosso) — `phone_number_id`
+      `1231892910008454`; PIN de 6 dígitos guardado fora do repositório (§2, passo 5)
 - [ ] Nome de exibição aprovado
 - [ ] Forma de pagamento na WABA de produção
 - [ ] Token de usuário do sistema gerado e no Render
