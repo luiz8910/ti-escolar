@@ -21,9 +21,9 @@
 | **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
 | **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ⬜ Pendente |
-| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ⬜ Pendente — **bloqueia ligar o canal**, ver §6.1.1 |
-| **Webhook apontado na Meta** (callback + campo `messages`) | ⬜ Pendente |
-| **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ⬜ Pendente — o serviço responde `canal: demo` |
+| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado e no Render** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management` |
+| **Webhook apontado na Meta** (callback + campo `messages`) | ⬜ Pendente — URL preenchida, falta o verify token e **assinar `messages`** |
+| **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ✅ **Ligado** (10/ago/2026) — `/health` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **Templates aprovados** | ⬜ Pendente |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
@@ -175,10 +175,25 @@ Adicionar cartão **na WABA de produção** (a de teste não gera cobrança e n�
 O token exibido na tela de Configuração da API **expira em 24h** e não serve para produção.
 
 1. Business Manager → **Usuários do sistema** → criar um system user com papel **admin**.
-2. Atribuir a ele o **app** e a **WABA de produção**, com controle total.
+   O primeiro clique em *Adicionar* pede o **aceite da Política de Não Discriminação** da Meta,
+   em nome da empresa — é um passo só, mas é um aceite legal, não um diálogo de UI.
+2. Atribuir a ele o **app** e a **WABA de produção**, com controle total. As duas WABAs aparecem
+   na mesma lista: escolher **`TI-Escolar`**, não a *Test WhatsApp Business Account*.
 3. Gerar token com as permissões **`whatsapp_business_messaging`** e
-   **`whatsapp_business_management`**.
+   **`whatsapp_business_management`**. Existe também `whatsapp_business_manage_events`, que o
+   produto **não usa** — deixar desmarcada.
 4. Guardar na hora — o valor não é exibido de novo. Vai para `META_ACCESS_TOKEN` no Render.
+
+**Expiração: escolhemos `Nunca`** (a Meta sugere 60 dias). O motivo é o formato do produto: o
+WhatsApp é o **canal único**, não há rotação de token automatizada e **não há alerta ativo**
+(item 8 do checklist §15 segue ⚠️). Um token de 60 dias seria uma quebra agendada que ninguém
+seria avisado de que chegou — o erro apareceria só no painel de Logs, que ninguém abre sem
+motivo. O preço dessa escolha é que um token vazado vale para sempre: a única revogação é o
+botão **Anular tokens** na tela do usuário do sistema. Guardar no gerenciador de senhas, junto
+com o PIN de 6 dígitos do número (§2, passo 5).
+
+> **Feito em 10/ago/2026:** system user `ti_escolar_backend`, id `61592805104592`, Admin, com o
+> app `3140942352961209` e a WABA `2116419572321695` atribuídos.
 
 ---
 
@@ -227,7 +242,7 @@ em execução e sinaliza segredo default, assinatura desligada e CORS liberado (
 
 | Sinal | Medido | Leitura |
 |---|---|---|
-| `GET /health` | `{"canal": "demo"}` | **`MESSAGE_CHANNEL` ainda é `demo`** — nada sai pela Meta enquanto não virar `meta`, mesmo com número inscrito |
+| `GET /health` | `{"canal": "meta"}` **(10/ago)** | ✅ canal ligado. Antes era `demo`. Como o campo é o adaptador **efetivo** (§6.1.1), `meta` aqui prova que o `META_ACCESS_TOKEN` está presente e válido o bastante para instanciar o canal — não é só o eco da env |
 | `GET /api/webhook/meta` com `verify_token=changeme` | `403` | `META_WEBHOOK_VERIFY_TOKEN` já foi trocado pelo valor de exemplo ✅ |
 | `POST /api/webhook/meta` sem `X-Hub-Signature-256` | `403` | `META_VALIDATE_SIGNATURE=true` ligado ✅ |
 | `GET /health/pronto` | `200 {"banco":"ok"}` | **o deploy alcançou a `main`** ✅ — esse endpoint entrou em 29/jul (CLAUDE.md §16); com ele no ar, o painel de Logs e o rate limiting também estão |
@@ -243,8 +258,9 @@ publicar** neste projeto: depois de todo merge é preciso ir ao painel → **Man
 na Meta** — apontar o webhook para um serviço atrasado esconde o problema, porque o handshake
 passa e o inbound cai numa versão antiga do código.
 
-Restou, portanto, **uma única variável a mexer no Render**: `MESSAGE_CHANNEL`. E ela tem uma
-ordem obrigatória, abaixo.
+Em 10/ago/2026 o `META_ACCESS_TOKEN` e o `MESSAGE_CHANNEL=meta` entraram no Render, nessa ordem,
+e o `/health` passou a responder `canal: meta`. **Salvar uma variável no Render dispara redeploy
+automático** — é a única automação de deploy que este serviço tem; o push à `main`, não.
 
 #### 6.1.1 `META_ACCESS_TOKEN` antes de `MESSAGE_CHANNEL=meta` — falha silenciosa
 
@@ -334,9 +350,11 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)
 - [ ] Nome de exibição aprovado
 - [ ] Forma de pagamento na WABA de produção
-- [ ] Token de usuário do sistema gerado e no Render **(antes de ligar o canal — §6.1.1)**
-- [ ] Webhook configurado e campo `messages` assinado
-- [ ] **`MESSAGE_CHANNEL=meta` no Render** — o último passo, depois do token
+- [x] Token de usuário do sistema gerado e no Render (10/ago — `ti_escolar_backend`, sem
+      expiração; ver §4 para o porquê de `Nunca`)
+- [ ] Webhook configurado e **campo `messages` assinado** — salvar a URL **não** inscreve em
+      nada; sem essa assinatura não chega mensagem nem status de entrega
+- [x] **`MESSAGE_CHANNEL=meta` no Render** (10/ago) — `/health` responde `canal: meta`
 - [x] `META_APP_SECRET` + `META_VALIDATE_SIGNATURE=true` (medido de fora: `POST` sem assinatura → 403)
 - [ ] `JWT_SECRET` trocado · [x] `META_WEBHOOK_VERIFY_TOKEN` trocado (`changeme` → 403)
 - [ ] `/admin/seguranca` sem itens em Atenção
