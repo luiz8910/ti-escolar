@@ -215,15 +215,26 @@ class FakeConversaRepo:
             self.mensagens[c.id] = []
         return self.conversas[chave]
 
-    async def adicionar_mensagem(self, *, conversa_id, autor, texto, fontes=None) -> None:
+    async def adicionar_mensagem(
+        self, *, conversa_id, autor, texto, fontes=None, autor_nome=""
+    ) -> None:
         self.mensagens.setdefault(conversa_id, []).append(
-            {"autor": autor, "texto": texto, "fontes": fontes or []}
+            {
+                "autor": autor,
+                "texto": texto,
+                "fontes": fontes or [],
+                "autor_nome": autor_nome,
+            }
         )
 
     async def historico(self, *, conversa_id, limite=20) -> list[dict[str, str]]:
         msgs = self.mensagens.get(conversa_id, [])[-limite:]
+        # Como no repositório real: a fala da secretaria é da escola, não do responsável.
         return [
-            {"role": "assistant" if m["autor"] == "bot" else "user", "content": m["texto"]}
+            {
+                "role": "assistant" if m["autor"] in ("bot", "atendente") else "user",
+                "content": m["texto"],
+            }
             for m in msgs
         ]
 
@@ -326,6 +337,11 @@ class FakeTemplateRepo:
     async def obter(self, *, tenant_id, template_id) -> MessageTemplate | None:
         if self._template and self._template.tenant_id == tenant_id:
             return self._template
+        return None
+
+    async def por_nome(self, *, tenant_id, nome) -> MessageTemplate | None:
+        if self._template and self._template.tenant_id == tenant_id:
+            return self._template if self._template.nome == nome else None
         return None
 
 
@@ -891,3 +907,60 @@ class FakeConversaExportRepo:
 
     async def mensagens(self, *, conversa_id):
         return list(self._mensagens.get(conversa_id, []))
+
+
+class FakeAtendimentoHumanoRepo:
+    """Fila de atendimento humano (§6j) em memória."""
+
+    def __init__(self) -> None:
+        self.itens: dict[uuid.UUID, object] = {}
+
+    async def criar(self, atendimento):
+        self.itens[atendimento.id] = atendimento
+        return atendimento
+
+    async def obter(self, *, tenant_id, atendimento_id):
+        item = self.itens.get(atendimento_id)
+        return item if item and item.tenant_id == tenant_id else None
+
+    async def em_aberto_por_conversa(self, *, conversa_id):
+        vivos = [
+            a
+            for a in self.itens.values()
+            if a.conversa_id == conversa_id
+            and a.status.value in ("oferecido", "aberto", "em_atendimento")
+        ]
+        vivos.sort(key=lambda a: a.criado_em, reverse=True)
+        return vivos[0] if vivos else None
+
+    def _filtrados(self, *, tenant_id, status, atendente_id):
+        itens = [a for a in self.itens.values() if a.tenant_id == tenant_id]
+        if status:
+            alvo = {s.value for s in status}
+            itens = [a for a in itens if a.status.value in alvo]
+        if atendente_id is not None:
+            itens = [a for a in itens if a.atendente_id == atendente_id]
+        itens.sort(key=lambda a: a.criado_em)
+        return itens
+
+    async def listar(
+        self, *, tenant_id, status=None, atendente_id=None, pagina=None, por_pagina=None
+    ):
+        itens = self._filtrados(
+            tenant_id=tenant_id, status=status, atendente_id=atendente_id
+        )
+        if pagina is not None and por_pagina is not None:
+            inicio = (pagina - 1) * por_pagina
+            return itens[inicio : inicio + por_pagina]
+        return itens
+
+    async def contar(self, *, tenant_id, status=None, atendente_id=None):
+        return len(
+            self._filtrados(tenant_id=tenant_id, status=status, atendente_id=atendente_id)
+        )
+
+    async def atualizar(self, atendimento):
+        if atendimento.id not in self.itens:
+            raise ValueError("Atendimento não encontrado.")
+        self.itens[atendimento.id] = atendimento
+        return atendimento

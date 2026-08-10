@@ -20,7 +20,7 @@
 | **WABA de produção** | ✅ **Criada** (06/ago/2026) — id `2116419572321695`, nome de exibição `TI-Escolar` |
 | **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
 | **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
-| **Forma de pagamento** na WABA de produção | ⬜ Pendente |
+| **Forma de pagamento** na WABA de produção | ✅ **Cartão adicionado** (10/ago/2026) |
 | **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado e no Render** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management` |
 | **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Configurado** (10/ago/2026) — callback `https://ti-escolar.onrender.com/api/webhook/meta`, handshake verificado, campo `messages` **Assinado** |
 | **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ✅ **Ligado** (10/ago/2026) — `/health` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso |
@@ -375,6 +375,28 @@ Fora da janela de 24h só se envia **template aprovado**. Criar no **WhatsApp Ma
 - o **nome** do template no WhatsApp Manager precisa bater com `MessageTemplate.nome` no banco,
   e o idioma com `MessageTemplate.idioma` — é assim que `enviar_template` o identifica;
 - parâmetros posicionais (`{{1}}`, `{{2}}`…) mapeiam para a lista `parametros` do caso de uso.
+
+### 7.1 `retomada_atendimento` — obrigatório para o atendimento humano
+
+O atendimento humano (CLAUDE.md §6j) esbarra na janela de 24h de um jeito muito concreto: o
+responsável escreve sexta às 20h, a secretaria só vê na segunda de manhã, e aí o texto livre
+**já não pode mais sair**. O template que reabre essa conversa é:
+
+| Campo | Valor |
+|---|---|
+| Nome | `retomada_atendimento` |
+| Categoria | **utility** |
+| Idioma | `pt_BR` |
+| Corpo | `Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}}` |
+
+Depois de **aprovado** pela Meta, cadastre o mesmo nome/idioma em `templates` no banco com
+`status = aprovado` e preencha `TEMPLATE_RETOMADA_ATENDIMENTO=retomada_atendimento` no Render.
+
+Enquanto isso não acontecer, o comportamento é **recusar com erro explícito** no painel
+("a janela de 24h expirou e não há template de retomada aprovado"). É proposital: o modo de
+falha alternativo — deixar a chamada morrer na Graph API — faria a secretaria acreditar que
+respondeu um responsável que nunca recebeu nada. O seed cria o template como `pendente` pela
+mesma razão.
 
 ---
 

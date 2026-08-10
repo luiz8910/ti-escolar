@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { contarAtendimentosPendentes, getSessao } from "@/lib/admin";
 import { cn } from "../ui/cn";
 import {
   GridIcon,
@@ -27,7 +28,12 @@ interface NavItem {
   label: string;
   icon: (p: { size?: number }) => ReactNode;
   badge?: string;
+  /** Badge de contagem (destaque). Zero é omitido — badge "0" é só ruído. */
+  contador?: number;
 }
+
+/** De quanto em quanto tempo o badge de atendimentos é reconferido. */
+const INTERVALO_PENDENTES_MS = 20_000;
 
 const PRINCIPAL: NavItem[] = [
   { href: "/admin", label: "Grupos & disparos", icon: GridIcon },
@@ -35,12 +41,14 @@ const PRINCIPAL: NavItem[] = [
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
   { href: "/admin/progressao", label: "Progressão de série", icon: CapIcon },
   { href: "/admin/professores", label: "Professores", icon: TeacherIcon },
+  { href: "/admin/usuarios", label: "Equipe da secretaria", icon: UsersIcon },
   { href: "/admin/conhecimento", label: "Base de conhecimento", icon: BookIcon },
   { href: "/admin/prompt", label: "Instruções da escola", icon: InstructionsIcon },
 ];
 
 // Comunicação interna e atendimento (Onda 1 · Rosa Cury + Onda 2 · consolidação).
 const COMUNICACAO: NavItem[] = [
+  { href: "/admin/atendimentos", label: "Atendimentos", icon: ChatBubbleIcon },
   { href: "/admin/respostas-rapidas", label: "Respostas rápidas", icon: SparkIcon },
   { href: "/admin/avisos", label: "Avisos do dia", icon: BellIcon },
   { href: "/admin/mural", label: "Mural do professor", icon: TeacherIcon },
@@ -108,10 +116,17 @@ function NavLink({
       )}
       <Icon size={18} />
       {item.label}
-      {item.badge && (
-        <span className="ml-auto rounded-[5px] bg-brand-100 px-1.5 py-0.5 text-[9.5px] font-bold text-brand-700">
-          {item.badge}
+      {item.contador ? (
+        // Alguém está esperando resposta agora: cor de alerta, não de rótulo.
+        <span className="ml-auto min-w-[20px] rounded-full bg-danger px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+          {item.contador > 99 ? "99+" : item.contador}
         </span>
+      ) : (
+        item.badge && (
+          <span className="ml-auto rounded-[5px] bg-brand-100 px-1.5 py-0.5 text-[9.5px] font-bold text-brand-700">
+            {item.badge}
+          </span>
+        )
       )}
     </Link>
   );
@@ -132,6 +147,28 @@ export function Sidebar({
   const pathname = usePathname();
   const isActive = (href: string) =>
     href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
+
+  // Responsáveis esperando a secretaria (§6j). Polling curto porque, aqui, o atraso é
+  // sentido por uma pessoa real do outro lado do WhatsApp. Falha silenciosa de propósito:
+  // um badge que não atualizou não justifica um toast de erro atravessando o painel.
+  const [pendentes, setPendentes] = useState(0);
+  useEffect(() => {
+    let vivo = true;
+    const conferir = () => {
+      // Sem sessão (logout no meio do intervalo), nem tenta: a chamada dispararia o
+      // redirecionamento para o login por causa de um badge.
+      if (!getSessao()) return;
+      contarAtendimentosPendentes()
+        .then((n) => vivo && setPendentes(n))
+        .catch(() => undefined);
+    };
+    conferir();
+    const timer = setInterval(conferir, INTERVALO_PENDENTES_MS);
+    return () => {
+      vivo = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   // Fecha o drawer com Esc e trava o scroll do body enquanto aberto (só mobile).
   useEffect(() => {
@@ -177,7 +214,14 @@ export function Sidebar({
             COMUNICAÇÃO
           </div>
           {COMUNICACAO.map((item) => (
-            <NavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={onClose} />
+            <NavLink
+              key={item.href}
+              item={
+                item.href === "/admin/atendimentos" ? { ...item, contador: pendentes } : item
+              }
+              active={isActive(item.href)}
+              onNavigate={onClose}
+            />
           ))}
 
           <div className="px-2.5 pb-2 pt-3.5 text-[10px] font-bold tracking-[0.12em] text-n-400">

@@ -26,6 +26,12 @@ import { Button } from "@/components/ui/Button";
 import { Input, Field, Select, Textarea } from "@/components/ui/form";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
+import {
+  CamposExpediente,
+  EXPEDIENTE_PADRAO,
+  paraEntrada,
+  type EstadoExpediente,
+} from "@/components/admin/CamposExpediente";
 import { LicencaBadge } from "@/components/admin/LicencaBadge";
 import {
   PlusIcon,
@@ -147,6 +153,7 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
   const [whatsapp, setWhatsapp] = useState("");
   const [metaPhoneId, setMetaPhoneId] = useState("");
   const [contato, setContato] = useState("");
+  const [expediente, setExpediente] = useState<EstadoExpediente>(EXPEDIENTE_PADRAO);
   const [salvando, setSalvando] = useState(false);
 
   async function criar(e: React.FormEvent) {
@@ -163,13 +170,15 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
         slug.trim(),
         whatsapp.trim(),
         contato.trim(),
-        metaPhoneId.trim()
+        metaPhoneId.trim(),
+        paraEntrada(expediente)
       );
       setNome("");
       setSlug("");
       setWhatsapp("");
       setMetaPhoneId("");
       setContato("");
+      setExpediente(EXPEDIENTE_PADRAO);
       await onCriada();
       toast({ tone: "success", title: "Escola cadastrada." });
     } catch (err) {
@@ -237,6 +246,9 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
             />
           </Field>
         </div>
+        <div className="min-w-[280px]">
+          <CamposExpediente valor={expediente} onChange={setExpediente} />
+        </div>
         <Button type="submit" loading={salvando} leftIcon={<PlusIcon size={15} />}>
           {salvando ? "Salvando…" : "Cadastrar"}
         </Button>
@@ -258,6 +270,15 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
   const [whatsapp, setWhatsapp] = useState(escola.whatsapp_numero);
   const [metaPhoneId, setMetaPhoneId] = useState(escola.meta_phone_number_id);
   const [contato, setContato] = useState(escola.telefone_contato);
+  const [expediente, setExpediente] = useState<EstadoExpediente>(
+    escola.expediente
+      ? {
+          dias: escola.expediente.dias,
+          inicio: escola.expediente.inicio,
+          fim: escola.expediente.fim,
+        }
+      : EXPEDIENTE_PADRAO,
+  );
   const bloqueada = escola.licenca.status === "bloqueado";
   const cancelada = escola.licenca.status === "cancelado";
 
@@ -274,7 +295,8 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
         slug.trim(),
         whatsapp.trim(),
         contato.trim(),
-        metaPhoneId.trim()
+        metaPhoneId.trim(),
+        paraEntrada(expediente)
       );
       setEditando(false);
       await onMudou();
@@ -337,6 +359,9 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
           )}
           {escola.telefone_contato && (
             <span className="ml-2 text-n-500">· ☎ {escola.telefone_contato}</span>
+          )}
+          {escola.expediente && (
+            <span className="ml-2 text-n-500">· 🕗 {escola.expediente.descricao}</span>
           )}
           {escola.meta_phone_number_id ? (
             <span className="ml-2 text-n-500">· 🆔 {escola.meta_phone_number_id}</span>
@@ -414,6 +439,15 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
                 setWhatsapp(escola.whatsapp_numero);
                 setMetaPhoneId(escola.meta_phone_number_id);
                 setContato(escola.telefone_contato);
+                setExpediente(
+                  escola.expediente
+                    ? {
+                        dias: escola.expediente.dias,
+                        inicio: escola.expediente.inicio,
+                        fim: escola.expediente.fim,
+                      }
+                    : EXPEDIENTE_PADRAO,
+                );
               }}
             >
               Cancelar
@@ -459,6 +493,7 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
               WhatsApp recebido é roteado para cá — sem ele, o inbound desta escola é descartado.
             </p>
           </Field>
+          <CamposExpediente valor={expediente} onChange={setExpediente} />
         </form>
       </Modal>
 

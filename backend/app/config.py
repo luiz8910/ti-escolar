@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # sem acionar a LLM. 0 desativa o limite.
     mensagem_pai_max_chars: int = 1000
 
+    # Atendimento humano (§6j)
+    # Nome do template **aprovado na Meta** usado para reabrir uma conversa cuja janela de
+    # 24h expirou (a secretaria só viu o recado no dia seguinte). Vazio = sem retomada: o
+    # painel recusa a resposta com erro explícito, em vez de deixá-la sumir na Graph API.
+    template_retomada_atendimento: str = ""
+
     # Licenciamento / avisos por e-mail
     # Janela (em dias) para avisar que a licença anual está perto de vencer.
     license_warning_days: int = 30

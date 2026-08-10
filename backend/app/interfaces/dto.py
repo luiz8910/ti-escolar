@@ -51,6 +51,9 @@ class UsuarioSaida(BaseModel):
     email: str
     papel: str
     tenant_id: UUID | None = None
+    # Funcionária desligada continua no cadastro (histórico), mas sem acesso ao painel.
+    ativo: bool = True
+    criado_em: datetime | None = None
 
 
 class TokenSaida(BaseModel):
@@ -66,6 +69,14 @@ class CriarUsuarioEntrada(BaseModel):
     senha: str
     papel: str = Field(..., examples=["tenant_admin", "super_admin"])
     tenant_id: UUID | None = None
+
+
+class AtualizarUsuarioEntrada(BaseModel):
+    """Edição de usuário. Campo ausente = não mexer; senha vazia = manter a atual."""
+
+    nome: str | None = None
+    senha: str | None = None
+    ativo: bool | None = None
 
 
 class GrupoEntrada(BaseModel):
@@ -122,6 +133,24 @@ class EscolaEntrada(BaseModel):
     meta_phone_number_id: str = ""
     # Telefone de contato público (E.164) da escola — **obrigatório**, apenas informativo.
     telefone_contato: str = ""
+    # Expediente da secretaria (§6j) — governa o encaminhamento do atendimento humano.
+    # Campo ausente (``None``) mantém o valor atual; dias no padrão ISO (1=seg … 7=dom).
+    expediente_dias: list[int] | None = None
+    expediente_inicio: str | None = None  # "HH:MM"
+    expediente_fim: str | None = None  # "HH:MM"
+    expediente_timezone: str | None = None
+
+
+class ExpedienteSaida(BaseModel):
+    """Expediente da secretaria, já formatado para o painel e para o assistente."""
+
+    dias: list[int]
+    inicio: str  # "HH:MM"
+    fim: str  # "HH:MM"
+    timezone: str
+    # "segunda a sexta, das 7h30 às 17h" — a frase que o responsável ouve.
+    descricao: str
+    aberto_agora: bool
 
 
 class LicencaSaida(BaseModel):
@@ -148,6 +177,7 @@ class EscolaSaida(BaseModel):
     whatsapp_numero: str = ""
     meta_phone_number_id: str = ""
     telefone_contato: str = ""
+    expediente: ExpedienteSaida | None = None
     criado_em: datetime
     licenca: LicencaSaida
 
@@ -159,6 +189,7 @@ class EscolaResumoSaida(BaseModel):
     whatsapp_numero: str = ""
     meta_phone_number_id: str = ""
     telefone_contato: str = ""
+    expediente: ExpedienteSaida | None = None
     criado_em: datetime
     total_conversas: int
     total_contatos: int
@@ -1128,3 +1159,61 @@ class AlunosPaginaSaida(BaseModel):
 class PaisPaginaSaida(BaseModel):
     itens: list[PaiSaida]
     meta: PaginaMeta
+
+
+# --------------------------------------------------------------------------- #
+# Atendimento humano — fila da secretaria (§6j)
+# --------------------------------------------------------------------------- #
+class AtendimentoSaida(BaseModel):
+    id: UUID
+    conversa_id: UUID
+    contato: str
+    contato_nome: str = ""
+    motivo: str = ""
+    status: str
+    fora_expediente: bool = False
+    atendente_id: UUID | None = None
+    atendente_nome: str = ""
+    # Quanto tempo o responsável esperou até alguém assumir (ordena a fila na cabeça de
+    # quem atende, mesmo quando a lista já vem ordenada).
+    minutos_de_espera: int = 0
+    # Janela de 24h da Meta: fechada, o texto livre é recusado e a resposta precisa de
+    # template aprovado (§A9). O painel avisa **antes** de a secretaria digitar.
+    janela_aberta: bool = True
+    janela_expira_em: datetime
+    ofereceu_em: datetime | None = None
+    confirmado_em: datetime | None = None
+    assumido_em: datetime | None = None
+    resolvido_em: datetime | None = None
+    criado_em: datetime
+    atualizado_em: datetime
+
+
+class AtendimentosPaginaSaida(BaseModel):
+    itens: list[AtendimentoSaida]
+    meta: PaginaMeta
+
+
+class MensagemAtendimentoSaida(BaseModel):
+    """Uma mensagem da conversa, do ponto de vista de quem atende."""
+
+    autor: str  # "usuario" | "bot" | "atendente"
+    autor_nome: str = ""
+    texto: str
+    fontes: list[str] = []
+    criado_em: datetime
+
+
+class AtendimentoDetalheSaida(BaseModel):
+    atendimento: AtendimentoSaida
+    mensagens: list[MensagemAtendimentoSaida]
+
+
+class AtendimentoRespostaEntrada(BaseModel):
+    texto: str = Field(min_length=1)
+
+
+class AtendimentoPendentesSaida(BaseModel):
+    """Contador do badge do painel: responsáveis esperando a secretaria agora."""
+
+    pendentes: int

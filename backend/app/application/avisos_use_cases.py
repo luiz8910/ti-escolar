@@ -1,7 +1,7 @@
 """Casos de uso dos avisos temporizados da escola.
 
 Um aviso vigente é respondido automaticamente pelo bot a quem inicia a conversa
-(ver a integração em ``ReceberMensagemRecebida``). A camada de aplicação só orquestra
+(ver a integração em ``AtenderConversa``). A camada de aplicação só orquestra
 a porta ``AvisoTemporizadoRepository``; sem framework/ORM/SDK.
 """
 

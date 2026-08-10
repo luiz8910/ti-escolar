@@ -32,13 +32,30 @@ from app.infrastructure.db.models import (
 
 
 def _to_mensagem(row: MensagemORM) -> Mensagem:
+    try:
+        autor = Autor(row.autor)
+    except ValueError:  # autor gravado por uma versão futura/antiga: não quebra a leitura
+        autor = Autor.USUARIO
     return Mensagem(
         id=row.id,
         conversa_id=row.conversa_id,
-        autor=Autor.BOT if row.autor == "bot" else Autor.USUARIO,
+        autor=autor,
         texto=row.texto,
         fontes=[f for f in row.fontes.split("|") if f],
         criado_em=row.criado_em,
+        autor_nome=row.autor_nome,
+    )
+
+
+def _to_template(row: TemplateORM) -> MessageTemplate:
+    return MessageTemplate(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        nome=row.nome,
+        categoria=CategoriaTemplate(row.categoria),
+        idioma=row.idioma,
+        corpo=row.corpo,
+        status=StatusTemplate(row.status),
     )
 
 
@@ -66,7 +83,13 @@ class SqlConversaRepository:
         )
 
     async def adicionar_mensagem(
-        self, *, conversa_id: uuid.UUID, autor: str, texto: str, fontes: list[str] | None = None
+        self,
+        *,
+        conversa_id: uuid.UUID,
+        autor: str,
+        texto: str,
+        fontes: list[str] | None = None,
+        autor_nome: str = "",
     ) -> None:
         self._s.add(
             MensagemORM(
@@ -76,6 +99,7 @@ class SqlConversaRepository:
                 texto=texto,
                 fontes="|".join(fontes or []),
                 criado_em=_now(),
+                autor_nome=autor_nome,
             )
         )
         await self._s.flush()
@@ -90,8 +114,14 @@ class SqlConversaRepository:
         )
         rows = (await self._s.execute(stmt)).scalars().all()
         rows = rows[-limite:]
+        # A fala da secretaria ("atendente") é da escola, não do responsável: entra como
+        # ``assistant``. Classificá-la como ``user`` faria o assistente ler a própria
+        # escola como se fosse o pai perguntando.
         return [
-            {"role": "assistant" if m.autor == "bot" else "user", "content": m.texto}
+            {
+                "role": "assistant" if m.autor in ("bot", "atendente") else "user",
+                "content": m.texto,
+            }
             for m in rows
         ]
 
@@ -187,15 +217,17 @@ class SqlTemplateRepository:
         row = await self._s.get(TemplateORM, template_id)
         if row is None or row.tenant_id != tenant_id:
             return None
-        return MessageTemplate(
-            id=row.id,
-            tenant_id=row.tenant_id,
-            nome=row.nome,
-            categoria=CategoriaTemplate(row.categoria),
-            idioma=row.idioma,
-            corpo=row.corpo,
-            status=StatusTemplate(row.status),
+        return _to_template(row)
+
+    async def por_nome(self, *, tenant_id: uuid.UUID, nome: str) -> MessageTemplate | None:
+        nome = (nome or "").strip()
+        if not nome:
+            return None
+        stmt = select(TemplateORM).where(
+            TemplateORM.tenant_id == tenant_id, TemplateORM.nome == nome
         )
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_template(row) if row else None
 
 
 class SqlBroadcastRepository:

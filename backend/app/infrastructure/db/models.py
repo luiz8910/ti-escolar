@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -12,10 +12,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -62,6 +64,18 @@ class TenantORM(Base):
     # Cancelamento (churn): data e motivo da saída da plataforma.
     cancelado_em: Mapped[datetime | None] = mapped_column(nullable=True)
     motivo_cancelamento: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Expediente da secretaria (§6j). Os dias vão como CSV de inteiros ISO ("1,2,3,4,5"):
+    # é lista curta e imutável, e uma tabela filha só para isso não pagaria a junção.
+    expediente_dias: Mapped[str] = mapped_column(
+        String(20), default="1,2,3,4,5", server_default="1,2,3,4,5"
+    )
+    expediente_inicio: Mapped[time] = mapped_column(
+        Time, default=time(7, 30), server_default="07:30"
+    )
+    expediente_fim: Mapped[time] = mapped_column(Time, default=time(17, 0), server_default="17:00")
+    expediente_timezone: Mapped[str] = mapped_column(
+        String(64), default="America/Sao_Paulo", server_default="America/Sao_Paulo"
+    )
 
 
 class ConversaORM(Base):
@@ -88,7 +102,11 @@ class MensagemORM(Base):
     conversa_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("conversas.id"), index=True
     )
+    # "usuario" (o responsável), "bot" (o assistente) ou "atendente" (a secretaria, §6j).
     autor: Mapped[str] = mapped_column(String(20))
+    # Quem da secretaria respondeu — só preenchido quando ``autor == "atendente"``. Sem
+    # isso o histórico mostra que uma pessoa respondeu, mas não qual.
+    autor_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
     texto: Mapped[str] = mapped_column(Text)
     fontes: Mapped[str] = mapped_column(Text, default="")  # separadas por "|"
     criado_em: Mapped[datetime] = mapped_column()
@@ -782,3 +800,49 @@ class LogAplicacaoORM(Base):
     )
     excecao: Mapped[str] = mapped_column(Text, default="", server_default="")
     metadados: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+# --------------------------------------------------------------------------- #
+# Atendimento humano: o assistente passa a conversa para a secretaria (§6j)
+# --------------------------------------------------------------------------- #
+class AtendimentoHumanoORM(Base):
+    __tablename__ = "atendimentos_humanos"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    # Sem índice próprio em tenant_id/conversa_id/status: são prefixo dos índices
+    # compostos declarados em __table_args__ (ver a migration 0029).
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("tenants.id"))
+    conversa_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("conversas.id")
+    )
+    contato: Mapped[str] = mapped_column(String(50), index=True)
+    contato_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    motivo: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[str] = mapped_column(String(20), default="oferecido", server_default="oferecido")
+    ofereceu_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    confirmado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    fora_expediente: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    # Atendente da secretaria (um ``usuarios`` com papel tenant_admin). ON DELETE SET NULL:
+    # desligar a funcionária não pode apagar o histórico de quem respondeu ao responsável.
+    atendente_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    atendente_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # Base da janela de 24h da Meta para texto livre (ver AtendimentoHumano).
+    ultima_mensagem_responsavel_em: Mapped[datetime] = mapped_column()
+    assumido_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    resolvido_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column()
+
+    __table_args__ = (
+        # A fila de uma escola, mais antiga primeiro — a consulta quente do painel.
+        Index("ix_atendimentos_tenant_status_criado", "tenant_id", "status", "criado_em"),
+        # "esta conversa tem atendimento na fila?" roda a cada mensagem do inbound.
+        Index("ix_atendimentos_conversa_status", "conversa_id", "status"),
+    )

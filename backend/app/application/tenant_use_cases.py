@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.application.paginacao import (
     POR_PAGINA_PADRAO,
@@ -20,6 +22,7 @@ from app.application.paginacao import (
     normalizar_paginacao,
 )
 from app.domain.entities import (
+    TIMEZONE_PADRAO,
     Broadcast,
     Conversa,
     FichaFinanceiraEscola,
@@ -113,6 +116,60 @@ def normalizar_meta_phone_number_id(bruto: str) -> str:
     return bruto
 
 
+def normalizar_hora(bruto: str, campo: str) -> time:
+    """``"07:30"`` (o que o ``<input type="time">`` manda) → ``time(7, 30)``."""
+    bruto = (bruto or "").strip()
+    try:
+        horas, _, minutos = bruto.partition(":")
+        return time(int(horas), int(minutos or 0))
+    except ValueError as e:
+        raise ValueError(f"{campo} inválido: use o formato HH:MM (ex.: 07:30).") from e
+
+
+def normalizar_expediente(
+    *,
+    dias: Sequence[int] | None,
+    inicio: str | None,
+    fim: str | None,
+    fuso: str | None,
+    atual: Tenant | None = None,
+) -> tuple[tuple[int, ...], time, time, str]:
+    """Valida o expediente da secretaria; campo omitido mantém o valor atual.
+
+    O expediente **governa comportamento** (o assistente promete atendimento agora ou no
+    próximo dia útil, §6j), então a validação é dura de propósito: dia fora de 1–7, janela
+    invertida ou fuso inexistente viram erro no cadastro, e não uma promessa errada feita a
+    um responsável às 23h.
+    """
+    base = atual or Tenant(nome="", slug="")
+
+    if dias is None:
+        dias_norm = base.expediente_dias
+    else:
+        dias_norm = tuple(sorted({int(d) for d in dias}))
+        if not dias_norm:
+            raise ValueError("Informe ao menos um dia de expediente da secretaria.")
+        if any(d < 1 or d > 7 for d in dias_norm):
+            raise ValueError("Dias de expediente inválidos: use 1 (segunda) a 7 (domingo).")
+
+    inicio_norm = (
+        base.expediente_inicio if inicio is None else normalizar_hora(inicio, "Início do expediente")
+    )
+    fim_norm = base.expediente_fim if fim is None else normalizar_hora(fim, "Fim do expediente")
+    if inicio_norm >= fim_norm:
+        raise ValueError("O fim do expediente precisa ser depois do início.")
+
+    fuso_norm = (fuso or "").strip() or (base.expediente_timezone or TIMEZONE_PADRAO)
+    try:
+        ZoneInfo(fuso_norm)
+    except (ZoneInfoNotFoundError, ValueError) as e:
+        raise ValueError(
+            f"Fuso horário inválido: {fuso_norm!r}. Use um nome IANA (ex.: America/Sao_Paulo)."
+        ) from e
+
+    return dias_norm, inicio_norm, fim_norm, fuso_norm
+
+
 async def _validar_whatsapp_unico(
     tenants: TenantRepository, *, numero: str, tenant_id: UUID | None = None
 ) -> None:
@@ -157,6 +214,10 @@ class CriarEscola:
         whatsapp_numero: str = "",
         telefone_contato: str = "",
         meta_phone_number_id: str = "",
+        expediente_dias: Sequence[int] | None = None,
+        expediente_inicio: str | None = None,
+        expediente_fim: str | None = None,
+        expediente_timezone: str | None = None,
     ) -> Tenant:
         _exige_super_admin(criador)
         nome = nome.strip()
@@ -168,6 +229,12 @@ class CriarEscola:
         numero = normalizar_whatsapp(whatsapp_numero)
         contato = normalizar_telefone_contato(telefone_contato)
         meta_id = normalizar_meta_phone_number_id(meta_phone_number_id)
+        dias, inicio, fim, fuso = normalizar_expediente(
+            dias=expediente_dias,
+            inicio=expediente_inicio,
+            fim=expediente_fim,
+            fuso=expediente_timezone,
+        )
         await _validar_whatsapp_unico(self._tenants, numero=numero)
         await _validar_meta_phone_number_id_unico(self._tenants, phone_number_id=meta_id)
         return await self._tenants.criar(
@@ -177,6 +244,10 @@ class CriarEscola:
                 whatsapp_numero=numero,
                 meta_phone_number_id=meta_id,
                 telefone_contato=contato,
+                expediente_dias=dias,
+                expediente_inicio=inicio,
+                expediente_fim=fim,
+                expediente_timezone=fuso,
             )
         )
 
@@ -213,6 +284,10 @@ class AtualizarEscola:
         whatsapp_numero: str = "",
         telefone_contato: str = "",
         meta_phone_number_id: str = "",
+        expediente_dias: Sequence[int] | None = None,
+        expediente_inicio: str | None = None,
+        expediente_fim: str | None = None,
+        expediente_timezone: str | None = None,
     ) -> Tenant:
         _exige_super_admin(criador)
         existente = await self._tenants.obter(tenant_id)
@@ -232,12 +307,23 @@ class AtualizarEscola:
         await _validar_meta_phone_number_id_unico(
             self._tenants, phone_number_id=meta_id, tenant_id=tenant_id
         )
+        dias, inicio, fim, fuso = normalizar_expediente(
+            dias=expediente_dias,
+            inicio=expediente_inicio,
+            fim=expediente_fim,
+            fuso=expediente_timezone,
+            atual=existente,
+        )
         # Renomear não mexe no licenciamento: preserva status/plano/expiração.
         existente.nome = nome
         existente.slug = slug
         existente.whatsapp_numero = numero
         existente.meta_phone_number_id = meta_id
         existente.telefone_contato = contato
+        existente.expediente_dias = dias
+        existente.expediente_inicio = inicio
+        existente.expediente_fim = fim
+        existente.expediente_timezone = fuso
         return await self._tenants.atualizar(existente)
 
 

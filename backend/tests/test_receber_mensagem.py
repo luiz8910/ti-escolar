@@ -1,59 +1,40 @@
-"""Testa o roteamento inbound: dúvida simples vs. pedido de documento."""
+"""Testa a recuperação e o envio de documentos ao responsável.
+
+O roteamento "isto é pedido de documento?" deixou de ser por palavra-chave: quem decide
+hoje é o modelo, chamando a ferramenta ``recuperar_documento`` (ver
+``tests/test_atender_conversa.py``). O que sobra aqui — e continua valendo em qualquer
+roteamento — é o comportamento do caso de uso que busca e entrega os arquivos.
+"""
 
 from __future__ import annotations
 
 import uuid
 
-from app.application.use_cases import (
-    ReceberMensagemRecebida,
-    RecuperarEEnviarDocumento,
-    ResponderDuvida,
-)
+from app.application.use_cases import RecuperarEEnviarDocumento
 from app.domain.entities import Documento
-from tests.fakes import (
-    FakeChannel,
-    FakeConversaRepo,
-    FakeDocumentSource,
-    FakeLLM,
-    FakeVectorStore,
-    fake_embedder,
-)
+from tests.fakes import FakeChannel, FakeDocumentSource
 
 TENANT = uuid.uuid4()
 
 
-def _montar(documentos=None):
-    responder = ResponderDuvida(
-        embedder=fake_embedder(), store=FakeVectorStore(), llm=FakeLLM()
-    )
-    canal = FakeChannel()
-    docs = RecuperarEEnviarDocumento(
-        source=FakeDocumentSource(documentos or []), canal=canal
-    )
-    return (
-        ReceberMensagemRecebida(
-            conversas=FakeConversaRepo(), responder=responder, documentos=docs
-        ),
-        canal,
-    )
-
-
-async def test_duvida_simples_nao_envia_documento():
-    uc, canal = _montar()
-    resp = await uc.executar(tenant_id=TENANT, contato="+551199", texto="Qual o horário?")
-    assert resp.documentos == []
+async def test_sem_documento_correspondente_nao_envia_nada():
+    uc = RecuperarEEnviarDocumento(source=FakeDocumentSource([]), canal=(canal := FakeChannel()))
+    entregues = await uc.executar(tenant_id=TENANT, contato="+551199", consulta="boletim")
+    assert entregues == []
     assert canal.enviados == []
 
 
-async def test_pedido_de_boletim_envia_documento():
+async def test_documento_encontrado_e_enviado_ao_responsavel():
     doc = Documento(tenant_id=TENANT, nome="Boletim.pdf", categoria="boletim", url="http://x")
-    uc, canal = _montar([doc])
-    resp = await uc.executar(
-        tenant_id=TENANT, contato="+551199", texto="Quero a segunda via do meu boletim"
+    canal = FakeChannel()
+    uc = RecuperarEEnviarDocumento(source=FakeDocumentSource([doc]), canal=canal)
+
+    entregues = await uc.executar(
+        tenant_id=TENANT, contato="+551199", consulta="segunda via do boletim"
     )
-    assert len(resp.documentos) == 1
+
+    assert [d.nome for d in entregues] == ["Boletim.pdf"]
     assert canal.enviados == [("+551199", "documento")]
-    assert "Boletim.pdf" in resp.texto
 
 
 class _CanalQueFalhaNoDoc(FakeChannel):
@@ -61,21 +42,14 @@ class _CanalQueFalhaNoDoc(FakeChannel):
         raise RuntimeError("canal rejeitou a mídia (ex.: URL inacessível)")
 
 
-async def test_falha_ao_enviar_documento_nao_derruba_atendimento():
-    # Uma falha de entrega de documento (canal real recusando a mídia mock) não pode
-    # abortar a resposta: o usuário ainda recebe o texto; documentos não entregues saem.
+async def test_falha_ao_enviar_documento_nao_derruba_o_atendimento():
+    # Uma falha de entrega (canal real recusando a mídia) não pode abortar o atendimento
+    # inteiro: só o documento não entregue sai da lista, e o assistente segue respondendo.
     doc = Documento(tenant_id=TENANT, nome="Boletim.pdf", categoria="boletim", url="http://x")
-    responder = ResponderDuvida(
-        embedder=fake_embedder(), store=FakeVectorStore(), llm=FakeLLM()
-    )
-    docs = RecuperarEEnviarDocumento(
+    uc = RecuperarEEnviarDocumento(
         source=FakeDocumentSource([doc]), canal=_CanalQueFalhaNoDoc()
     )
-    uc = ReceberMensagemRecebida(
-        conversas=FakeConversaRepo(), responder=responder, documentos=docs
-    )
-    resp = await uc.executar(
-        tenant_id=TENANT, contato="+551199", texto="Quero a segunda via do meu boletim"
-    )
-    assert resp.documentos == []  # nada entregue → não anuncia documento
-    assert resp.texto  # a resposta de texto foi preservada
+
+    entregues = await uc.executar(tenant_id=TENANT, contato="+551199", consulta="boletim")
+
+    assert entregues == []  # nada entregue → nada é anunciado ao responsável
