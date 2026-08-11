@@ -6,7 +6,13 @@ Mantêm a seleção de provedor fora do domínio e das interfaces.
 from __future__ import annotations
 
 from app.config import Settings
-from app.domain.ports import EmailSender, Embedder, LLMProvider, MessageChannel
+from app.domain.ports import (
+    EmailSender,
+    Embedder,
+    FonteMidia,
+    LLMProvider,
+    MessageChannel,
+)
 from app.infrastructure.channel.demo_channel import DemoMessageChannel
 from app.infrastructure.llm.fake_provider import FakeEmbedder, FakeLLMProvider
 
@@ -77,6 +83,22 @@ def criar_canal(settings: Settings) -> MessageChannel:
             access_token=settings.meta_access_token or "",
         )
     return _demo_channel
+
+
+def criar_fonte_midia(settings: Settings) -> FonteMidia:
+    """Adaptador de download de mídia, alinhado ao canal **efetivo** (§9c).
+
+    Amarrado a ``canal_efetivo`` e não a ``MESSAGE_CHANNEL`` pelo mesmo motivo do canal:
+    ``meta`` sem token cai no demo, e um baixador que tentasse falar com a Graph API sem
+    credencial só produziria erro repetido a cada foto que um pai enviasse.
+    """
+    if canal_efetivo(settings) == "meta":
+        from app.infrastructure.channel.meta_midia import MetaFonteMidia
+
+        return MetaFonteMidia(access_token=settings.meta_access_token or "")
+    from app.infrastructure.channel.meta_midia import FonteMidiaIndisponivel
+
+    return FonteMidiaIndisponivel()
 
 
 def criar_email_sender(settings: Settings) -> EmailSender:

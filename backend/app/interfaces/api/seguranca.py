@@ -54,6 +54,7 @@ def _config_atual(settings: Settings) -> ConfiguracaoSeguranca:
         seed_demo_habilitado=settings.seed_demo,
         logs_persistidos=settings.log_persistir,
         logs_retencao_dias=settings.log_retencao_dias,
+        documento_retencao_dias=settings.documento_retencao_dias,
     )
 
 

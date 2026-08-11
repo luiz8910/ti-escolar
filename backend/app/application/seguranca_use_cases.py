@@ -55,6 +55,9 @@ class ConfiguracaoSeguranca:
     # Token da Meta presente. Com ``canal`` diz se o WhatsApp está mesmo no ar: pedir "meta"
     # sem token faz a aplicação subir no canal demo, calada.
     meta_access_token_definido: bool = False
+    # Retenção dos documentos que os pais enviam (§6k). 0 = sem expurgo, e o que fica
+    # guardado para sempre é dado sensível de criança.
+    documento_retencao_dias: int = 0
 
 
 # Segredos que vêm no .env.example e nunca devem sobreviver ao deploy.
@@ -465,6 +468,30 @@ class AvaliarPosturaSeguranca:
                     )
                 ),
                 referencia="CLAUDE.md §16 · app/infrastructure/logs.py",
+            ),
+            MedidaSeguranca(
+                chave="retencao_documentos",
+                titulo="Prazo de retenção dos documentos recebidos dos pais",
+                categoria="Rastreabilidade",
+                descricao=(
+                    "Todo arquivo que um responsável envia pelo WhatsApp (§6k) nasce com data de expurgo, e a rotina apaga os bytes e o metadado quando o prazo vence."
+                ),
+                risco=(
+                    "É o dado mais sensível da base: atestado médico é dado de saúde de criança (LGPD arts. 11 e 14). Sem prazo, o repositório vira passivo permanente — e um vazamento futuro alcança documento que a escola nem precisava mais ter."
+                ),
+                status=(
+                    StatusMedida.ATIVA
+                    if c.documento_retencao_dias > 0
+                    else StatusMedida.ATENCAO
+                ),
+                detalhe=(
+                    f"DOCUMENTO_RETENCAO_DIAS={c.documento_retencao_dias}: cada arquivo recebe expira_em no momento em que chega. O expurgo ainda depende de alguém acionar POST /api/admin/documentos/expurgar — falta o job agendado."
+                    if c.documento_retencao_dias > 0
+                    else (
+                        "DOCUMENTO_RETENCAO_DIAS=0: os arquivos enviados pelos responsáveis ficam guardados indefinidamente."
+                    )
+                ),
+                referencia="CLAUDE.md §6k · app/application/documentos_use_cases.py",
             ),
             MedidaSeguranca(
                 chave="auditoria",

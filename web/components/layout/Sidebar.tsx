@@ -49,6 +49,7 @@ const PRINCIPAL: NavItem[] = [
 // Comunicação interna e atendimento (Onda 1 · Rosa Cury + Onda 2 · consolidação).
 const COMUNICACAO: NavItem[] = [
   { href: "/admin/atendimentos", label: "Atendimentos", icon: ChatBubbleIcon },
+  { href: "/admin/documentos", label: "Documentos recebidos", icon: FileIcon },
   { href: "/admin/respostas-rapidas", label: "Respostas rápidas", icon: SparkIcon },
   { href: "/admin/avisos", label: "Avisos do dia", icon: BellIcon },
   { href: "/admin/mural", label: "Mural do professor", icon: TeacherIcon },
