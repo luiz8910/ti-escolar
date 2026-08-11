@@ -27,7 +27,7 @@
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **WABA inscrita no app** (`subscribed_apps`) | ✅ **Feita** (10/ago/2026) — sem interface no console, ver §5.1 |
 | **Inbound real ponta a ponta** | ✅ **Funcionando** (10/ago/2026) — mensagem de WhatsApp real recebida, respondida pelo bot e registrada no histórico da escola |
-| **Templates aprovados** | ⬜ Pendente |
+| **Templates aprovados** | ⚠️ `retomada_atendimento` **submetido em 10/ago/2026, em análise**; `hello_world` ativo. Ver §7.1 |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
 | **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada — falta **ligar** em produção |
@@ -387,7 +387,16 @@ responsável escreve sexta às 20h, a secretaria só vê na segunda de manhã, e
 | Nome | `retomada_atendimento` |
 | Categoria | **utility** |
 | Idioma | `pt_BR` |
-| Corpo | `Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}}` |
+| Corpo | `Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}} Se precisar de algo mais, é só responder por aqui.` |
+
+> ⚠️ **A Meta recusa template que termine em variável** ("As variáveis não podem estar no
+> início ou no fim do modelo"). O corpo original terminava em `{{2}}` e foi recusado no
+> formulário; a frase final existe para satisfazer essa regra, não por estilo. A ordem dos
+> parâmetros não mudou — `EnviarTemplate` segue passando `[nome_da_escola, resposta]`.
+
+**Amostras exigidas na submissão** (só para a revisão; não vão ao responsável):
+`{{1}}` = `EM Rosa Cury`, `{{2}}` = `a declaração de escolaridade já está pronta e pode ser
+retirada na secretaria.`
 
 Depois de **aprovado** pela Meta, cadastre o mesmo nome/idioma em `templates` no banco com
 `status = aprovado` e preencha `TEMPLATE_RETOMADA_ATENDIMENTO=retomada_atendimento` no Render.
