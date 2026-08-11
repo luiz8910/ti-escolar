@@ -379,7 +379,7 @@ async def test_janela_expirada_com_template_aprovado_reabre_a_conversa():
         nome="retomada_atendimento",
         categoria=CategoriaTemplate.UTILITY,
         idioma="pt_BR",
-        corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}}",
+        corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}} Se precisar de algo mais, é só responder por aqui.",
         status=StatusTemplate.APROVADO,
     )
     canal = FakeChannel()
