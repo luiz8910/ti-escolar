@@ -1936,3 +1936,109 @@ export async function atualizarUsuario(
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao atualizar usuário`);
   return resp.json();
 }
+
+// --------------------------------------------------------------------------- //
+// Documentos que os responsáveis enviam pelo WhatsApp (§6k)
+// --------------------------------------------------------------------------- //
+export type CategoriaDocumento = "matricula" | "atestado" | "comprovante" | "outro";
+export type StatusDocumento = "recebido" | "processado" | "descartado";
+
+export interface DocumentoRecebido {
+  id: string;
+  conversa_id: string;
+  contato: string;
+  contato_nome: string;
+  nome_arquivo: string;
+  mime: string;
+  tamanho: number;
+  tamanho_legivel: string;
+  eh_imagem: boolean;
+  observacao: string;
+  categoria: CategoriaDocumento;
+  /** Palpite da heurística pela legenda — sugestão, não decisão. */
+  categoria_sugerida: CategoriaDocumento | null;
+  status: StatusDocumento;
+  aluno_id: string | null;
+  aluno_nome: string;
+  atendimento_id: string | null;
+  /** Prazo de retenção (LGPD): depois disso o arquivo é apagado. */
+  expira_em: string | null;
+  processado_em: string | null;
+  criado_em: string;
+}
+
+export interface DocumentosPagina {
+  itens: DocumentoRecebido[];
+  meta: PaginaMeta;
+}
+
+export async function listarDocumentos(opcoes: {
+  categoria?: string;
+  status?: string;
+  alunoId?: string;
+  pagina?: number;
+  porPagina?: number;
+} = {}): Promise<DocumentosPagina> {
+  const params = new URLSearchParams({
+    pagina: String(opcoes.pagina ?? 1),
+    por_pagina: String(opcoes.porPagina ?? 25),
+  });
+  if (opcoes.categoria) params.set("categoria", opcoes.categoria);
+  if (opcoes.status) params.set("status", opcoes.status);
+  if (opcoes.alunoId) params.set("aluno_id", opcoes.alunoId);
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/tenant/${tenantEmFoco()}?${params.toString()}`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao listar documentos`);
+  return resp.json();
+}
+
+/**
+ * Baixa o arquivo e devolve um object URL temporário.
+ *
+ * Não há link direto de propósito: o conteúdo é dado sensível de menor e só sai pela API
+ * autenticada. Quem chama **precisa** dar `URL.revokeObjectURL` depois — senão os bytes
+ * ficam na memória da aba.
+ */
+export async function baixarDocumento(id: string): Promise<{ url: string; nome: string }> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/${id}/arquivo?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao baixar o arquivo`);
+  const blob = await resp.blob();
+  const disposicao = resp.headers.get("Content-Disposition") ?? "";
+  const nome = /filename="?([^"]+)"?/.exec(disposicao)?.[1] ?? `documento-${id}`;
+  return { url: URL.createObjectURL(blob), nome };
+}
+
+export async function classificarDocumento(
+  id: string,
+  dados: {
+    categoria?: CategoriaDocumento;
+    status?: StatusDocumento;
+    aluno_id?: string | null;
+    observacao?: string;
+  },
+): Promise<DocumentoRecebido> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/${id}?tenant_id=${tenantEmFoco()}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(dados),
+    },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao classificar`);
+  return resp.json();
+}
+
+export async function expurgarDocumentos(): Promise<{ removidos: number; falhas: number }> {
+  const resp = await apiFetch(`${API_URL}/api/admin/documentos/expurgar`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao expurgar`);
+  return resp.json();
+}

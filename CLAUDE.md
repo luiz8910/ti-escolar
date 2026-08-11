@@ -145,7 +145,8 @@ ti-escolar/
   `CotaImpressao` (franquia mensal de impressão), `AvisoFalta` (falta de professor +
   chamada de eventual), `FichaMatricula` (ficha de matrícula digital, 1:1 com `Aluno`) e
   `SolicitacaoMatricula` (matrícula self-service pelo WhatsApp) e
-  `AtendimentoHumano` (fila da secretaria quando o assistente encaminha a conversa).
+  `AtendimentoHumano` (fila da secretaria quando o assistente encaminha a conversa) e
+  `DocumentoRecebido` (arquivo que o responsável enviou pelo WhatsApp).
   `Contato` tem flag `ativo` (responsável inativo — todos os alunos já são ex-alunos).
 - **Embeddings:** tabela `conhecimento` com coluna `vector` (pgvector) + metadados para RAG;
   `fonte_id` liga cada trecho à `FonteConhecimento` que o originou.
@@ -159,7 +160,7 @@ ti-escolar/
   `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula` →
   `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id` → `0025_controle_taxa` →
   `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete` →
-  `0029_atendimento_humano`.
+  `0029_atendimento_humano` → `0030_documentos_recebidos`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -641,6 +642,66 @@ resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro
 - **[Roadmap]** notificar o atendente por WhatsApp/e-mail (exige `Usuario.telefone`);
   feriados no expediente.
 
+### 6k. Documentos recebidos dos responsáveis pelo WhatsApp
+
+A dor é de época de matrícula, e é concreta: hoje a foto do atestado, do RG e do
+comprovante de residência chega **no celular pessoal de alguém da secretaria**. O
+documento vira responsabilidade daquela pessoa — se ela falta, tira férias ou troca de
+aparelho, o documento some, e a escola não tem nem como saber que ele existiu. Aqui o
+arquivo passa a pertencer à escola, ligado à conversa que o originou.
+
+- **`DocumentoRecebido`** (migration `0030_documentos_recebidos`): `categoria` ∈
+  {`matricula`, `atestado`, `comprovante`, `outro`}, `status` ∈ {`recebido`, `processado`,
+  `descartado`}, vínculos opcionais com `Aluno` e com o `AtendimentoHumano` aberto (§6j),
+  `media_id` para deduplicar reentrega, e **`expira_em` preenchido no nascimento**.
+- **Duas tabelas, de propósito.** `documentos_recebidos` é **negócio** (o que a secretaria
+  consulta e classifica); `arquivos_armazenados` é **infraestrutura** — os bytes, hoje em
+  `bytea`. A separação é o que permite trocar o armazenamento sem tocar nos metadados.
+- **Porta `ArquivoStorage`** com `PostgresArquivoStorage` (produção hoje) e
+  `ArquivoStorageMemoria` (testes). **Dito sem rodeio:** guardar atestado médico num banco
+  cobrado por GB é aceitável para começar, não para sempre — uma escola em época de
+  matrícula sobe centenas de fotos. O adaptador de object storage (Cloudflare R2, conta
+  que já existe pela landing page, sem custo de egress) é **[Roadmap]**, e a porta existe
+  para que ele entre barato. Não foi implementado às cegas: sem credencial para testar
+  contra o serviço real, iria para produção sem nunca ter escrito um byte.
+- **Porta `FonteMidia`** + `MetaFonteMidia`: na Meta o download tem **dois passos**
+  (`GET /{media_id}` → URL **temporária**, que só entrega com o mesmo `Bearer`). Por isso o
+  arquivo é baixado **na hora** — guardar a URL daria um registro que expira sozinho em
+  minutos, e a secretaria descobriria isso no dia em que precisasse do atestado.
+- **Duas defesas antes de qualquer byte entrar no banco:** allowlist de MIME
+  (`MIMES_ACEITOS`: JPEG/PNG/WebP/PDF/DOC/DOCX) e teto de 16 MB, conferido **antes** pelo
+  `content-length` e **depois** pelo tamanho real — o cabeçalho é declarado pela outra
+  ponta. O inbound é público: quem descobre o número da escola manda o que quiser.
+- **Áudio fica de fora**, declarado: sem transcrição é um arquivo que alguém precisa parar
+  para ouvir, o oposto do que a feature promete.
+- **Inbound** (`ProcessarInboundMeta`): `image` e `document` deixaram de ser ignorados
+  (§9e.1). O arquivo entra no fio da conversa **antes** do download — se a Graph API
+  falhar, o histórico ainda mostra que o responsável tentou enviar algo, que é o que
+  permite cobrar o reenvio. A confirmação ("recebemos o seu arquivo") sai **mesmo com a
+  conversa em atendimento humano**: é recibo de entrega, não resposta ao assunto, e sem ela
+  o pai reenvia a mesma foto três vezes.
+- **Sugestão de finalidade sem LLM:** `sugerir_categoria` é heurística de palavra sobre a
+  legenda. Chamar o modelo para adivinhar o que a secretaria confirma em um clique não paga
+  a latência nem o custo — e palpite errado com ar de certeza é pior que nenhum palpite.
+  `categoria_sugerida` fica registrada à parte da confirmada.
+- **Rotas** `app/interfaces/api/documentos.py` (`/api/admin/documentos`): listar, detalhar,
+  **baixar**, classificar e `POST /expurgar` (super admin). Painel
+  `web/app/admin/documentos/`, com filtro padrão "a conferir" — a tela é fila de trabalho,
+  não arquivo morto.
+- **⚠️ LGPD — este é o dado mais sensível da base.** Atestado médico é dado de saúde de
+  criança (arts. 11 e 14). Quatro decisões vêm daí: **prazo de retenção**
+  (`DOCUMENTO_RETENCAO_DIAS`, default 365) com expurgo que apaga **bytes e metadado**
+  (manter "havia um atestado do aluno X" sem o arquivo seria tratamento sem utilidade);
+  **nenhuma URL pública** — os bytes só saem pelo endpoint autenticado, com `no-store`;
+  **todo download auditado** (`documento.baixar`, §13); e a **política de privacidade**
+  (`site/privacidade/`) declarando a categoria e o prazo. A medida `retencao_documentos`
+  entra no painel §14 e acusa `ATENCAO` se o prazo for 0.
+- **Cobertura:** `tests/test_documentos_recebidos.py` (25 testes: allowlist, teto, dedupe,
+  isolamento entre escolas, download de arquivo já expurgado, expurgo tolerante a falha,
+  envelope de mídia do webhook, áudio ignorado, texto intacto).
+- **[Roadmap]** adaptador R2; **job agendado** do expurgo (hoje depende de alguém clicar);
+  ligação automática com a `SolicitacaoMatricula` (§E1) e a `FichaMatricula` (§D3).
+
 ## 7. Camada de LLM
 
 - Contrato único: porta **`LLMProvider`** no domínio (ex.: `gerar(prompt/messages, opções) -> resposta`).
@@ -853,8 +914,8 @@ número. Como ficou:
      ficaria travada e a reentrega — que é a chance de acertar — seria descartada. Reserva
      abandonada há mais de 3 min é retomável. **[Roadmap]** fila/worker, para o `200` não
      depender da latência da LLM.
-   - **[Roadmap]** mídia (imagem/áudio/documento): hoje é ignorada com log, porque exige baixar
-     o `media_id` pela Graph API.
+   - **mídia**: `image` e `document` são baixados pela Graph API e guardados como
+     `DocumentoRecebido` (§6k). Áudio segue ignorado com log — exigiria transcrição.
 6. **Painel:** o `meta_phone_number_id` é editável no cadastro/edição de escola do super admin
    (`web/app/admin/escolas/`), e a lista marca com ⚠ a escola **sem id** — que é exatamente a
    que tem o inbound descartado.
@@ -1014,8 +1075,8 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   - [x] Idempotência **durável** do inbound (tabela `inbound_atendimento`, com estado
     `em_atendimento` × `concluida`, migration `0026`). **[ ] Falta a fila/worker**, para o
     `200 OK` não depender da latência da LLM (§9e.1).
-  - [ ] Inbound de **mídia** (imagem/áudio/documento): hoje é ignorado com log — exige baixar o
-    `media_id` pela Graph API.
+  - [x] Inbound de **mídia** (imagem/documento): baixado pela Graph API e guardado como
+    documento da escola (§6k). Áudio segue fora, por exigir transcrição.
   - [ ] Automação do registro de número na WABA pela Graph API (§9e.3).
 - [x] **Canal Meta WhatsApp Cloud API** como canal único do produto, com a **assinatura
   `X-Hub-Signature-256`** validada no webhook. Ver §9c e §9e.2.
@@ -1119,6 +1180,18 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   `TEMPLATE_RETOMADA_ATENDIMENTO`: sem ele, conversa com mais de 24h não pode ser
   respondida (o painel recusa com erro explícito, §A9). É um passo manual no WhatsApp
   Manager.
+
+**Documentos dos pais** _(ver §6k)_
+- [x] **Receber documento pelo WhatsApp** (imagem e PDF): baixado da Graph API, guardado na
+  escola, classificado e vinculado a um aluno no painel (`web/app/admin/documentos/`).
+- [x] **Retenção e expurgo** dos arquivos (dado sensível de menor), auditoria de download e
+  política de privacidade atualizada.
+- [ ] **Adaptador de object storage (Cloudflare R2)** — hoje os bytes vão para `bytea` no
+  Neon, que cobra por GB. A porta `ArquivoStorage` já existe; falta o bucket, os secrets e
+  o adaptador.
+- [ ] **Job agendado do expurgo** — o caso de uso está pronto, mas depende de alguém
+  chamar `POST /api/admin/documentos/expurgar`.
+- [ ] **Áudio** (exige transcrição) e ligação automática com `SolicitacaoMatricula` (§E1).
 
 **Limpeza de UI (remoções)**
 - [x] **Remover** a emissão de relatórios em **lista** de pais na seção "Salas e pais"

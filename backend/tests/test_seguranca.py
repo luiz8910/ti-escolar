@@ -84,6 +84,7 @@ def _config(**over) -> ConfiguracaoSeguranca:
         seed_demo_habilitado=False,
         logs_persistidos=True,
         logs_retencao_dias=14,
+        documento_retencao_dias=365,
     )
     base.update(over)
     return ConfiguracaoSeguranca(**base)
@@ -107,6 +108,15 @@ def test_canal_meta_sem_token_vira_atencao():
     medida = _medida(postura, "canal_efetivo")
     assert medida.status is StatusMedida.ATENCAO
     assert "META_ACCESS_TOKEN" in medida.detalhe
+    assert not postura.pronto_para_producao
+
+
+def test_sem_prazo_de_retencao_de_documentos_vira_atencao():
+    """Arquivo de responsável guardado para sempre é dado sensível de menor sem prazo."""
+    postura = AvaliarPosturaSeguranca().executar(config=_config(documento_retencao_dias=0))
+    medida = _medida(postura, "retencao_documentos")
+    assert medida.status is StatusMedida.ATENCAO
+    assert "indefinidamente" in medida.detalhe
     assert not postura.pronto_para_producao
 
 

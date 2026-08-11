@@ -964,3 +964,92 @@ class FakeAtendimentoHumanoRepo:
             raise ValueError("Atendimento não encontrado.")
         self.itens[atendimento.id] = atendimento
         return atendimento
+
+
+class FakeDocumentoRecebidoRepo:
+    """Metadados dos arquivos recebidos (§6k), em memória."""
+
+    def __init__(self) -> None:
+        self.itens: dict[uuid.UUID, object] = {}
+
+    async def criar(self, documento):
+        self.itens[documento.id] = documento
+        return documento
+
+    async def obter(self, *, tenant_id, documento_id):
+        d = self.itens.get(documento_id)
+        return d if d and d.tenant_id == tenant_id else None
+
+    async def por_media_id(self, *, tenant_id, media_id):
+        if not media_id:
+            return None
+        return next(
+            (
+                d
+                for d in self.itens.values()
+                if d.tenant_id == tenant_id and d.media_id == media_id
+            ),
+            None,
+        )
+
+    def _filtrados(self, *, tenant_id, categoria, status, aluno_id):
+        itens = [d for d in self.itens.values() if d.tenant_id == tenant_id]
+        if categoria is not None:
+            itens = [d for d in itens if d.categoria is categoria]
+        if status is not None:
+            itens = [d for d in itens if d.status is status]
+        if aluno_id is not None:
+            itens = [d for d in itens if d.aluno_id == aluno_id]
+        itens.sort(key=lambda d: d.criado_em, reverse=True)
+        return itens
+
+    async def listar(
+        self,
+        *,
+        tenant_id,
+        categoria=None,
+        status=None,
+        aluno_id=None,
+        pagina=None,
+        por_pagina=None,
+    ):
+        itens = self._filtrados(
+            tenant_id=tenant_id, categoria=categoria, status=status, aluno_id=aluno_id
+        )
+        return _fatiar(itens, pagina, por_pagina)
+
+    async def contar(self, *, tenant_id, categoria=None, status=None, aluno_id=None):
+        return len(
+            self._filtrados(
+                tenant_id=tenant_id, categoria=categoria, status=status, aluno_id=aluno_id
+            )
+        )
+
+    async def atualizar(self, documento):
+        self.itens[documento.id] = documento
+        return documento
+
+    async def expirados(self, *, limite=500):
+        agora = datetime.now(timezone.utc)
+        vencidos = [d for d in self.itens.values() if d.expira_em and d.expira_em <= agora]
+        vencidos.sort(key=lambda d: d.expira_em)
+        return vencidos[:limite]
+
+    async def remover(self, *, tenant_id, documento_id):
+        d = self.itens.get(documento_id)
+        if d is None or d.tenant_id != tenant_id:
+            return False
+        del self.itens[documento_id]
+        return True
+
+
+class FakeFonteMidia:
+    """Devolve um ``ArquivoBaixado`` roteirizado por ``media_id``."""
+
+    def __init__(self, arquivos: dict[str, object] | None = None) -> None:
+        self.arquivos = dict(arquivos or {})
+        self.baixados: list[str] = []
+
+    async def baixar(self, media_id: str):
+        self.baixados.append(media_id)
+        return self.arquivos.get(media_id)

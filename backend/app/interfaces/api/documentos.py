@@ -1,0 +1,234 @@
+"""Rotas dos documentos que os responsáveis enviam pelo WhatsApp (§6k).
+
+**O download é o ponto sensível desta rota.** O conteúdo é dado pessoal de criança e, com
+frequência, dado de saúde (atestado — LGPD arts. 11 e 14). Daí três escolhas:
+
+- não existe URL pública nem link assinado de longa duração: os bytes saem por este
+  endpoint, autenticado e escopado por tenant, ou não saem;
+- **todo download é auditado** (§13) — quem baixou o quê, quando;
+- a resposta vai como ``attachment`` com ``no-store``, para o arquivo não ficar em cache
+  de proxy nem de navegador compartilhado da secretaria.
+"""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+
+from app.application.documentos_use_cases import (
+    BaixarDocumentoRecebido,
+    ClassificarDocumento,
+    ExpurgarDocumentosVencidos,
+    ListarDocumentosRecebidos,
+    ObterDocumentoRecebido,
+)
+from app.application.paginacao import POR_PAGINA_PADRAO
+from app.domain.entities import (
+    CategoriaDocumento,
+    DocumentoRecebido,
+    StatusDocumento,
+    Usuario,
+)
+from app.infrastructure.db.repositories_admin import (
+    SqlAlunoRepository,
+    SqlAuditLogRepository,
+)
+from app.infrastructure.db.repositories_comunicacao import (
+    SqlDocumentoRecebidoRepository,
+)
+from app.interfaces.api.admin import (
+    _auditar_usuario,
+    _exige_acesso_tenant,
+    _exige_super_admin,
+    usuario_autenticado,
+)
+from app.interfaces.deps import (
+    get_aluno_repo,
+    get_audit_repo,
+    get_baixar_documento,
+    get_documento_repo,
+    get_expurgar_documentos,
+)
+from app.interfaces.dto import (
+    DocumentoClassificacaoEntrada,
+    DocumentoRecebidoSaida,
+    DocumentosPaginaSaida,
+    ExpurgoSaida,
+    PaginaMeta,
+)
+
+router = APIRouter(prefix="/api/admin/documentos", tags=["documentos-recebidos"])
+
+
+def _saida(d: DocumentoRecebido) -> DocumentoRecebidoSaida:
+    return DocumentoRecebidoSaida(
+        id=d.id,
+        conversa_id=d.conversa_id,
+        contato=d.contato,
+        contato_nome=d.contato_nome,
+        nome_arquivo=d.nome_arquivo,
+        mime=d.mime,
+        tamanho=d.tamanho,
+        tamanho_legivel=d.tamanho_legivel,
+        eh_imagem=d.eh_imagem,
+        observacao=d.observacao,
+        categoria=d.categoria.value,
+        categoria_sugerida=d.categoria_sugerida.value if d.categoria_sugerida else None,
+        status=d.status.value,
+        aluno_id=d.aluno_id,
+        aluno_nome=d.aluno_nome,
+        atendimento_id=d.atendimento_id,
+        expira_em=d.expira_em,
+        processado_em=d.processado_em,
+        criado_em=d.criado_em,
+    )
+
+
+def _enum(valor: str | None, tipo, rotulo: str):
+    if not valor:
+        return None
+    try:
+        return tipo(valor)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"{rotulo} inválido: {valor}"
+        ) from e
+
+
+@router.get("/tenant/{tenant_id}", response_model=DocumentosPaginaSaida)
+async def listar(
+    tenant_id: UUID,
+    categoria: str = Query(""),
+    status_filtro: str = Query("", alias="status"),
+    aluno_id: UUID | None = None,
+    pagina: int = 1,
+    por_pagina: int = POR_PAGINA_PADRAO,
+    usuario: Usuario = Depends(usuario_autenticado),
+    repo: SqlDocumentoRecebidoRepository = Depends(get_documento_repo),
+) -> DocumentosPaginaSaida:
+    _exige_acesso_tenant(usuario, tenant_id)
+    resultado = await ListarDocumentosRecebidos(documentos=repo).executar(
+        tenant_id=tenant_id,
+        categoria=_enum(categoria, CategoriaDocumento, "Categoria"),
+        status=_enum(status_filtro, StatusDocumento, "Status"),
+        aluno_id=aluno_id,
+        pagina=pagina,
+        por_pagina=por_pagina,
+    )
+    return DocumentosPaginaSaida(
+        itens=[_saida(d) for d in resultado.itens],
+        meta=PaginaMeta(
+            pagina=resultado.pagina,
+            por_pagina=resultado.por_pagina,
+            total=resultado.total,
+            total_paginas=resultado.total_paginas,
+        ),
+    )
+
+
+@router.get("/{documento_id}", response_model=DocumentoRecebidoSaida)
+async def detalhar(
+    documento_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    repo: SqlDocumentoRecebidoRepository = Depends(get_documento_repo),
+) -> DocumentoRecebidoSaida:
+    _exige_acesso_tenant(usuario, tenant_id)
+    documento = await ObterDocumentoRecebido(documentos=repo).executar(
+        tenant_id=tenant_id, documento_id=documento_id
+    )
+    if documento is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Documento não encontrado"
+        )
+    return _saida(documento)
+
+
+@router.get("/{documento_id}/arquivo", response_class=Response)
+async def baixar(
+    documento_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: BaixarDocumentoRecebido = Depends(get_baixar_documento),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> Response:
+    """Os bytes do arquivo. Autenticado, escopado por tenant e **auditado**."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    arquivo = await uc.executar(tenant_id=tenant_id, documento_id=documento_id)
+    if arquivo is None:
+        # Cobre as duas causas com a mesma resposta: documento de outra escola e arquivo
+        # já expurgado. Distinguir revelaria a existência do documento a quem não deveria.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Arquivo não disponível"
+        )
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="documento.baixar",
+        tenant_id=tenant_id,
+        descricao=f"Baixou o arquivo {arquivo.nome}",
+        metadados={"documento_id": str(documento_id), "mime": arquivo.mime},
+    )
+    return Response(
+        content=arquivo.conteudo,
+        media_type=arquivo.mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{arquivo.nome}"',
+            # Dado sensível não fica em cache de proxy nem do navegador da secretaria.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.put("/{documento_id}", response_model=DocumentoRecebidoSaida)
+async def classificar(
+    documento_id: UUID,
+    tenant_id: UUID,
+    payload: DocumentoClassificacaoEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    repo: SqlDocumentoRecebidoRepository = Depends(get_documento_repo),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> DocumentoRecebidoSaida:
+    """A secretaria confirma a finalidade, vincula o aluno e conclui o tratamento."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        documento = await ClassificarDocumento(documentos=repo, alunos=alunos).executar(
+            tenant_id=tenant_id,
+            documento_id=documento_id,
+            categoria=_enum(payload.categoria, CategoriaDocumento, "Categoria"),
+            status=_enum(payload.status, StatusDocumento, "Status"),
+            aluno_id=payload.aluno_id,
+            observacao=payload.observacao,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="documento.classificar",
+        tenant_id=tenant_id,
+        descricao=f"Classificou o documento como {documento.categoria.value}",
+        metadados={
+            "documento_id": str(documento.id),
+            "status": documento.status.value,
+            "aluno_id": str(documento.aluno_id) if documento.aluno_id else None,
+        },
+    )
+    return _saida(documento)
+
+
+@router.post("/expurgar", response_model=ExpurgoSaida)
+async def expurgar(
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: ExpurgarDocumentosVencidos = Depends(get_expurgar_documentos),
+) -> ExpurgoSaida:
+    """Apaga os arquivos cujo prazo de retenção venceu (LGPD).
+
+    Cross-tenant, por isso é do super admin: retenção é política da plataforma, não de uma
+    escola. **[Roadmap]** chamar isto por job agendado — hoje depende de alguém clicar.
+    """
+    _exige_super_admin(usuario)
+    resultado = await uc.executar()
+    return ExpurgoSaida(removidos=resultado.removidos, falhas=resultado.falhas)

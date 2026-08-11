@@ -1816,3 +1816,113 @@ class AtendimentoHumano:
         fim = self.assumido_em or agora or _now()
         base = self.confirmado_em or self.criado_em
         return max(0, int((fim - base).total_seconds() // 60))
+
+
+# --------------------------------------------------------------------------- #
+# Documentos recebidos dos responsáveis pelo WhatsApp (§6k)
+# --------------------------------------------------------------------------- #
+class CategoriaDocumento(str, enum.Enum):
+    """Para que serve o arquivo que o responsável mandou.
+
+    A sugestão vem da conversa (legenda + contexto), mas **quem confirma é a secretaria**:
+    classificar um atestado como "outro" é problema de prontuário, não de UX.
+    """
+
+    MATRICULA = "matricula"
+    ATESTADO = "atestado"
+    COMPROVANTE = "comprovante"
+    OUTRO = "outro"
+
+
+class StatusDocumento(str, enum.Enum):
+    RECEBIDO = "recebido"
+    PROCESSADO = "processado"
+    # Ilegível, duplicado ou fora de propósito. Mantém o registro de que chegou.
+    DESCARTADO = "descartado"
+
+
+# Só o que a secretaria consegue de fato usar. Áudio fica de fora: sem transcrição, é um
+# arquivo que alguém precisa parar para ouvir — o oposto do que a feature promete.
+MIMES_ACEITOS = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+)
+
+# Teto por arquivo. A Meta já limita a mídia, mas o teto aqui é nosso: protege o banco e
+# deixa o limite explícito em vez de herdado.
+TAMANHO_MAXIMO_DOCUMENTO = 16 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ArquivoBaixado:
+    """Bytes de uma mídia recuperada do canal, com o que se sabe sobre ela."""
+
+    conteudo: bytes
+    mime: str
+    nome: str = ""
+
+    @property
+    def tamanho(self) -> int:
+        return len(self.conteudo)
+
+
+@dataclass
+class DocumentoRecebido:
+    """Arquivo que um responsável enviou pelo WhatsApp (§6k).
+
+    Nasce da dor de época de matrícula: hoje o documento chega no celular de alguém da
+    secretaria e vira responsabilidade pessoal daquela pessoa — se ela falta, o documento
+    some. Aqui ele fica no tenant, ligado à conversa que o originou.
+
+    **Dado sensível de menor.** Um atestado médico é dado de saúde de criança (LGPD arts.
+    11 e 14), e é por isso que este registro guarda `expira_em` desde o nascimento: sem
+    prazo, um bucket de atestados vira passivo permanente. O conteúdo nunca mora aqui —
+    `chave_storage` aponta para o `ArquivoStorage`, que é trocável.
+    """
+
+    tenant_id: UUID
+    conversa_id: UUID
+    contato: str  # E.164 de quem enviou
+    chave_storage: str
+    mime: str
+    tamanho: int
+    nome_arquivo: str = ""
+    contato_nome: str = ""
+    # Legenda que o responsável escreveu junto do arquivo — costuma ser o único contexto
+    # ("atestado do João, faltou terça").
+    observacao: str = ""
+    categoria: CategoriaDocumento = CategoriaDocumento.OUTRO
+    # Palpite do assistente a partir da legenda/conversa, guardado à parte da categoria
+    # confirmada: serve para pré-selecionar no painel sem se passar por decisão humana.
+    categoria_sugerida: CategoriaDocumento | None = None
+    status: StatusDocumento = StatusDocumento.RECEBIDO
+    aluno_id: UUID | None = None
+    aluno_nome: str = ""
+    atendimento_id: UUID | None = None
+    # Id da mídia na Meta: identifica a origem e deduplica reentrega do webhook.
+    media_id: str = ""
+    expira_em: datetime | None = None
+    processado_em: datetime | None = None
+    id: UUID = field(default_factory=_new_id)
+    criado_em: datetime = field(default_factory=_now)
+
+    @property
+    def eh_imagem(self) -> bool:
+        return self.mime.startswith("image/")
+
+    def expirado(self, agora: datetime | None = None) -> bool:
+        return self.expira_em is not None and (agora or _now()) >= self.expira_em
+
+    @property
+    def tamanho_legivel(self) -> str:
+        if self.tamanho < 1024:
+            return f"{self.tamanho} B"
+        if self.tamanho < 1024 * 1024:
+            return f"{self.tamanho / 1024:.0f} KB"
+        return f"{self.tamanho / (1024 * 1024):.1f} MB"

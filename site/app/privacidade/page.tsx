@@ -72,6 +72,15 @@ export default function PrivacidadePage() {
           alimentar.
         </li>
         <li>
+          <strong>Arquivos enviados pelo responsável:</strong> fotos e documentos que o
+          próprio responsável envia ao canal da escola no WhatsApp — como atestado médico,
+          documento de identidade, certidão, comprovante de residência e comprovante de
+          pagamento. Podem conter dados sensíveis, especialmente de saúde. Esses arquivos
+          têm <strong>prazo de guarda definido</strong> e são apagados automaticamente ao
+          fim dele; enquanto existem, só podem ser abertos por profissionais autenticados
+          da própria escola, e todo acesso fica registrado.
+        </li>
+        <li>
           <strong>Status de entrega:</strong> se um aviso enviado foi entregue ou lido.
         </li>
       </ul>
@@ -157,6 +166,13 @@ export default function PrivacidadePage() {
         legislação educacional exigir da instituição. Encerrado o contrato, os dados são
         eliminados ou devolvidos à escola conforme ela determinar, ressalvado o que
         precisarmos reter para cumprir obrigação legal ou exercer direitos em processo.
+      </p>
+      <p>
+        Os <strong>arquivos enviados pelos responsáveis pelo WhatsApp</strong> (item 3.1)
+        têm prazo próprio e mais curto, por conterem dados sensíveis: são apagados
+        automaticamente após o período de guarda definido com a escola, sem depender de
+        pedido. O prazo padrão é de <strong>12 meses</strong>, o que cobre o ciclo letivo
+        em que o documento foi entregue.
       </p>
 
       <h2>10. Segurança</h2>
