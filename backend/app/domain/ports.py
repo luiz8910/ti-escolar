@@ -12,14 +12,17 @@ from uuid import UUID
 
 from app.domain.entities import (
     Aluno,
+    ArquivoBaixado,
     AtendimentoHumano,
     AvisoFalta,
     AvisoTemporizado,
     Broadcast,
+    CategoriaDocumento,
     Contato,
     Conversa,
     CotaImpressao,
     Documento,
+    DocumentoRecebido,
     EstadoAtendimento,
     FerramentaSpec,
     FichaMatricula,
@@ -46,6 +49,7 @@ from app.domain.entities import (
     SolicitacaoInterna,
     SolicitacaoMatricula,
     StatusAtendimentoHumano,
+    StatusDocumento,
     StatusEntrega,
     StatusFalta,
     StatusImpressao,
@@ -734,3 +738,83 @@ class AtendimentoHumanoRepository(Protocol):
     ) -> int: ...
 
     async def atualizar(self, atendimento: AtendimentoHumano) -> AtendimentoHumano: ...
+
+
+# --------------------------------------------------------------------------- #
+# Documentos recebidos dos responsáveis (§6k)
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class ArquivoStorage(Protocol):
+    """Onde os bytes de um arquivo recebido moram.
+
+    Porta separada do repositório de metadados **de propósito**: os metadados são do
+    negócio e ficam no Postgres para sempre; os bytes são infraestrutura e vão mudar de
+    casa. Hoje o adaptador é Postgres (``bytea``), que não pede infra nova; guardar
+    atestado médico ali indefinidamente infla um banco cobrado por GB, então a troca por
+    object storage é questão de quando, não de se — e esta porta é o que a torna barata.
+    """
+
+    async def guardar(self, *, chave: str, conteudo: bytes, mime: str) -> None: ...
+
+    async def ler(self, *, chave: str) -> bytes | None:
+        """Bytes do arquivo, ou ``None`` se a chave não existe (ou já foi expurgada)."""
+        ...
+
+    async def remover(self, *, chave: str) -> bool: ...
+
+
+@runtime_checkable
+class FonteMidia(Protocol):
+    """Baixa a mídia que o responsável enviou pelo canal.
+
+    Não faz parte de ``MessageChannel``: aquele contrato é sobre **enviar**, e misturar as
+    duas coisas obrigaria todo canal a saber baixar arquivo. Na Meta o download tem dois
+    passos (metadados → URL temporária autenticada), o que é detalhe do adaptador.
+    """
+
+    async def baixar(self, media_id: str) -> ArquivoBaixado | None: ...
+
+
+@runtime_checkable
+class DocumentoRecebidoRepository(Protocol):
+    """Documentos que os responsáveis enviaram, por tenant."""
+
+    async def criar(self, documento: DocumentoRecebido) -> DocumentoRecebido: ...
+
+    async def obter(
+        self, *, tenant_id: UUID, documento_id: UUID
+    ) -> DocumentoRecebido | None: ...
+
+    async def por_media_id(
+        self, *, tenant_id: UUID, media_id: str
+    ) -> DocumentoRecebido | None:
+        """Deduplica a reentrega do webhook: a mesma mídia não é baixada duas vezes."""
+        ...
+
+    async def listar(
+        self,
+        *,
+        tenant_id: UUID,
+        categoria: CategoriaDocumento | None = None,
+        status: StatusDocumento | None = None,
+        aluno_id: UUID | None = None,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[DocumentoRecebido]: ...
+
+    async def contar(
+        self,
+        *,
+        tenant_id: UUID,
+        categoria: CategoriaDocumento | None = None,
+        status: StatusDocumento | None = None,
+        aluno_id: UUID | None = None,
+    ) -> int: ...
+
+    async def atualizar(self, documento: DocumentoRecebido) -> DocumentoRecebido: ...
+
+    async def expirados(self, *, limite: int = 500) -> list[DocumentoRecebido]:
+        """Documentos cujo prazo de retenção venceu — insumo do expurgo (§6k/LGPD)."""
+        ...
+
+    async def remover(self, *, tenant_id: UUID, documento_id: UUID) -> bool: ...

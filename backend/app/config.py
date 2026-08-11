@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # sem acionar a LLM. 0 desativa o limite.
     mensagem_pai_max_chars: int = 1000
 
+    # Documentos recebidos dos responsáveis (§6k)
+    # Retenção dos arquivos enviados pelos pais. É dado sensível de menor (atestado é dado
+    # de saúde), então o prazo é obrigatório: um ano cobre o ciclo letivo inteiro sem
+    # transformar o repositório num passivo permanente. 0 desativa o expurgo.
+    documento_retencao_dias: int = 365
+
     # Atendimento humano (§6j)
     # Nome do template **aprovado na Meta** usado para reabrir uma conversa cuja janela de
     # 24h expirou (a secretaria só viu o recado no dia seguinte). Vazio = sem retomada: o

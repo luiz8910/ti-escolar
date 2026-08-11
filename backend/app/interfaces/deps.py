@@ -14,6 +14,12 @@ from app.application.atendimento_humano_use_cases import (
     MesaDeAtendimento,
     ResponderAtendimento,
 )
+from app.application.documentos_use_cases import (
+    BaixarDocumentoRecebido,
+    ExpurgarDocumentosVencidos,
+    ReceberDocumentoDoResponsavel,
+    ReceberMidiaDoResponsavel,
+)
 from app.application.use_cases import (
     AtenderConversa,
     EnviarBroadcast,
@@ -40,6 +46,7 @@ from app.infrastructure.db.repositories_admin import (
 )
 from app.infrastructure.db.repositories_comunicacao import (
     SqlAtendimentoHumanoRepository,
+    SqlDocumentoRecebidoRepository,
     SqlAvisoTemporizadoRepository,
     SqlCotaImpressaoRepository,
     SqlMediacaoRepository,
@@ -62,11 +69,13 @@ from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import (
     criar_canal,
     criar_email_sender,
+    criar_fonte_midia,
     criar_embedder,
     criar_llm,
 )
 from app.infrastructure.atendimento import SqlRegistroAtendimento
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
+from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.rate_limit import SqlControleTaxa
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
@@ -101,6 +110,55 @@ def get_mesa_atendimento(session: AsyncSession) -> MesaDeAtendimento:
     )
 
 
+def get_recepcao_documentos(
+    session: AsyncSession, settings: Settings
+) -> ReceberDocumentoDoResponsavel:
+    """Persistência de um arquivo recebido: metadados no Postgres, bytes no storage."""
+    return ReceberDocumentoDoResponsavel(
+        documentos=SqlDocumentoRecebidoRepository(session),
+        storage=PostgresArquivoStorage(session),
+        contatos=SqlContatoRepository(session),
+        retencao_dias=settings.documento_retencao_dias,
+    )
+
+
+def get_receber_midia(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ReceberMidiaDoResponsavel:
+    """Arquivo enviado pelo responsável pelo WhatsApp (§6k): baixa, guarda e confirma."""
+    return ReceberMidiaDoResponsavel(
+        fonte=criar_fonte_midia(settings),
+        recepcao=get_recepcao_documentos(session, settings),
+        conversas=SqlConversaRepository(session),
+        mesa=get_mesa_atendimento(session),
+    )
+
+
+def get_documento_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlDocumentoRecebidoRepository:
+    return SqlDocumentoRecebidoRepository(session)
+
+
+def get_baixar_documento(
+    session: AsyncSession = Depends(get_session),
+) -> BaixarDocumentoRecebido:
+    return BaixarDocumentoRecebido(
+        documentos=SqlDocumentoRecebidoRepository(session),
+        storage=PostgresArquivoStorage(session),
+    )
+
+
+def get_expurgar_documentos(
+    session: AsyncSession = Depends(get_session),
+) -> ExpurgarDocumentosVencidos:
+    return ExpurgarDocumentosVencidos(
+        documentos=SqlDocumentoRecebidoRepository(session),
+        storage=PostgresArquivoStorage(session),
+    )
+
+
 def get_processar_inbound_meta(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings_dep),
@@ -114,6 +172,7 @@ def get_processar_inbound_meta(
         atender=get_atender_conversa(session=session, settings=settings),
         canal=criar_canal(settings),
         atendimentos=_atendimentos_inbound,
+        midias=get_receber_midia(session=session, settings=settings),
         controle_taxa=_controle_taxa,
         limite_por_remetente=(
             settings.rate_limit_inbound_mensagens if settings.rate_limit_habilitado else 0

@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.application.documentos_use_cases import ReceberMidiaDoResponsavel
 from app.application.use_cases import Atendedor
 from app.domain.entities import EstadoAtendimento
 from app.domain.ports import (
@@ -38,6 +39,10 @@ from app.domain.ports import (
 )
 
 logger = logging.getLogger("inbound.meta")
+
+# Tipos de mídia que a secretaria consegue usar (§6k). Áudio fica de fora: sem transcrição
+# é um arquivo que alguém precisa parar para ouvir, o oposto do que a feature promete.
+TIPOS_MIDIA = ("image", "document")
 
 
 @dataclass
@@ -58,6 +63,10 @@ class ResultadoInboundMeta:
     # Contada à parte de ``respondidas``: sem isso, um silêncio deliberado ficaria
     # indistinguível de uma falha de atendimento no painel de logs (§16).
     silenciadas: int = 0
+    # Mensagens de mídia (imagem/documento) tratadas (§6k). Conta a **tentativa**: um
+    # arquivo que a Graph API recusou entregar também passa por aqui, e o responsável
+    # recebe o pedido de reenvio.
+    documentos: int = 0
 
 
 def normalizar_origem(bruto: str) -> str:
@@ -84,6 +93,7 @@ class ProcessarInboundMeta:
         atender: Atendedor,
         canal: MessageChannel,
         atendimentos: RegistroAtendimento | None = None,
+        midias: ReceberMidiaDoResponsavel | None = None,
         controle_taxa: ControleTaxa | None = None,
         limite_por_remetente: int = 0,
         janela_taxa_segundos: int = 60,
@@ -92,6 +102,8 @@ class ProcessarInboundMeta:
         self._atender = atender
         self._canal = canal
         self._atendimentos = atendimentos
+        # Opcional: sem ele, imagem e documento voltam a ser ignorados (§6k).
+        self._midias = midias
         self._controle_taxa = controle_taxa
         self._limite_por_remetente = limite_por_remetente
         self._janela_taxa_segundos = janela_taxa_segundos
@@ -158,13 +170,17 @@ class ProcessarInboundMeta:
         origem = normalizar_origem(str(mensagem.get("from") or ""))
         texto = ((mensagem.get("text") or {}).get("body") or "").strip()
 
-        if mensagem.get("type") != "text" or not texto or not origem:
-            # Mídia (imagem/áudio/documento/localização) ainda não é atendida — o download
-            # exige baixar o media_id pela Graph API. [Roadmap]
+        tipo = str(mensagem.get("type") or "")
+        eh_midia = tipo in TIPOS_MIDIA and self._midias is not None
+
+        if not origem or (not eh_midia and (tipo != "text" or not texto)):
+            # Áudio, localização, contato, sticker: ainda sem tratamento. Áudio exigiria
+            # transcrição para ter algum valor no painel — sem ela é só um arquivo que
+            # alguém precisa parar para ouvir.
             resultado.ignoradas += 1
             logger.info(
-                "Inbound Meta ignorado (tipo %r sem texto tratável), escola %s",
-                mensagem.get("type"),
+                "Inbound Meta ignorado (tipo %r sem conteúdo tratável), escola %s",
+                tipo,
                 escola.slug,
             )
             return
@@ -216,26 +232,32 @@ class ProcessarInboundMeta:
 
         resultado.recebidas += 1
         try:
-            resposta = await self._atender.executar(
-                tenant_id=escola.id, contato=origem, texto=texto
-            )
+            if eh_midia:
+                texto_resposta = await self._receber_midia(mensagem, escola, origem, tipo)
+                resultado.documentos += 1
+            else:
+                resposta = await self._atender.executar(
+                    tenant_id=escola.id, contato=origem, texto=texto
+                )
+                texto_resposta = resposta.texto
 
             # A Meta não aceita a resposta no corpo do webhook: é uma nova chamada à API,
             # saindo do número da própria escola. Texto vazio é silêncio deliberado — a
             # conversa está com uma pessoa da secretaria (§6j) e o assistente não fala por
             # cima dela.
-            if resposta.texto.strip():
+            if texto_resposta.strip():
                 await self._canal.enviar_texto(
                     contato=origem,
-                    texto=resposta.texto,
+                    texto=texto_resposta,
                     remetente=escola.remetente_canal or None,
                 )
                 resultado.respondidas += 1
             else:
+                # Silêncio deliberado: ou a conversa está com uma pessoa da secretaria
+                # (§6j), ou é a reentrega de uma mídia já confirmada (§6k).
                 resultado.silenciadas += 1
                 logger.info(
-                    "Inbound Meta registrado sem resposta automática (escola %s): a "
-                    "conversa está em atendimento humano",
+                    "Inbound Meta registrado sem resposta automática (escola %s)",
                     escola.slug,
                 )
         except Exception as erro:
@@ -246,4 +268,16 @@ class ProcessarInboundMeta:
             raise
 
         if reservado:
-            await self._atendimentos.concluir(chave=wamid, resumo=resposta.texto[:500])
+            await self._atendimentos.concluir(chave=wamid, resumo=texto_resposta[:500])
+
+    async def _receber_midia(self, mensagem: dict, escola, origem: str, tipo: str) -> str:
+        """Arquivo enviado pelo responsável (§6k): baixa, guarda e confirma o recebimento."""
+        corpo = mensagem.get(tipo) or {}
+        return await self._midias.executar(
+            tenant_id=escola.id,
+            contato=origem,
+            media_id=str(corpo.get("id") or ""),
+            legenda=str(corpo.get("caption") or "").strip(),
+            # Só `document` traz nome; foto de atestado chega sem nenhum.
+            nome_arquivo=str(corpo.get("filename") or "").strip(),
+        )

@@ -15,16 +15,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import (
     AtendimentoHumano,
+    CategoriaDocumento,
     AvisoTemporizado,
     CategoriaSolicitacao,
     CotaImpressao,
     DirecaoMensagem,
+    DocumentoRecebido,
     LeituraRecado,
     MensagemMediada,
     Recado,
     SolicitacaoImpressao,
     SolicitacaoInterna,
     StatusAtendimentoHumano,
+    StatusDocumento,
     StatusImpressao,
     StatusSolicitacaoInterna,
 )
@@ -32,6 +35,7 @@ from app.infrastructure.db.models import (
     AtendimentoHumanoORM,
     AvisoTemporizadoORM,
     CotaImpressaoORM,
+    DocumentoRecebidoORM,
     LeituraRecadoORM,
     MensagemMediadaORM,
     RecadoORM,
@@ -744,3 +748,177 @@ class SqlAtendimentoHumanoRepository:
         row.atualizado_em = _now()
         await self._s.flush()
         return _to_atendimento(row)
+
+
+# --------------------------------------------------------------------------- #
+# Documentos recebidos dos responsáveis (§6k)
+# --------------------------------------------------------------------------- #
+def _to_documento(row: DocumentoRecebidoORM) -> DocumentoRecebido:
+    return DocumentoRecebido(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        conversa_id=row.conversa_id,
+        contato=row.contato,
+        contato_nome=row.contato_nome,
+        chave_storage=row.chave_storage,
+        mime=row.mime,
+        tamanho=row.tamanho,
+        nome_arquivo=row.nome_arquivo,
+        observacao=row.observacao,
+        categoria=CategoriaDocumento(row.categoria),
+        categoria_sugerida=(
+            CategoriaDocumento(row.categoria_sugerida) if row.categoria_sugerida else None
+        ),
+        status=StatusDocumento(row.status),
+        aluno_id=row.aluno_id,
+        aluno_nome=row.aluno_nome,
+        atendimento_id=row.atendimento_id,
+        media_id=row.media_id,
+        expira_em=row.expira_em,
+        processado_em=row.processado_em,
+        criado_em=row.criado_em,
+    )
+
+
+class SqlDocumentoRecebidoRepository:
+    """Metadados dos arquivos enviados pelos responsáveis. Os bytes ficam no storage."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def criar(self, documento: DocumentoRecebido) -> DocumentoRecebido:
+        self._s.add(
+            DocumentoRecebidoORM(
+                id=documento.id,
+                tenant_id=documento.tenant_id,
+                conversa_id=documento.conversa_id,
+                contato=documento.contato,
+                contato_nome=documento.contato_nome,
+                chave_storage=documento.chave_storage,
+                mime=documento.mime,
+                tamanho=documento.tamanho,
+                nome_arquivo=documento.nome_arquivo,
+                observacao=documento.observacao,
+                categoria=documento.categoria.value,
+                categoria_sugerida=(
+                    documento.categoria_sugerida.value
+                    if documento.categoria_sugerida
+                    else ""
+                ),
+                status=documento.status.value,
+                aluno_id=documento.aluno_id,
+                aluno_nome=documento.aluno_nome,
+                atendimento_id=documento.atendimento_id,
+                media_id=documento.media_id,
+                expira_em=documento.expira_em,
+                processado_em=documento.processado_em,
+                criado_em=documento.criado_em,
+            )
+        )
+        await self._s.flush()
+        return documento
+
+    async def obter(
+        self, *, tenant_id: uuid.UUID, documento_id: uuid.UUID
+    ) -> DocumentoRecebido | None:
+        row = await self._s.get(DocumentoRecebidoORM, documento_id)
+        if row is None or row.tenant_id != tenant_id:
+            return None
+        return _to_documento(row)
+
+    async def por_media_id(
+        self, *, tenant_id: uuid.UUID, media_id: str
+    ) -> DocumentoRecebido | None:
+        media_id = (media_id or "").strip()
+        if not media_id:  # o id vazio é o default: nunca casa
+            return None
+        stmt = select(DocumentoRecebidoORM).where(
+            DocumentoRecebidoORM.tenant_id == tenant_id,
+            DocumentoRecebidoORM.media_id == media_id,
+        )
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_documento(row) if row else None
+
+    def _filtrar(self, stmt, *, tenant_id, categoria, status, aluno_id):
+        stmt = stmt.where(DocumentoRecebidoORM.tenant_id == tenant_id)
+        if categoria is not None:
+            stmt = stmt.where(DocumentoRecebidoORM.categoria == categoria.value)
+        if status is not None:
+            stmt = stmt.where(DocumentoRecebidoORM.status == status.value)
+        if aluno_id is not None:
+            stmt = stmt.where(DocumentoRecebidoORM.aluno_id == aluno_id)
+        return stmt
+
+    async def listar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        categoria: CategoriaDocumento | None = None,
+        status: StatusDocumento | None = None,
+        aluno_id: uuid.UUID | None = None,
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[DocumentoRecebido]:
+        stmt = self._filtrar(
+            select(DocumentoRecebidoORM),
+            tenant_id=tenant_id,
+            categoria=categoria,
+            status=status,
+            aluno_id=aluno_id,
+        ).order_by(DocumentoRecebidoORM.criado_em.desc())
+        if pagina is not None and por_pagina is not None:
+            stmt = stmt.offset((pagina - 1) * por_pagina).limit(por_pagina)
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_documento(r) for r in rows]
+
+    async def contar(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        categoria: CategoriaDocumento | None = None,
+        status: StatusDocumento | None = None,
+        aluno_id: uuid.UUID | None = None,
+    ) -> int:
+        stmt = self._filtrar(
+            select(func.count()).select_from(DocumentoRecebidoORM),
+            tenant_id=tenant_id,
+            categoria=categoria,
+            status=status,
+            aluno_id=aluno_id,
+        )
+        return int((await self._s.execute(stmt)).scalar_one() or 0)
+
+    async def atualizar(self, documento: DocumentoRecebido) -> DocumentoRecebido:
+        row = await self._s.get(DocumentoRecebidoORM, documento.id)
+        if row is None or row.tenant_id != documento.tenant_id:
+            raise ValueError("Documento não encontrado.")
+        row.categoria = documento.categoria.value
+        row.status = documento.status.value
+        row.observacao = documento.observacao
+        row.aluno_id = documento.aluno_id
+        row.aluno_nome = documento.aluno_nome
+        row.processado_em = documento.processado_em
+        await self._s.flush()
+        return _to_documento(row)
+
+    async def expirados(self, *, limite: int = 500) -> list[DocumentoRecebido]:
+        """Cross-tenant de propósito: o expurgo é rotina da plataforma, não de uma escola."""
+        stmt = (
+            select(DocumentoRecebidoORM)
+            .where(
+                DocumentoRecebidoORM.expira_em.is_not(None),
+                DocumentoRecebidoORM.expira_em <= _now(),
+            )
+            .order_by(DocumentoRecebidoORM.expira_em)
+            .limit(limite)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_documento(r) for r in rows]
+
+    async def remover(self, *, tenant_id: uuid.UUID, documento_id: uuid.UUID) -> bool:
+        row = await self._s.get(DocumentoRecebidoORM, documento_id)
+        if row is None or row.tenant_id != tenant_id:
+            return False
+        await self._s.delete(row)
+        await self._s.flush()
+        return True

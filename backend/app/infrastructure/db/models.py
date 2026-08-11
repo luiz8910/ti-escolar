@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -845,4 +846,74 @@ class AtendimentoHumanoORM(Base):
         Index("ix_atendimentos_tenant_status_criado", "tenant_id", "status", "criado_em"),
         # "esta conversa tem atendimento na fila?" roda a cada mensagem do inbound.
         Index("ix_atendimentos_conversa_status", "conversa_id", "status"),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Documentos recebidos dos responsáveis pelo WhatsApp (§6k)
+# --------------------------------------------------------------------------- #
+class ArquivoArmazenadoORM(Base):
+    """Bytes de um arquivo — implementação do ``ArquivoStorage`` em Postgres.
+
+    Tabela **de infraestrutura**, não de negócio: existe porque hoje não há object
+    storage, e some inteira no dia em que o adaptador virar R2. Por isso os metadados que
+    a secretaria consulta ficam em ``documentos_recebidos``, e não aqui.
+    """
+
+    __tablename__ = "arquivos_armazenados"
+
+    chave: Mapped[str] = mapped_column(String(120), primary_key=True)
+    conteudo: Mapped[bytes] = mapped_column(LargeBinary)
+    mime: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    tamanho: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    criado_em: Mapped[datetime] = mapped_column()
+
+
+class DocumentoRecebidoORM(Base):
+    __tablename__ = "documentos_recebidos"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("tenants.id"))
+    conversa_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("conversas.id")
+    )
+    contato: Mapped[str] = mapped_column(String(50), index=True)
+    contato_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # Ponteiro para o ArquivoStorage — nunca os bytes.
+    chave_storage: Mapped[str] = mapped_column(String(120))
+    mime: Mapped[str] = mapped_column(String(120))
+    tamanho: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    nome_arquivo: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    observacao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    categoria: Mapped[str] = mapped_column(String(20), default="outro", server_default="outro")
+    categoria_sugerida: Mapped[str] = mapped_column(
+        String(20), default="", server_default=""
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default="recebido", server_default="recebido"
+    )
+    # ON DELETE SET NULL: desligar o vínculo não pode apagar a prova de que o documento
+    # chegou — é justamente o lastro que a escola precisa guardar.
+    aluno_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("alunos.id", ondelete="SET NULL"), nullable=True
+    )
+    aluno_nome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    atendimento_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("atendimentos_humanos.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    media_id: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    # Prazo de retenção (LGPD): dado sensível de menor não fica indefinidamente.
+    expira_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    processado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    criado_em: Mapped[datetime] = mapped_column()
+
+    __table_args__ = (
+        # A listagem do painel: os documentos de uma escola, mais recentes primeiro.
+        Index("ix_documentos_tenant_criado", "tenant_id", "criado_em"),
+        # Dedupe da reentrega do webhook, por escola.
+        Index("ix_documentos_tenant_media", "tenant_id", "media_id"),
+        # Varredura do expurgo, que roda cross-tenant e só olha o prazo.
+        Index("ix_documentos_expira_em", "expira_em"),
     )

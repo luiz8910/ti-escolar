@@ -1217,3 +1217,49 @@ class AtendimentoPendentesSaida(BaseModel):
     """Contador do badge do painel: responsáveis esperando a secretaria agora."""
 
     pendentes: int
+
+
+# --------------------------------------------------------------------------- #
+# Documentos recebidos dos responsáveis (§6k)
+# --------------------------------------------------------------------------- #
+class DocumentoRecebidoSaida(BaseModel):
+    id: UUID
+    conversa_id: UUID
+    contato: str
+    contato_nome: str = ""
+    nome_arquivo: str = ""
+    mime: str
+    tamanho: int
+    tamanho_legivel: str
+    eh_imagem: bool
+    observacao: str = ""
+    categoria: str
+    # Palpite da heurística, exibido como sugestão — não se passa por decisão humana.
+    categoria_sugerida: str | None = None
+    status: str
+    aluno_id: UUID | None = None
+    aluno_nome: str = ""
+    atendimento_id: UUID | None = None
+    # Prazo de retenção (LGPD): a tela mostra até quando o arquivo existe.
+    expira_em: datetime | None = None
+    processado_em: datetime | None = None
+    criado_em: datetime
+
+
+class DocumentosPaginaSaida(BaseModel):
+    itens: list[DocumentoRecebidoSaida]
+    meta: PaginaMeta
+
+
+class DocumentoClassificacaoEntrada(BaseModel):
+    """Campo ausente = não mexer (a secretaria pode só vincular o aluno, por exemplo)."""
+
+    categoria: str | None = None
+    status: str | None = None
+    aluno_id: UUID | None = None
+    observacao: str | None = None
+
+
+class ExpurgoSaida(BaseModel):
+    removidos: int
+    falhas: int
