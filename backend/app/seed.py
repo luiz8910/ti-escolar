@@ -253,7 +253,7 @@ async def _seed() -> None:
                     nome="retomada_atendimento",
                     categoria="utility",
                     idioma="pt_BR",
-                    corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}}",
+                    corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}} Se precisar de algo mais, é só responder por aqui.",
                     status="pendente",
                 )
             )
