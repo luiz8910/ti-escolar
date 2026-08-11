@@ -76,8 +76,14 @@ export const EMPRESA: DadosEmpresa = {
 
   site: "https://tiescolar.com.br",
 
-  /** URL do painel administrativo (produto). */
-  painelUrl: "https://ti-escolar.onrender.com/admin/login",
+  /**
+   * URL do painel administrativo (produto), publicado na Vercel. O endereço do Render é o
+   * back-end (API/webhook) e não serve o painel — apontar para lá deixava o botão "Entrar no
+   * painel" caindo em 404. Aponta para `/admin/login` e não para a raiz porque a raiz só
+   * redireciona pelo cliente (responde 307 sem `Location`, com o shell do Next); o login é
+   * 200 direto, que é o destino de quem clica no botão.
+   */
+  painelUrl: "https://ti-escolar.vercel.app/admin/login",
 };
 
 /** Endereço em uma linha, para o rodapé. Omite o que ainda está pendente. */
