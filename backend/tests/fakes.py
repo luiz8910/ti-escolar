@@ -426,6 +426,18 @@ class FakeContatoRepo:
             None,
         )
 
+    async def por_cpf(self, *, tenant_id, cpf):
+        if not cpf:
+            return None
+        return next(
+            (
+                c
+                for c in self.contatos.values()
+                if c.tenant_id == tenant_id and c.cpf == cpf
+            ),
+            None,
+        )
+
     async def por_telefones(self, *, tenant_id, telefones):
         alvo = {t for t in telefones if t}
         return {

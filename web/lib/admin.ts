@@ -699,10 +699,67 @@ export async function listarAuditoria(
 }
 
 // --------------------------- pais e salas --------------------------------- //
+/** Vínculo do responsável com o aluno. `responsavel_legal` é o termo de guarda. */
+export type TipoFiliacao = "mae" | "pai" | "responsavel_legal" | "outro";
+
+export const TIPOS_FILIACAO: { valor: TipoFiliacao; rotulo: string }[] = [
+  { valor: "mae", rotulo: "Mãe" },
+  { valor: "pai", rotulo: "Pai" },
+  { valor: "responsavel_legal", rotulo: "Responsável legal (termo de guarda)" },
+  { valor: "outro", rotulo: "Outro" },
+];
+
 export interface Pai {
   id: string;
   nome: string;
+  /** O número da conversa: roteia o inbound e recebe os disparos. */
   telefone: string;
+  cpf: string;
+  /** CPF já pontuado pelo back-end — a tela não formata nada. */
+  cpf_formatado: string;
+  tipo_filiacao: TipoFiliacao | "";
+  tipo_filiacao_rotulo: string;
+  data_nascimento: string;
+  /** Emergência. **Não** recebe disparo — a tela diz isso em texto. */
+  telefone_2: string;
+  local_trabalho: string;
+  telefone_trabalho: string;
+  email: string;
+  ativo: boolean;
+}
+
+/** Cadastro civil e de contato do responsável, na forma que a API recebe. */
+export interface DadosResponsavel {
+  cpf: string;
+  tipo_filiacao: TipoFiliacao | "";
+  data_nascimento: string;
+  telefone_2: string;
+  local_trabalho: string;
+  telefone_trabalho: string;
+  email: string;
+}
+
+export const DADOS_RESPONSAVEL_VAZIO: DadosResponsavel = {
+  cpf: "",
+  tipo_filiacao: "",
+  data_nascimento: "",
+  telefone_2: "",
+  local_trabalho: "",
+  telefone_trabalho: "",
+  email: "",
+};
+
+/** Extrai os campos de cadastro de um responsável já carregado (para editar). */
+export function dadosDoResponsavel(p: Pai): DadosResponsavel {
+  return {
+    cpf: p.cpf,
+    tipo_filiacao: p.tipo_filiacao,
+    data_nascimento: p.data_nascimento,
+    telefone_2: p.telefone_2,
+    local_trabalho: p.local_trabalho,
+    telefone_trabalho: p.telefone_trabalho,
+    email: p.email,
+  };
 }
 
 export interface Sala {
@@ -755,12 +812,19 @@ export async function listarTodosOsPais(porPagina = 200): Promise<Pai[]> {
 export async function cadastrarPai(
   nome: string,
   telefone: string,
-  salaIds: string[] = []
+  salaIds: string[] = [],
+  dados: DadosResponsavel = DADOS_RESPONSAVEL_VAZIO
 ): Promise<Pai> {
   const resp = await apiFetch(`${API_URL}/api/admin/pais`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, sala_ids: salaIds }),
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      nome,
+      telefone,
+      sala_ids: salaIds,
+      ...dados,
+    }),
   });
   return jsonOuErro(resp, "cadastrar responsável");
 }
@@ -768,12 +832,13 @@ export async function cadastrarPai(
 export async function atualizarPai(
   contatoId: string,
   nome: string,
-  telefone: string
+  telefone: string,
+  dados: DadosResponsavel = DADOS_RESPONSAVEL_VAZIO
 ): Promise<Pai> {
   const resp = await apiFetch(`${API_URL}/api/admin/pais/${contatoId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone }),
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, ...dados }),
   });
   return jsonOuErro(resp, "atualizar responsável");
 }

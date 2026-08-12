@@ -26,6 +26,7 @@ from app.domain.entities import (
     Sala,
     StatusTenant,
     Tenant,
+    TipoFiliacao,
     Turno,
     Usuario,
 )
@@ -131,6 +132,13 @@ def _to_contato(row: ContatoORM) -> Contato:
         nome=row.nome,
         telefone=row.telefone,
         ativo=row.ativo,
+        cpf=row.cpf,
+        tipo_filiacao=TipoFiliacao(row.tipo_filiacao) if row.tipo_filiacao else None,
+        data_nascimento=row.data_nascimento,
+        telefone_2=row.telefone_2,
+        local_trabalho=row.local_trabalho,
+        telefone_trabalho=row.telefone_trabalho,
+        email=row.email,
         criado_em=row.criado_em,
     )
 
@@ -644,6 +652,15 @@ class SqlContatoRepository:
                 nome=contato.nome,
                 telefone=contato.telefone,
                 ativo=contato.ativo,
+                cpf=contato.cpf,
+                tipo_filiacao=(
+                    contato.tipo_filiacao.value if contato.tipo_filiacao else ""
+                ),
+                data_nascimento=contato.data_nascimento,
+                telefone_2=contato.telefone_2,
+                local_trabalho=contato.local_trabalho,
+                telefone_trabalho=contato.telefone_trabalho,
+                email=contato.email,
                 criado_em=contato.criado_em,
             )
         )
@@ -663,6 +680,17 @@ class SqlContatoRepository:
     async def por_telefone(self, *, tenant_id: uuid.UUID, telefone: str) -> Contato | None:
         stmt = select(ContatoORM).where(
             ContatoORM.tenant_id == tenant_id, ContatoORM.telefone == telefone
+        )
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        return _to_contato(row) if row else None
+
+    async def por_cpf(self, *, tenant_id: uuid.UUID, cpf: str) -> Contato | None:
+        # CPF vazio não identifica ninguém: devolver "o primeiro sem CPF" faria o cadastro
+        # recusar todo responsável novo por falso duplicado.
+        if not cpf:
+            return None
+        stmt = select(ContatoORM).where(
+            ContatoORM.tenant_id == tenant_id, ContatoORM.cpf == cpf
         )
         row = (await self._s.execute(stmt)).scalar_one_or_none()
         return _to_contato(row) if row else None
@@ -720,6 +748,13 @@ class SqlContatoRepository:
         row.nome = contato.nome
         row.telefone = contato.telefone
         row.ativo = contato.ativo
+        row.cpf = contato.cpf
+        row.tipo_filiacao = contato.tipo_filiacao.value if contato.tipo_filiacao else ""
+        row.data_nascimento = contato.data_nascimento
+        row.telefone_2 = contato.telefone_2
+        row.local_trabalho = contato.local_trabalho
+        row.telefone_trabalho = contato.telefone_trabalho
+        row.email = contato.email
         await self._s.flush()
         return _to_contato(row)
 

@@ -5,6 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Aluno,
   atualizarPai,
+  DADOS_RESPONSAVEL_VAZIO,
+  dadosDoResponsavel,
+  DadosResponsavel,
   atualizarSala,
   cadastrarPai,
   CoberturaSala,
@@ -28,6 +31,8 @@ import {
 } from "@/lib/admin";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { CamposResponsavel } from "@/components/admin/CamposResponsavel";
+import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field, Textarea } from "@/components/ui/form";
@@ -678,18 +683,24 @@ function PaisPanel({
   const [telefone, setTelefone] = useState("");
   const [editando, setEditando] = useState<string | null>(null);
   const [excluindo, setExcluindo] = useState<Pai | null>(null);
+  // Recolhido na criação (o mínimo é nome + telefone), aberto ao editar — é ali que a
+  // secretaria está completando a ficha.
+  const [abrirDados, setAbrirDados] = useState(false);
+  const [dados, setDados] = useState<DadosResponsavel>(DADOS_RESPONSAVEL_VAZIO);
 
   async function adicionar(e: React.FormEvent) {
     e.preventDefault();
     if (!nome.trim() || !telefone.trim()) return;
     try {
       if (editando) {
-        await atualizarPai(editando, nome.trim(), telefone.trim());
+        await atualizarPai(editando, nome.trim(), telefone.trim(), dados);
       } else {
-        await cadastrarPai(nome.trim(), telefone.trim());
+        await cadastrarPai(nome.trim(), telefone.trim(), [], dados);
       }
       setNome("");
       setTelefone("");
+      setDados(DADOS_RESPONSAVEL_VAZIO);
+      setAbrirDados(false);
       setEditando(null);
       await onMudou();
       toast({ tone: "success", title: editando ? "Responsável atualizado." : "Responsável cadastrado." });
@@ -705,12 +716,16 @@ function PaisPanel({
     setEditando(p.id);
     setNome(p.nome);
     setTelefone(p.telefone);
+    setDados(dadosDoResponsavel(p));
+    setAbrirDados(true);
   }
 
   function cancelar() {
     setEditando(null);
     setNome("");
     setTelefone("");
+    setDados(DADOS_RESPONSAVEL_VAZIO);
+    setAbrirDados(false);
   }
 
   async function confirmarExclusao() {
@@ -751,6 +766,26 @@ function PaisPanel({
             Cancelar
           </Button>
         )}
+
+        <div className="w-full">
+          <button
+            type="button"
+            onClick={() => setAbrirDados((v) => !v)}
+            className="text-[12.5px] font-semibold text-brand-600 hover:underline"
+          >
+            {abrirDados ? "− Ocultar" : "+ Preencher"} cadastro (CPF, filiação, termo de
+            guarda…)
+          </button>
+          {abrirDados && (
+            <div className="mt-3 border-t border-n-100 pt-3">
+              <CamposResponsavel
+                dados={dados}
+                onChange={setDados}
+                idPrefixo="turma-resp"
+              />
+            </div>
+          )}
+        </div>
       </form>
 
       <TableWrap>
@@ -758,6 +793,8 @@ function PaisPanel({
           <thead>
             <tr>
               <Th>Responsável</Th>
+              <Th>Filiação</Th>
+              <Th>CPF</Th>
               <Th>WhatsApp</Th>
               <Th className="text-right">Ações</Th>
             </tr>
@@ -766,6 +803,20 @@ function PaisPanel({
             {pais.map((p) => (
               <Tr key={p.id}>
                 <Td className="font-medium">{p.nome}</Td>
+                <Td className="text-xs">
+                  {p.tipo_filiacao ? (
+                    <Badge tone={p.tipo_filiacao === "responsavel_legal" ? "warning" : "neutral"}>
+                      {p.tipo_filiacao === "responsavel_legal"
+                        ? "Termo de guarda"
+                        : p.tipo_filiacao_rotulo}
+                    </Badge>
+                  ) : (
+                    <span className="text-n-400">—</span>
+                  )}
+                </Td>
+                <Td className="font-mono text-xs text-n-500">
+                  {p.cpf_formatado || <span className="text-n-400">—</span>}
+                </Td>
                 <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
                 <Td className="text-right">
                   <span className="flex items-center justify-end gap-3">
@@ -787,7 +838,7 @@ function PaisPanel({
             ))}
             {pais.length === 0 && (
               <Tr>
-                <Td colSpan={3} className="text-n-400">
+                <Td colSpan={5} className="text-n-400">
                   Nenhum responsável cadastrado ainda.
                 </Td>
               </Tr>

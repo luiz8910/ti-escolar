@@ -383,6 +383,10 @@ class ContatoRepository(Protocol):
 
     async def por_telefone(self, *, tenant_id: UUID, telefone: str) -> Contato | None: ...
 
+    async def por_cpf(self, *, tenant_id: UUID, cpf: str) -> Contato | None:
+        """CPF vazio devolve ``None`` — não identifica ninguém."""
+        ...
+
     async def por_telefones(
         self, *, tenant_id: UUID, telefones: Sequence[str]
     ) -> dict[str, Contato]:

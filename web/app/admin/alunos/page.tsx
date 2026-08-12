@@ -7,6 +7,9 @@ import {
   atualizarAluno,
   cadastrarAluno,
   confirmarImportacaoAlunos,
+  cadastrarPai,
+  DADOS_RESPONSAVEL_VAZIO,
+  DadosResponsavel,
   desvincularResponsavelDoAluno,
   exigeEscolhaDeEscola,
   getSessao,
@@ -27,6 +30,7 @@ import {
 } from "@/lib/admin";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { CamposResponsavel } from "@/components/admin/CamposResponsavel";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field } from "@/components/ui/form";
@@ -796,6 +800,10 @@ function ResponsaveisModal({
   // Mantém uma cópia local dos vínculos para refletir as mudanças sem fechar o modal.
   const [vinculados, setVinculados] = useState<Pai[]>(aluno.responsaveis);
   const [paiId, setPaiId] = useState("");
+  // "deixar botão para cadastrar caso necessário" (apontamento de 10/08): o responsável
+  // legal costuma aparecer na hora da matrícula, e mandar a secretaria sair da tela para
+  // cadastrá-lo e voltar para vincular é o tipo de ida e volta que faz o campo ficar vazio.
+  const [novoGuarda, setNovoGuarda] = useState(false);
 
   const naoVinculados = pais.filter((p) => !vinculados.some((v) => v.id === p.id));
 
@@ -843,7 +851,23 @@ function ResponsaveisModal({
               key={p.id}
               className="flex items-center gap-2 rounded-[10px] bg-n-50 px-3 py-2 text-[13px]"
             >
-              <span className="flex-1 font-medium text-n-800">{p.nome}</span>
+              <span className="flex-1 font-medium text-n-800">
+                {p.nome}
+                {p.tipo_filiacao && (
+                  <span
+                    className={
+                      "ml-1.5 text-[11px] font-semibold " +
+                      (p.tipo_filiacao === "responsavel_legal"
+                        ? "text-accent"
+                        : "text-n-400")
+                    }
+                  >
+                    {p.tipo_filiacao === "responsavel_legal"
+                      ? "termo de guarda"
+                      : p.tipo_filiacao_rotulo.toLowerCase()}
+                  </span>
+                )}
+              </span>
               <span className="font-mono text-xs text-n-500">{p.telefone}</span>
               <button
                 onClick={() => desvincular(p)}
@@ -877,7 +901,111 @@ function ResponsaveisModal({
             Vincular
           </Button>
         </form>
+
+        {novoGuarda ? (
+          <NovoResponsavelLegal
+            onCancelar={() => setNovoGuarda(false)}
+            onCriado={async (pai) => {
+              await vincularResponsavelAoAluno(aluno.id, pai.id);
+              setVinculados((atual) => [...atual, pai]);
+              setNovoGuarda(false);
+              await onMudou();
+              toast({
+                tone: "success",
+                title: "Responsável legal cadastrado e vinculado.",
+                description: "Ele já recebe os avisos da escola como qualquer responsável.",
+              });
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setNovoGuarda(true)}
+            className="self-start text-[12.5px] font-semibold text-brand-600 hover:underline"
+          >
+            + Cadastrar responsável legal (termo de guarda)
+          </button>
+        )}
       </div>
     </Modal>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+/**
+ * Cadastro do responsável legal (termo de guarda) sem sair da tela do aluno.
+ *
+ * O tipo de filiação já vem travado em `responsavel_legal` — é o caso de uso do botão. O
+ * resultado é um `Contato` como qualquer outro: recebe disparo, é reconhecido no WhatsApp
+ * e conta na cobertura da turma. Antes isso era um booleano na ficha, e quem respondia
+ * pela criança ficava invisível para o canal.
+ */
+function NovoResponsavelLegal({
+  onCancelar,
+  onCriado,
+}: {
+  onCancelar: () => void;
+  onCriado: (pai: Pai) => Promise<void>;
+}) {
+  const toast = useToast();
+  const [nome, setNome] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [dados, setDados] = useState<DadosResponsavel>({
+    ...DADOS_RESPONSAVEL_VAZIO,
+    tipo_filiacao: "responsavel_legal",
+  });
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    if (!nome.trim() || !telefone.trim()) return;
+    setSalvando(true);
+    try {
+      const pai = await cadastrarPai(nome.trim(), telefone.trim(), [], dados);
+      await onCriado(pai);
+    } catch (err) {
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao cadastrar o responsável.",
+      });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-accent/30 bg-accent-soft/40 p-3.5">
+      <p className="text-[12.5px] font-bold text-[#7a5208]">
+        Novo responsável legal (termo de guarda)
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Input
+          className="flex-1 min-w-[160px]"
+          value={nome}
+          onChange={(e) => setNome(e.target.value)}
+          placeholder="Nome completo"
+        />
+        <Input
+          className="w-44"
+          mono
+          value={telefone}
+          onChange={(e) => setTelefone(e.target.value)}
+          placeholder="+5515999990000"
+        />
+      </div>
+      <CamposResponsavel dados={dados} onChange={setDados} idPrefixo="guarda" />
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" type="button" onClick={onCancelar}>
+          Cancelar
+        </Button>
+        <Button
+          size="sm"
+          type="button"
+          onClick={salvar}
+          disabled={salvando || !nome.trim() || !telefone.trim()}
+        >
+          {salvando ? "Cadastrando…" : "Cadastrar e vincular"}
+        </Button>
+      </div>
+    </div>
   );
 }

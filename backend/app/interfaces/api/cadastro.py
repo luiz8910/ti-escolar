@@ -22,6 +22,7 @@ from app.application.cadastro_use_cases import (
     CadastrarProfessor,
     CoberturaDeContatosDaSala,
     DadosProfessor,
+    DadosResponsavel,
     CriarSala,
     DesvincularPaiDaSala,
     DesvincularResponsavelDoAluno,
@@ -61,6 +62,7 @@ from app.domain.entities import (
     ResponsavelImportado,
     ResultadoImportacaoAlunos,
     Sala,
+    TipoFiliacao,
     Usuario,
 )
 from app.domain.ports import LLMProvider, MessageChannel
@@ -114,7 +116,47 @@ router = APIRouter(prefix="/api/admin", tags=["cadastro"])
 
 
 def _pai_saida(c: Contato) -> PaiSaida:
-    return PaiSaida(id=c.id, nome=c.nome, telefone=c.telefone)
+    return PaiSaida(
+        id=c.id,
+        nome=c.nome,
+        telefone=c.telefone,
+        cpf=c.cpf,
+        cpf_formatado=formatar_cpf(c.cpf),
+        tipo_filiacao=c.tipo_filiacao.value if c.tipo_filiacao else "",
+        tipo_filiacao_rotulo=c.tipo_filiacao.rotulo if c.tipo_filiacao else "",
+        data_nascimento=c.data_nascimento,
+        telefone_2=c.telefone_2,
+        local_trabalho=c.local_trabalho,
+        telefone_trabalho=c.telefone_trabalho,
+        email=c.email,
+        ativo=c.ativo,
+    )
+
+
+def _dados_responsavel(payload: PaiEntrada | PaiAtualizar) -> DadosResponsavel:
+    return DadosResponsavel(
+        cpf=payload.cpf,
+        tipo_filiacao=_tipo_filiacao(payload.tipo_filiacao),
+        data_nascimento=payload.data_nascimento,
+        telefone_2=payload.telefone_2,
+        local_trabalho=payload.local_trabalho,
+        telefone_trabalho=payload.telefone_trabalho,
+        email=payload.email,
+    )
+
+
+def _tipo_filiacao(valor: str) -> TipoFiliacao | None:
+    """Vazio = não declarado. Valor desconhecido é erro de cliente, não silêncio."""
+    if not valor:
+        return None
+    try:
+        return TipoFiliacao(valor)
+    except ValueError as e:
+        aceitos = ", ".join(t.value for t in TipoFiliacao)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tipo de filiação inválido: {valor}. Use um de: {aceitos}.",
+        ) from e
 
 
 def _sala_saida(s: Sala) -> SalaSaida:
@@ -268,6 +310,7 @@ async def cadastrar_pai(
             nome=payload.nome,
             telefone=payload.telefone,
             sala_ids=payload.sala_ids,
+            dados=_dados_responsavel(payload),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -305,6 +348,7 @@ async def atualizar_pai(
             contato_id=contato_id,
             nome=payload.nome,
             telefone=payload.telefone,
+            dados=_dados_responsavel(payload),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
