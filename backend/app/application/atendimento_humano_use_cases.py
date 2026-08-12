@@ -202,13 +202,20 @@ class EscalarParaSecretaria(_BaseAtendimento):
         motivo: str = "",
         pedido_explicito: bool = False,
         respostas_anteriores: int = 0,
+        abertura_direta: bool = False,
     ) -> AtendimentoHumano:
         atual = await self._vivo_na_conversa(conversa_id)
+
+        # `abertura_direta` é a exceção **da escola**, não do responsável: assuntos que
+        # sempre exigem uma pessoa e são sensíveis ao relógio — hoje, a saída antecipada
+        # do aluno (§6l). Perguntar "quer que eu chame alguém?" ali gastaria justamente os
+        # minutos que importam, e a resposta seria sempre "sim".
+        sem_travas = pedido_explicito or abertura_direta
 
         # Trava 1 — não nas primeiras mensagens. Quem pediu uma pessoa explicitamente
         # passa: exigir que ele espere duas respostas automáticas seria hostil.
         if (
-            not pedido_explicito
+            not sem_travas
             and atual is None
             and respostas_anteriores < MIN_RESPOSTAS_ANTES_DE_ENCAMINHAR
         ):
@@ -219,7 +226,7 @@ class EscalarParaSecretaria(_BaseAtendimento):
             )
 
         # Trava 2 — oferecer antes de encaminhar.
-        if atual is None and not pedido_explicito:
+        if atual is None and not sem_travas:
             oferta = await OferecerAtendimentoHumano(
                 atendimentos=self._atendimentos,
                 tenants=self._tenants,
@@ -671,6 +678,7 @@ class MesaDeAtendimento:
         motivo: str,
         pedido_explicito: bool = False,
         respostas_anteriores: int = 0,
+        abertura_direta: bool = False,
     ) -> AtendimentoHumano:
         return await self._escalar.executar(
             tenant_id=tenant_id,
@@ -679,6 +687,7 @@ class MesaDeAtendimento:
             motivo=motivo,
             pedido_explicito=pedido_explicito,
             respostas_anteriores=respostas_anteriores,
+            abertura_direta=abertura_direta,
         )
 
     async def previsao_de_retorno(self, tenant_id: UUID) -> str:

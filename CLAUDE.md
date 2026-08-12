@@ -816,6 +816,33 @@ resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro
 - **[Roadmap]** notificar o atendente por WhatsApp/e-mail (exige `Usuario.telefone`);
   feriados no expediente.
 
+### 6l. Saída antecipada do aluno — a exceção declarada à regra de perguntar antes
+
+O responsável escreve "preciso buscar minha filha às 11h". Isso **sempre** exige decisão
+de gente: a escola precisa saber quem retira a criança e autorizar. E é sensível ao
+relógio — perguntar "quer que eu chame alguém da secretaria?" gastaria justamente os
+minutos que importam, para uma resposta que seria sempre "sim".
+
+Por isso a ferramenta `registrar_saida_antecipada` **abre o chamado direto**, sem oferta e
+sem esperar as duas respostas mínimas (§6j). A exceção é do domínio, não do prompt:
+`EscalarParaSecretaria` ganhou `abertura_direta`, distinto de `pedido_explicito` —
+naquele quem pede é o responsável, neste é a **regra da escola**. Deixá-la só no texto do
+prompt significaria que o modelo pode ignorá-la, e a saída antecipada voltaria a ser uma
+oferta.
+
+- **O que não se dispensa são dois dados**: o **nome do aluno**, sempre; e o **nome de
+  quem está pedindo**, quando `ContatoRepository.por_telefone` não reconhece o número.
+  Sem eles o card chegaria como "alguém quer buscar alguém", e a secretaria teria de
+  reabrir a conversa para perguntar o que o assistente já poderia ter perguntado. Faltando
+  um deles, a ferramenta **não abre nada** — devolve ao modelo a orientação de perguntar.
+- **Quem já está cadastrado não é interrogado sobre o próprio nome**: seria a escola
+  fingindo não conhecer a família. O nome sai do `Contato`.
+- O `motivo` do atendimento nasce **estruturado** (`aluno · responsável · horário ·
+  motivo`), porque é o que a secretaria lê no card antes de abrir a conversa.
+- Depois de aberto, o assistente **cala** (§6j): o responsável ansioso que reescreve não
+  vira um segundo card.
+- Cobertura: `tests/test_atendimento_humano.py` (6 testes de saída antecipada).
+
 ### 6k. Documentos recebidos dos responsáveis pelo WhatsApp
 
 A dor é de época de matrícula, e é concreta: hoje a foto do atestado, do RG e do

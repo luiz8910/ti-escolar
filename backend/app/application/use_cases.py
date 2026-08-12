@@ -281,6 +281,42 @@ FERRAMENTA_ESCALAR = FerramentaSpec(
     },
 )
 
+FERRAMENTA_SAIDA_ANTECIPADA = FerramentaSpec(
+    nome="registrar_saida_antecipada",
+    descricao=(
+        "Abre um chamado na secretaria para o aluno sair mais cedo (buscar antes do fim "
+        "da aula, liberar por consulta médica, retirada antecipada). Use assim que o "
+        "responsável pedir isso — NÃO pergunte se ele quer falar com alguém, e NÃO espere "
+        "outras mensagens: este assunto sempre vai para uma pessoa. Você precisa do NOME "
+        "DO ALUNO; se ele não tiver dito, pergunte e chame a ferramenta depois."
+    ),
+    parametros={
+        "type": "object",
+        "properties": {
+            "nome_aluno": {
+                "type": "string",
+                "description": "Nome do aluno que vai sair mais cedo.",
+            },
+            "nome_responsavel": {
+                "type": "string",
+                "description": (
+                    "Nome de quem está pedindo. Só é necessário quando a ferramenta "
+                    "avisar que o número não está cadastrado."
+                ),
+            },
+            "horario": {
+                "type": "string",
+                "description": "Horário da saída, como o responsável disse (ex.: '11h').",
+            },
+            "motivo": {
+                "type": "string",
+                "description": "Motivo, se ele tiver dito (ex.: 'consulta médica').",
+            },
+        },
+        "required": ["nome_aluno"],
+    },
+)
+
 FERRAMENTA_DOCUMENTO = FerramentaSpec(
     nome="recuperar_documento",
     descricao=(
@@ -321,6 +357,7 @@ class AtenderConversa:
         auditoria: AuditLogRepository | None = None,
         avisos: AvisoTemporizadoRepository | None = None,
         mesa: MesaDeAtendimento | None = None,
+        contatos: ContatoRepository | None = None,
         k: int = 4,
         max_iteracoes: int = 4,
         max_chars: int = 0,
@@ -337,6 +374,9 @@ class AtenderConversa:
         # Opcional: atendimento humano (§6j). Sem ela o assistente nunca encaminha — é o
         # que mantém o caso de uso utilizável em testes e em instalações sem secretaria.
         self._mesa = mesa
+        # Opcional: usado para saber se quem escreve já está cadastrado — é o que decide
+        # se a saída antecipada (§6l) precisa perguntar o nome do responsável.
+        self._contatos = contatos
         self._k = k
         self._max_iteracoes = max_iteracoes
         # Limite de caracteres da mensagem do responsável (§G1); <= 0 desativa.
@@ -381,7 +421,11 @@ class AtenderConversa:
 
         ferramentas = [FERRAMENTA_CONHECIMENTO, FERRAMENTA_DOCUMENTO]
         if self._mesa is not None:
-            ferramentas += [FERRAMENTA_OFERECER_HUMANO, FERRAMENTA_ESCALAR]
+            ferramentas += [
+                FERRAMENTA_OFERECER_HUMANO,
+                FERRAMENTA_ESCALAR,
+                FERRAMENTA_SAIDA_ANTECIPADA,
+            ]
         fontes: list[str] = []
         docs: list[Documento] = []
 
@@ -484,6 +528,11 @@ class AtenderConversa:
         docs: list[Documento],
         respostas_anteriores: int = 0,
     ) -> str:
+        if chamada.nome == FERRAMENTA_SAIDA_ANTECIPADA.nome:
+            return await self._ferramenta_saida_antecipada(
+                chamada, tenant_id=tenant_id, contato=contato, conversa_id=conversa_id
+            )
+
         if chamada.nome in (FERRAMENTA_OFERECER_HUMANO.nome, FERRAMENTA_ESCALAR.nome):
             return await self._ferramenta_atendimento_humano(
                 chamada,
@@ -520,6 +569,77 @@ class AtenderConversa:
             return f"Documentos enviados ao responsável: {nomes}."
 
         return f"Ferramenta desconhecida: {chamada.nome}."
+
+    async def _ferramenta_saida_antecipada(
+        self, chamada, *, tenant_id: UUID, contato: str, conversa_id: UUID
+    ) -> str:
+        """Aluno vai sair mais cedo: abre o chamado direto, sem perguntar (§6l).
+
+        É a **exceção declarada** à regra "perguntar antes de encaminhar" (§6j): a saída
+        antecipada sempre exige decisão de gente (a escola precisa saber quem retira a
+        criança e autorizar), e é sensível ao relógio. Perguntar "quer que eu chame
+        alguém?" gastaria justamente os minutos que importam, para uma resposta que seria
+        sempre "sim".
+
+        O que **não** se dispensa são os dois dados sem os quais a secretaria não consegue
+        agir: o nome do aluno e — quando o número não está cadastrado — o nome de quem
+        está pedindo. Sem eles o card chegaria como "alguém quer buscar alguém", e a
+        secretaria teria de reabrir a conversa para perguntar o que o assistente já
+        poderia ter perguntado.
+        """
+        if self._mesa is None:  # defensivo: a ferramenta nem é oferecida sem mesa
+            return "Encaminhamento para a secretaria não está disponível nesta escola."
+
+        aluno = str(chamada.argumentos.get("nome_aluno", "")).strip()
+        if not aluno:
+            return (
+                "Falta o nome do aluno. Pergunte de forma cordial qual é o nome completo "
+                "do aluno que vai sair mais cedo e chame esta ferramenta de novo."
+            )
+
+        responsavel = str(chamada.argumentos.get("nome_responsavel", "")).strip()
+        if not responsavel:
+            cadastrado = (
+                await self._contatos.por_telefone(tenant_id=tenant_id, telefone=contato)
+                if self._contatos is not None
+                else None
+            )
+            if cadastrado is None:
+                # Só perguntamos quando o número é desconhecido: pedir o nome a quem já
+                # está cadastrado seria a escola fingindo não conhecer a família.
+                return (
+                    "Este número não está cadastrado na escola. Pergunte o nome completo "
+                    "de quem está pedindo a saída e chame esta ferramenta de novo, com o "
+                    "nome do aluno e o nome do responsável."
+                )
+            responsavel = cadastrado.nome
+
+        horario = str(chamada.argumentos.get("horario", "")).strip()
+        motivo_dito = str(chamada.argumentos.get("motivo", "")).strip()
+        # Motivo estruturado: é o que a secretaria lê no card sem abrir a conversa.
+        partes = [f"Saída antecipada — aluno: {aluno}"]
+        if responsavel:
+            partes.append(f"responsável: {responsavel}")
+        if horario:
+            partes.append(f"horário: {horario}")
+        if motivo_dito:
+            partes.append(f"motivo: {motivo_dito}")
+
+        await self._mesa.escalar(
+            tenant_id=tenant_id,
+            conversa_id=conversa_id,
+            contato=contato,
+            motivo=" · ".join(partes),
+            abertura_direta=True,
+        )
+        retorno = await self._mesa.previsao_de_retorno(tenant_id)
+        quando = f" A secretaria responde {retorno}." if retorno else ""
+        return (
+            f"Chamado aberto na secretaria para a saída antecipada de {aluno}. "
+            "Confirme ao responsável que o pedido já foi registrado e que a secretaria "
+            f"vai confirmar a liberação por aqui.{quando} NÃO pergunte se ele quer falar "
+            "com alguém — isso já foi feito."
+        )
 
     async def _ferramenta_atendimento_humano(
         self,
