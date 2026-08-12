@@ -981,3 +981,25 @@ class DocumentoRecebidoORM(Base):
         # Varredura do expurgo, que roda cross-tenant e só olha o prazo.
         Index("ix_documentos_expira_em", "expira_em"),
     )
+
+
+class NumeroBloqueadoORM(Base):
+    """Número cuja **mídia** é recusada no inbound (§6k, anti-spam).
+
+    Bloqueia o arquivo, não a pessoa: o número segue sendo atendido em texto.
+    """
+
+    __tablename__ = "numeros_bloqueados"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    )
+    telefone: Mapped[str] = mapped_column(String(50), index=True)
+    motivo: Mapped[str] = mapped_column(Text, default="", server_default="")
+    bloqueado_por: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    bloqueado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "telefone", name="uq_numero_bloqueado_tenant"),
+    )

@@ -31,12 +31,17 @@ from app.application.paginacao import (
     normalizar_paginacao,
 )
 from app.domain.entities import (
+    DESCARTES_PARA_SUGERIR_BLOQUEIO,
+    JANELA_DESCARTES_DIAS,
     MIMES_ACEITOS,
     TAMANHO_MAXIMO_DOCUMENTO,
     ArquivoBaixado,
     CategoriaDocumento,
+    DocumentoLido,
     DocumentoRecebido,
+    NumeroBloqueado,
     StatusDocumento,
+    SugestaoBloqueio,
 )
 from app.application.atendimento_humano_use_cases import MesaDeAtendimento
 from app.domain.ports import (
@@ -46,6 +51,8 @@ from app.domain.ports import (
     ConversaRepository,
     DocumentoRecebidoRepository,
     FonteMidia,
+    LeitorDocumento,
+    NumeroBloqueadoRepository,
 )
 from app.infrastructure.storage import nova_chave
 
@@ -115,11 +122,13 @@ class ReceberDocumentoDoResponsavel:
         documentos: DocumentoRecebidoRepository,
         storage: ArquivoStorage,
         contatos: ContatoRepository | None = None,
+        bloqueios: NumeroBloqueadoRepository | None = None,
         retencao_dias: int = RETENCAO_PADRAO_DIAS,
     ) -> None:
         self._documentos = documentos
         self._storage = storage
         self._contatos = contatos
+        self._bloqueios = bloqueios
         self._retencao_dias = retencao_dias
 
     async def executar(
@@ -142,6 +151,13 @@ class ReceberDocumentoDoResponsavel:
         if not arquivo.conteudo:
             return ResultadoRecepcao(recusado="arquivo vazio")
 
+        # Anti-spam camada 2 (§4.5): número bloqueado não manda arquivo. **Antes** do
+        # download já ter custado — e antes de gravar bytes de quem a escola recusou.
+        if self._bloqueios is not None and await self._bloqueios.bloqueado(
+            tenant_id=tenant_id, telefone=contato
+        ):
+            return ResultadoRecepcao(recusado="número bloqueado para envio de arquivos")
+
         if media_id:
             existente = await self._documentos.por_media_id(
                 tenant_id=tenant_id, media_id=media_id
@@ -156,11 +172,17 @@ class ReceberDocumentoDoResponsavel:
         )
 
         sugerida = sugerir_categoria(f"{legenda} {arquivo.nome}")
+        # Anti-spam camada 1 (§4.5): origem desconhecida vai para **quarentena** — fora da
+        # fila de trabalho, mas guardada. Descartar de saída perderia o documento de um pai
+        # que trocou de número, que é justamente quem mais precisa dele.
+        nome_contato = await self._nome_do_contato(tenant_id=tenant_id, telefone=contato)
+        conhecido = bool(nome_contato) or self._contatos is None
         documento = DocumentoRecebido(
             tenant_id=tenant_id,
             conversa_id=conversa_id,
             contato=contato,
-            contato_nome=await self._nome_do_contato(tenant_id=tenant_id, telefone=contato),
+            contato_nome=nome_contato,
+            status=StatusDocumento.RECEBIDO if conhecido else StatusDocumento.QUARENTENA,
             chave_storage=chave,
             mime=arquivo.mime,
             tamanho=arquivo.tamanho,
@@ -478,3 +500,115 @@ class ReceberMidiaDoResponsavel:
             conversa_id=conversa_id, autor="bot", texto=texto
         )
         return texto
+
+
+# --------------------------------------------------------------------------- #
+# §4.5 — anti-spam: quarentena, sugestão de bloqueio e bloqueio (sempre humano)
+# --------------------------------------------------------------------------- #
+class SugerirBloqueios:
+    """Números que cruzaram o limiar de descartes e **merecem uma olhada** (decisão C).
+
+    Sugere, não bloqueia. Três documentos descartados do mesmo número em sete dias é sinal
+    de spam — mas também é o que faz um pai que mandou três fotos tremidas do mesmo
+    atestado. Um contador não distingue os dois, e bloquear em silêncio quem estava
+    tentando entregar um documento é exatamente a falha que o produto existe para evitar.
+    """
+
+    def __init__(
+        self,
+        *,
+        documentos: DocumentoRecebidoRepository,
+        bloqueios: NumeroBloqueadoRepository,
+    ) -> None:
+        self._documentos = documentos
+        self._bloqueios = bloqueios
+
+    async def executar(self, *, tenant_id: UUID) -> list[SugestaoBloqueio]:
+        desde = _now() - timedelta(days=JANELA_DESCARTES_DIAS)
+        sugestoes = await self._documentos.descartados_por_numero(
+            tenant_id=tenant_id, desde=desde, minimo=DESCARTES_PARA_SUGERIR_BLOQUEIO
+        )
+        # Quem já está bloqueado não vira sugestão de novo — seria pedir à secretaria que
+        # decidisse duas vezes a mesma coisa.
+        ja_bloqueados = {
+            b.telefone for b in await self._bloqueios.listar(tenant_id=tenant_id)
+        }
+        return [s for s in sugestoes if s.telefone not in ja_bloqueados]
+
+
+class BloquearNumero:
+    """Recusa **mídia** daquele número. O texto continua sendo atendido.
+
+    Sempre disparado por uma pessoa: a sugestão é da aplicação, a decisão é da escola.
+    """
+
+    def __init__(self, *, bloqueios: NumeroBloqueadoRepository) -> None:
+        self._bloqueios = bloqueios
+
+    async def executar(
+        self, *, tenant_id: UUID, telefone: str, motivo: str = "", por: str = ""
+    ) -> NumeroBloqueado:
+        telefone = telefone.strip()
+        if not telefone:
+            raise ValueError("Informe o número a bloquear.")
+        return await self._bloqueios.bloquear(
+            NumeroBloqueado(
+                tenant_id=tenant_id,
+                telefone=telefone,
+                motivo=motivo.strip(),
+                bloqueado_por=por,
+            )
+        )
+
+
+class DesbloquearNumero:
+    def __init__(self, *, bloqueios: NumeroBloqueadoRepository) -> None:
+        self._bloqueios = bloqueios
+
+    async def executar(self, *, tenant_id: UUID, telefone: str) -> bool:
+        return await self._bloqueios.desbloquear(tenant_id=tenant_id, telefone=telefone)
+
+
+class ListarNumerosBloqueados:
+    def __init__(self, *, bloqueios: NumeroBloqueadoRepository) -> None:
+        self._bloqueios = bloqueios
+
+    async def executar(self, *, tenant_id: UUID) -> list[NumeroBloqueado]:
+        return await self._bloqueios.listar(tenant_id=tenant_id)
+
+
+class LerDocumentoPorIA:
+    """Lê um documento já recebido e devolve **sugestões** para a secretaria revisar (§4.3).
+
+    Prévia, não gravação — o mesmo fluxo da importação em massa (§6c-quater) e da leitura
+    de ficha (§D3): a LLM sugere, o código valida, a pessoa confirma. Nada é persistido
+    aqui; quem grava é ``ClassificarDocumento``, com o que a secretaria aprovou.
+
+    Roda **sob demanda**, e não em todo upload: em época de matrícula o volume é alto e a
+    maioria dos documentos a secretaria classifica de olho.
+    """
+
+    def __init__(
+        self,
+        *,
+        documentos: DocumentoRecebidoRepository,
+        storage: ArquivoStorage,
+        leitor: LeitorDocumento,
+    ) -> None:
+        self._documentos = documentos
+        self._storage = storage
+        self._leitor = leitor
+
+    async def executar(
+        self, *, tenant_id: UUID, documento_id: UUID
+    ) -> DocumentoLido | None:
+        documento = await self._documentos.obter(
+            tenant_id=tenant_id, documento_id=documento_id
+        )
+        if documento is None:
+            return None
+        conteudo = await self._storage.ler(chave=documento.chave_storage)
+        if conteudo is None:
+            # Arquivo já expurgado: o metadado sobrevive aos bytes por desenho (§6k).
+            return DocumentoLido(erro="O arquivo não está mais disponível.")
+        return await self._leitor.ler(conteudo=conteudo, mime=documento.mime)

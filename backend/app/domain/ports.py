@@ -7,6 +7,7 @@ A regra de dependência aponta para dentro: aqui não há framework/SDK.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from app.domain.entities import (
     Conversa,
     CotaImpressao,
     Documento,
+    DocumentoLido,
     DocumentoRecebido,
     EstadoAtendimento,
     FerramentaSpec,
@@ -30,6 +32,7 @@ from app.domain.entities import (
     Grupo,
     LeituraRecado,
     Mensagem,
+    NumeroBloqueado,
     MensagemMediada,
     MetricasUsoEscola,
     MessageQuota,
@@ -45,6 +48,7 @@ from app.domain.entities import (
     ResumoConversa,
     ResumoEscola,
     Sala,
+    SugestaoBloqueio,
     SolicitacaoImpressao,
     SolicitacaoInterna,
     SolicitacaoMatricula,
@@ -585,7 +589,27 @@ class AlunoRepository(Protocol):
 
     async def obter(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno | None: ...
 
-    async def listar(self, *, tenant_id: UUID, sala_id: UUID | None = None) -> list[Aluno]: ...
+    async def listar(
+        self,
+        *,
+        tenant_id: UUID,
+        sala_id: UUID | None = None,
+        apenas_ativos: bool | None = None,
+        q: str = "",
+        pagina: int | None = None,
+        por_pagina: int | None = None,
+    ) -> list[Aluno]:
+        """``q`` busca por nome ou matrícula (sem diferenciar maiúsculas)."""
+        ...
+
+    async def contar(
+        self,
+        *,
+        tenant_id: UUID,
+        sala_id: UUID | None = None,
+        apenas_ativos: bool | None = None,
+        q: str = "",
+    ) -> int: ...
 
     async def atualizar(self, aluno: Aluno) -> Aluno: ...
 
@@ -809,6 +833,37 @@ class FonteMidia(Protocol):
 
 
 @runtime_checkable
+class LeitorDocumento(Protocol):
+    """Lê um documento **como imagem/PDF** e devolve o que conseguiu extrair (§4.3).
+
+    Porta separada de ``LLMProvider`` de propósito: aquele contrato é de **texto**, e nem
+    todo provedor sabe olhar uma foto. Misturar as duas capacidades obrigaria todo
+    adaptador de LLM a fingir que enxerga.
+
+    O que volta é **sugestão**: quem valida é o código, e quem confirma é a secretaria.
+    O mesmo fluxo prévia → confirmação da importação em massa (§6c-quater) e da leitura
+    de ficha (§D3).
+    """
+
+    async def ler(self, *, conteudo: bytes, mime: str) -> DocumentoLido: ...
+
+
+@runtime_checkable
+class NumeroBloqueadoRepository(Protocol):
+    """Números cuja **mídia** é recusada no inbound (§6k, anti-spam)."""
+
+    async def bloquear(self, bloqueio: NumeroBloqueado) -> NumeroBloqueado:
+        """Idempotente: bloquear duas vezes atualiza o motivo, não duplica."""
+        ...
+
+    async def desbloquear(self, *, tenant_id: UUID, telefone: str) -> bool: ...
+
+    async def bloqueado(self, *, tenant_id: UUID, telefone: str) -> bool: ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[NumeroBloqueado]: ...
+
+
+@runtime_checkable
 class DocumentoRecebidoRepository(Protocol):
     """Documentos que os responsáveis enviaram, por tenant."""
 
@@ -817,6 +872,12 @@ class DocumentoRecebidoRepository(Protocol):
     async def obter(
         self, *, tenant_id: UUID, documento_id: UUID
     ) -> DocumentoRecebido | None: ...
+
+    async def descartados_por_numero(
+        self, *, tenant_id: UUID, desde: datetime, minimo: int
+    ) -> list[SugestaoBloqueio]:
+        """Números com ao menos ``minimo`` documentos descartados desde ``desde``."""
+        ...
 
     async def por_media_id(
         self, *, tenant_id: UUID, media_id: str
