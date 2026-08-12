@@ -404,6 +404,22 @@ ti-escolar/
     verificadores conferidos e sequências repetidas recusadas, datas em ISO aceitando
     `DD/MM/AAAA`, e-mail e telefone em E.164). O módulo é compartilhado — responsáveis e
     alunos usam o mesmo.
+  - **O telefone principal também é normalizado** desde 12/ago/2026. Ele escapava:
+    `telefone_2` e `telefone_trabalho` passavam por `_e164_ou_erro`, mas o número que
+    **é a chave da conversa** era gravado como foi digitado. "(15) 99999-0000" no banco
+    faz o inbound não reconhecer a pessoa (o webhook entrega o remetente em E.164), a
+    Graph API recusar o envio, e a checagem de duplicidade comparar formatos diferentes
+    do mesmo número. A normalização vem **antes** da checagem, senão a mesma família
+    entra duas vezes. Vazio segue aceito: professor sem número existe, e responsável sem
+    telefone é o que a cobertura de contatos (§6c-ter) acusa.
+  - **Máscara é conforto de digitação, não contrato de dado** (`web/lib/mascaras.ts` +
+    `web/components/ui/campos.tsx`): CPF, telefone, RA e data ganham formato na tela,
+    mas quem decide o que é gravado continua sendo o back-end. A **data deixou de ser
+    `<input type="date">`** — ele desenha no formato do *sistema operacional*, e numa
+    máquina em inglês a secretaria via `mm/dd/aaaa`; 03/04 vira 3 de abril ou 4 de março
+    dependendo de quem olha, e data de nascimento trocada é matrícula errada. O RA fica
+    **sem agrupamento** de propósito: o formato varia por estado, e pontuar no molde
+    errado é pior do que não pontuar.
 - **Vínculo professor ↔ série:** o relacionamento mora na **série**, via
   **`Sala.professor_id`** (FK `salas.professor_id` → `professores.id`, `ON DELETE SET NULL`).
   Assim uma **série tem no máximo um professor**, e um **professor pode conduzir várias séries**

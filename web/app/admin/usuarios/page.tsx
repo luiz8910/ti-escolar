@@ -38,6 +38,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/form";
+import { CampoTelefone } from "@/components/ui/campos";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/Table";
@@ -264,11 +265,7 @@ function CamposContato({
         label="WhatsApp"
         hint="Usado para avisar de um atendimento esperando na fila."
       >
-        <Input
-          value={telefone}
-          onChange={(e) => setTelefone(e.target.value)}
-          placeholder="(15) 99999-0000"
-        />
+        <CampoTelefone value={telefone} onChange={setTelefone} />
       </Field>
       <Field label="Endereço completo">
         <Input

@@ -25,10 +25,12 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/form";
+import { CampoTelefone } from "@/components/ui/campos";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon } from "@/components/ui/icons";
+import { formatarTelefone } from "@/lib/mascaras";
 
 export default function Professores() {
   const router = useRouter();
@@ -124,12 +126,7 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
           onChange={(e) => setNome(e.target.value)}
           placeholder="Nome do professor"
         />
-        <Input
-          className="w-52"
-          value={telefone}
-          onChange={(e) => setTelefone(e.target.value)}
-          placeholder="WhatsApp, ex.: +5511999990000"
-        />
+        <CampoTelefone className="w-52" value={telefone} onChange={setTelefone} />
         <Input
           className="w-44"
           type="password"
@@ -302,7 +299,7 @@ function ListaProfessores({
                         </span>
                       )}
                     </Td>
-                    <Td className="font-mono text-xs text-n-600">{p.telefone}</Td>
+                    <Td className="font-mono text-xs text-n-600">{formatarTelefone(p.telefone)}</Td>
                     <Td className="font-mono text-xs text-n-600">
                       {p.cpf_formatado || <span className="text-n-400">—</span>}
                     </Td>
@@ -421,11 +418,7 @@ function EditarProfessor({
     >
       <div className="flex flex-col gap-3">
         <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome" />
-        <Input
-          value={telefone}
-          onChange={(e) => setTelefone(e.target.value)}
-          placeholder="WhatsApp, ex.: +5511999990000"
-        />
+        <CampoTelefone value={telefone} onChange={setTelefone} />
         <Input
           type="password"
           value={senha}

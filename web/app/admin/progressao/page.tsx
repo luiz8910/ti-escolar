@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/form";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
+import { formatarTelefone } from "@/lib/mascaras";
 
 const FORMAR = "__formar__"; // destino "última série": marca ex-alunos
 
@@ -244,7 +245,7 @@ function ListaResponsaveis({
       <ul className="list-disc pl-5">
         {itens.map((r) => (
           <li key={r.contato_id}>
-            {r.nome} · {r.telefone}
+            {r.nome} · {formatarTelefone(r.telefone)}
           </li>
         ))}
       </ul>

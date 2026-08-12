@@ -25,6 +25,7 @@ import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon, CheckIcon, BellIcon } from "@/components/ui/icons";
+import { formatarTelefone } from "@/lib/mascaras";
 
 export default function Mural() {
   const router = useRouter();
@@ -279,7 +280,7 @@ function DetalheLeitura({
             <ul className="flex flex-col gap-1">
               {detalhe.nao_lidos.map((p) => (
                 <li key={p.professor_id} className="text-sm text-n-700">
-                  {p.nome} <span className="font-mono text-xs text-n-400">{p.telefone}</span>
+                  {p.nome} <span className="font-mono text-xs text-n-400">{formatarTelefone(p.telefone)}</span>
                 </li>
               ))}
             </ul>

@@ -32,11 +32,13 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field, Textarea } from "@/components/ui/form";
+import { CampoTelefone } from "@/components/ui/campos";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { UsersIcon, PlusIcon } from "@/components/ui/icons";
+import { formatarTelefone } from "@/lib/mascaras";
 
 export default function SalasEPais() {
   const router = useRouter();
@@ -467,13 +469,7 @@ function CoberturaAlerta({
             pedindo que colete os números na reunião.
           </p>
           <Field label="WhatsApp do professor">
-            <Input
-              autoFocus
-              mono
-              value={telefone}
-              onChange={(e) => setTelefone(e.target.value)}
-              placeholder="+5511999990000"
-            />
+            <CampoTelefone autoFocus mono value={telefone} onChange={setTelefone} />
           </Field>
           <Field label="Mensagem (opcional)">
             <Textarea
@@ -565,7 +561,7 @@ function SalaDetalhe({
                     </span>
                   )}
                 </Td>
-                <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
+                <Td className="font-mono text-xs text-n-500">{formatarTelefone(p.telefone)}</Td>
               </Tr>
             ))}
             {relatorio.length === 0 && (

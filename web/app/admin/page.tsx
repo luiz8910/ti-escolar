@@ -22,10 +22,12 @@ import { QuotaBar } from "@/components/layout/QuotaBar";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/form";
+import { CampoTelefone } from "@/components/ui/campos";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
 import { UsersIcon, PlusIcon } from "@/components/ui/icons";
+import { formatarTelefone } from "@/lib/mascaras";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -262,7 +264,7 @@ function GrupoDetalhe({
             {grupo.membros.map((c) => (
               <Tr key={c.id}>
                 <Td className="font-medium">{c.nome}</Td>
-                <Td className="font-mono text-xs text-n-500">{c.telefone}</Td>
+                <Td className="font-mono text-xs text-n-500">{formatarTelefone(c.telefone)}</Td>
               </Tr>
             ))}
             {grupo.membros.length === 0 && (
@@ -284,12 +286,11 @@ function GrupoDetalhe({
             onChange={(e) => setNome(e.target.value)}
             placeholder="Nome do responsável"
           />
-          <Input
+          <CampoTelefone
             className="w-44"
             mono
             value={telefone}
-            onChange={(e) => setTelefone(e.target.value)}
-            placeholder="+5511999990000"
+            onChange={setTelefone}
           />
           <Button variant="secondary" size="sm" type="submit">
             Adicionar
