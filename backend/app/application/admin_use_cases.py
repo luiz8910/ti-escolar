@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.application.use_cases import EnviarBroadcast, ResultadoBroadcast
+from app.application.validacao import normalizar_telefone
 from app.domain.entities import (
     Broadcast,
+    Cargo,
     DestinatarioBroadcast,
     Grupo,
     Papel,
+    Turno,
     Usuario,
 )
 from app.domain.ports import GrupoRepository, UsuarioRepository
@@ -20,11 +23,51 @@ from app.infrastructure.security import hash_senha, verificar_senha
 # --------------------------------------------------------------------------- #
 # Usuários (super admin / tenant admin)
 # --------------------------------------------------------------------------- #
+@dataclass
+class DadosUsuario:
+    """Contato e lotação de um usuário da escola. Todos opcionais."""
+
+    telefone: str = ""
+    endereco: str = ""
+    turno: Turno | None = None
+
+
+def _validar_dados_usuario(dados: DadosUsuario) -> DadosUsuario:
+    e164, aviso = normalizar_telefone(dados.telefone)
+    if aviso:
+        raise ValueError(f"Telefone: {aviso}")
+    return DadosUsuario(telefone=e164, endereco=dados.endereco.strip(), turno=dados.turno)
+
+
+def _exige_hierarquia(criador: Usuario, cargo: Cargo) -> None:
+    """Só se gerencia alguém **estritamente abaixo** do próprio posto.
+
+    Sem isto, a tela de equipe seria o caminho mais curto para escalar privilégio dentro
+    da escola: a coordenadora cadastraria uma "diretora" e entraria com ela.
+    """
+    if criador.eh_super_admin:
+        return
+    if not criador.gere_usuarios:
+        raise PermissionError("A secretaria não gerencia usuários.")
+    if cargo.nivel >= criador.nivel_hierarquico:
+        rotulo = criador.cargo.rotulo if criador.cargo else "Você"
+        raise PermissionError(
+            f"{rotulo} só pode gerenciar cargos abaixo do seu — {cargo.rotulo} não está."
+        )
+
+
 class CriarUsuario:
     """Cria um usuário administrativo.
 
-    Regra: apenas um super admin pode criar outro super admin ou admins de qualquer
-    tenant. Um admin de tenant só cria usuários dentro do seu próprio tenant.
+    Três regras, em camadas:
+
+    1. só um super admin cria outro super admin, ou usuários de outra escola;
+    2. a **secretaria não gerencia usuários** (é a exceção do apontamento);
+    3. dentro da escola, só se cria alguém **estritamente abaixo** do próprio cargo.
+
+    O ``papel`` deixou de ser escolhido por quem cadastra: ele **decorre do cargo**
+    (``Cargo.papel_correspondente``). Deixar os dois independentes permitiria criar uma
+    "secretaria" com papel de admin — exatamente o que a exceção do apontamento proíbe.
     """
 
     def __init__(self, *, usuarios: UsuarioRepository) -> None:
@@ -39,33 +82,58 @@ class CriarUsuario:
         senha: str,
         papel: Papel,
         tenant_id: UUID | None,
+        cargo: Cargo | None = None,
+        dados: DadosUsuario | None = None,
     ) -> Usuario:
         if papel == Papel.SUPER_ADMIN and not criador.eh_super_admin:
             raise PermissionError("Apenas o super admin pode criar outro super admin.")
         if not criador.eh_super_admin and tenant_id != criador.tenant_id:
             raise PermissionError("Admin de tenant só pode criar usuários do próprio tenant.")
-        if papel == Papel.TENANT_ADMIN and tenant_id is None:
-            raise ValueError("Admin de tenant exige tenant_id.")
+
+        if papel == Papel.SUPER_ADMIN:
+            cargo = None  # não ocupa posto em escola nenhuma
+        else:
+            if tenant_id is None:
+                raise ValueError("Usuário de escola exige tenant_id.")
+            # Retrocompatível: quem não informa cargo cria um admin de escola, que é o
+            # que ``papel=tenant_admin`` sempre significou.
+            cargo = cargo or Cargo.DIRETOR
+            _exige_hierarquia(criador, cargo)
+            papel = cargo.papel_correspondente
 
         if await self._usuarios.por_email(email):
             raise ValueError("Já existe um usuário com este e-mail.")
 
+        validos = _validar_dados_usuario(dados or DadosUsuario())
         usuario = Usuario(
             nome=nome,
             email=email.lower(),
             senha_hash=hash_senha(senha),
             papel=papel,
             tenant_id=None if papel == Papel.SUPER_ADMIN else tenant_id,
+            cargo=cargo,
+            telefone=validos.telefone,
+            endereco=validos.endereco,
+            turno=validos.turno,
         )
         return await self._usuarios.criar(usuario)
 
 
 class AtualizarUsuario:
-    """Edita um usuário administrativo: nome, senha e situação (ativo/inativo).
+    """Edita um usuário: nome, senha, situação, contato e **cargo**.
 
-    Não mexe em ``papel`` nem em ``tenant_id``: mudar o papel de alguém é criar outro
-    tipo de conta, e permitir isso na tela de edição abriria a porta para um admin de
-    escola se promover a super admin. Para trocar de papel, cria-se um usuário novo.
+    Não mexe em ``tenant_id``: mover alguém de escola é criar outra conta. O ``papel``
+    também não é editável diretamente — ele **acompanha o cargo**, senão a tela de edição
+    seria a porta para transformar uma secretaria em admin sem trocar o cargo dela.
+
+    Três travas de hierarquia, e cada uma fecha um buraco diferente:
+
+    - só se edita quem está **estritamente abaixo** (``manda_em``) — inclusive para trocar
+      senha, que é como uma conta é tomada;
+    - **ninguém muda o próprio cargo**, nem para cima nem para baixo: promover a si mesmo
+      é o ataque óbvio, e rebaixar-se sozinho tranca a escola sem ninguém no topo;
+    - o cargo **novo** também precisa estar abaixo de quem edita — senão o vice-diretor
+      promoveria a coordenadora a diretora e usaria a conta dela.
 
     ``ativo=False`` é a forma de **desligar** uma funcionária: a sessão dela cai na
     requisição seguinte (``usuario_autenticado`` revalida no banco), mas o histórico do
@@ -83,13 +151,38 @@ class AtualizarUsuario:
         nome: str | None = None,
         senha: str | None = None,
         ativo: bool | None = None,
+        cargo: Cargo | None = None,
+        dados: DadosUsuario | None = None,
     ) -> Usuario:
         alvo = await self._usuarios.obter(usuario_id)
         if alvo is None:
             raise ValueError("Usuário não encontrado.")
-        if not editor.eh_super_admin:
-            if alvo.eh_super_admin or alvo.tenant_id != editor.tenant_id:
-                raise PermissionError("Você só pode editar usuários da própria escola.")
+        # Editar a si mesmo é permitido (nome, senha, contato) — `manda_em` recusaria,
+        # porque ninguém está estritamente acima de si.
+        proprio = alvo.id == editor.id
+        if not proprio and not editor.manda_em(alvo):
+            raise PermissionError(
+                "Você só pode editar usuários da própria escola com cargo abaixo do seu."
+            )
+        if not proprio and not editor.gere_usuarios:
+            raise PermissionError("A secretaria não gerencia usuários.")
+
+        if cargo is not None and cargo != alvo.cargo:
+            if proprio:
+                raise ValueError("Você não pode alterar o próprio cargo.")
+            if alvo.eh_super_admin:
+                raise PermissionError("O super admin não ocupa cargo em uma escola.")
+            _exige_hierarquia(editor, cargo)
+            alvo.cargo = cargo
+            # O papel acompanha o cargo: sem isto, uma secretaria promovida a coordenadora
+            # continuaria sem acesso, e uma coordenadora rebaixada continuaria com ele.
+            alvo.papel = cargo.papel_correspondente
+
+        if dados is not None:
+            validos = _validar_dados_usuario(dados)
+            alvo.telefone = validos.telefone
+            alvo.endereco = validos.endereco
+            alvo.turno = validos.turno
 
         if nome is not None:
             nome = nome.strip()
@@ -101,7 +194,7 @@ class AtualizarUsuario:
         if ativo is not None:
             # Desativar a si mesmo derruba a própria sessão e, no caso de um super admin
             # sozinho, tranca a plataforma inteira para fora.
-            if not ativo and alvo.id == editor.id:
+            if not ativo and proprio:
                 raise ValueError("Você não pode desativar a própria conta.")
             alvo.ativo = ativo
 

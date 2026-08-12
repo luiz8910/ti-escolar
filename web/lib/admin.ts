@@ -10,12 +10,43 @@ export const DEMO_TEMPLATE_ID = "00000000-0000-0000-0000-0000000000a1";
 
 const STORAGE_KEY = "tiescolar.admin";
 
+/** Posto na escola. A ordem da lista é a da hierarquia — maior manda em menor. */
+export type Cargo = "diretor" | "vice_diretor" | "coordenador" | "secretaria";
+
+export const CARGOS: { valor: Cargo; rotulo: string; nivel: number }[] = [
+  { valor: "diretor", rotulo: "Diretor(a)", nivel: 4 },
+  { valor: "vice_diretor", rotulo: "Vice-diretor(a)", nivel: 3 },
+  { valor: "coordenador", rotulo: "Coordenador(a)", nivel: 2 },
+  { valor: "secretaria", rotulo: "Secretaria", nivel: 1 },
+];
+
+export type Turno = "manha" | "tarde" | "integral" | "noite";
+
+export const TURNOS: { valor: Turno; rotulo: string }[] = [
+  { valor: "manha", rotulo: "Manhã" },
+  { valor: "tarde", rotulo: "Tarde" },
+  { valor: "integral", rotulo: "Integral" },
+  { valor: "noite", rotulo: "Noite" },
+];
+
+export function nivelDoCargo(cargo: string): number {
+  return CARGOS.find((c) => c.valor === cargo)?.nivel ?? 0;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
   email: string;
-  papel: "super_admin" | "tenant_admin";
+  papel: "super_admin" | "tenant_admin" | "secretaria";
   tenant_id: string | null;
+  /** Vazio para o super admin, que não ocupa cargo em escola nenhuma. */
+  cargo: Cargo | "";
+  cargo_rotulo: string;
+  /** Pode abrir a tela de equipe e mexer em contas? A secretaria não pode. */
+  gere_usuarios: boolean;
+  telefone: string;
+  endereco: string;
+  turno: Turno | "";
   /** Nome da escola — só o login preenche; as listagens de usuário deixam vazio. */
   tenant_nome?: string;
   /** Funcionária desligada continua no cadastro (histórico), mas sem acesso ao painel. */
@@ -2066,10 +2097,17 @@ export async function criarUsuario(dados: {
   nome: string;
   email: string;
   senha: string;
+  cargo: Cargo;
+  telefone?: string;
+  endereco?: string;
+  turno?: Turno | "";
 }): Promise<Usuario> {
   const resp = await apiFetch(`${API_URL}/api/admin/usuarios`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
+    // `papel` vai como tenant_admin, mas quem manda é o `cargo`: o back-end deriva o
+    // papel dele (secretaria não administra), então não há como criar uma secretaria
+    // com acesso de admin por engano.
     body: JSON.stringify({ ...dados, papel: "tenant_admin", tenant_id: tenantEmFoco() }),
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar usuário`);
@@ -2078,7 +2116,15 @@ export async function criarUsuario(dados: {
 
 export async function atualizarUsuario(
   id: string,
-  dados: { nome?: string; senha?: string; ativo?: boolean },
+  dados: {
+    nome?: string;
+    senha?: string;
+    ativo?: boolean;
+    cargo?: Cargo;
+    telefone?: string;
+    endereco?: string;
+    turno?: Turno | "";
+  },
 ): Promise<Usuario> {
   const resp = await apiFetch(`${API_URL}/api/admin/usuarios/${id}`, {
     method: "PUT",
