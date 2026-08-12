@@ -5,11 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   exigeEscolhaDeEscola,
   getSessao,
-  inativarResponsaveis,
+  sincronizarResponsaveis,
   listarSalas,
   logout,
   promoverTurmas,
   ResponsavelInativado,
+  SincronizacaoResponsaveis,
   ResultadoPromocao,
   Sala,
   Usuario,
@@ -30,7 +31,9 @@ export default function ProgressaoPage() {
   const [salas, setSalas] = useState<Sala[]>([]);
   const [destinos, setDestinos] = useState<Record<string, string>>({});
   const [resultados, setResultados] = useState<ResultadoPromocao[]>([]);
-  const [inativados, setInativados] = useState<ResponsavelInativado[] | null>(null);
+  const [sincronizacao, setSincronizacao] = useState<SincronizacaoResponsaveis | null>(
+    null,
+  );
   const toast = useToast();
 
   const recarregar = useCallback(async () => {
@@ -75,13 +78,16 @@ export default function ProgressaoPage() {
     }
   }
 
-  async function inativar() {
+  async function sincronizar() {
     try {
-      const res = await inativarResponsaveis();
-      setInativados(res);
+      const res = await sincronizarResponsaveis();
+      setSincronizacao(res);
+      const total = res.inativados.length + res.reativados.length;
       toast({
         tone: "success",
-        title: `${res.length} responsável(is) inativado(s).`,
+        title: total
+          ? `${res.inativados.length} inativado(s), ${res.reativados.length} reativado(s).`
+          : "Tudo já estava em dia.",
       });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha." });
@@ -177,34 +183,71 @@ export default function ProgressaoPage() {
 
         <Card>
           <CardHeader title="Ciclo de vida do responsável" />
+          <div className="mb-3 flex items-start gap-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5 text-[12.5px] text-brand-900">
+            <span>
+              <b>Isto já acontece sozinho.</b> A situação do responsável é ajustada na
+              promoção de turmas acima e sempre que um aluno é desativado ou rematriculado
+              — quem fica sem nenhum aluno ativo sai, quem volta a ter aluno retorna.
+            </span>
+          </div>
           <p className="mb-3 text-sm text-n-500">
-            Inativa os responsáveis cujos alunos já são <b>todos</b> ex-alunos —
-            eliminando o retrabalho de desfazer contato a contato. Não mexe em quem ainda
-            tem algum aluno ativo.
+            O botão abaixo é um <b>reprocessamento</b> da escola inteira: use depois de uma
+            importação em massa ou de um ajuste feito fora do painel, para conferir que não
+            ficou ninguém para trás.
           </p>
-          <Button size="sm" variant="secondary" onClick={inativar}>
-            Inativar responsáveis sem alunos ativos
+          <Button size="sm" variant="secondary" onClick={sincronizar}>
+            Reprocessar situação dos responsáveis
           </Button>
 
-          {inativados && (
-            <div className="mt-3 text-sm text-n-700">
-              {inativados.length === 0 ? (
+          {sincronizacao && (
+            <div className="mt-3 flex flex-col gap-2 text-sm text-n-700">
+              {sincronizacao.inativados.length === 0 &&
+              sincronizacao.reativados.length === 0 ? (
                 <p className="text-n-500">
-                  Nenhum responsável para inativar — todos têm ao menos um aluno ativo.
+                  Nada a ajustar — a situação de todos já estava correta.
                 </p>
               ) : (
-                <ul className="list-disc pl-5">
-                  {inativados.map((r) => (
-                    <li key={r.contato_id}>
-                      {r.nome} · {r.telefone}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <ListaResponsaveis
+                    titulo="Inativados (sem nenhum aluno ativo)"
+                    itens={sincronizacao.inativados}
+                  />
+                  <ListaResponsaveis
+                    titulo="Reativados (voltaram a ter aluno ativo)"
+                    itens={sincronizacao.reativados}
+                  />
+                </>
               )}
             </div>
           )}
         </Card>
       </div>
     </AppShell>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+/** Um lado da sincronização. Some quando não há nada — lista vazia é só ruído. */
+function ListaResponsaveis({
+  titulo,
+  itens,
+}: {
+  titulo: string;
+  itens: ResponsavelInativado[];
+}) {
+  if (itens.length === 0) return null;
+  return (
+    <div>
+      <p className="text-[12.5px] font-bold text-n-800">
+        {titulo} · {itens.length}
+      </p>
+      <ul className="list-disc pl-5">
+        {itens.map((r) => (
+          <li key={r.contato_id}>
+            {r.nome} · {r.telefone}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

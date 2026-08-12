@@ -628,11 +628,25 @@ exige LLM novo. Todas escopadas por `tenant_id`.
 - **F1 · Progressão de série + ciclo de vida do responsável:** na virada de ano,
   `PromoverSerie`/`PromoverTurmas` movem os alunos **ativos** para a série seguinte (ou os
   marcam como ex-alunos na última série — `destino=None`), e
-  `InativarResponsaveisSemAlunosAtivos` inativa (`Contato.ativo=False`) **apenas** os
-  responsáveis cujos alunos já são **todos** ex-alunos (idempotente; preserva quem ainda tem
-  aluno ativo ou nenhum vínculo). Casos de uso em
-  `app/application/progressao_use_cases.py`. Rotas em `app/interfaces/api/progressao.py`
-  (`/api/admin/progressao/promover`, `/api/admin/progressao/inativar-responsaveis`).
+  `SincronizarSituacaoDosResponsaveis` alinha o `Contato.ativo` com a situação dos alunos.
+  - **A regra é simétrica:** inativa quem tem alunos vinculados e **todos** já são
+    ex-alunos; **reativa** quem estava inativo e voltou a ter algum aluno ativo. A
+    reativação não é enfeite — sem ela a automação seria uma armadilha: a rematrícula
+    devolveria o aluno e deixaria a família inativa, parando de receber aviso da escola
+    sem ninguém perceber. É seguro porque `Contato.ativo` **só é mexido por este caso de
+    uso** (não há desativação manual de responsável no painel). Responsáveis sem nenhum
+    aluno vinculado são preservados; idempotente.
+  - **Roda por automação, não por clique** (apontamento de 10/08). O gatilho está nos dois
+    momentos em que a família de fato muda de estado: no fim de `PromoverTurmas` e em
+    `DesativarAluno`/`ReativarAluno`. Um cron diário passaria 364 dias por ano
+    recalculando nada — e o projeto ainda não tem scheduler.
+  - `contato_ids` recorta o trabalho: a virada de ano varre a escola; a desativação de um
+    aluno olha só os responsáveis dele.
+  - A rota `POST /progressao/inativar-responsaveis` **permanece como reprocessamento** —
+    para conferir a escola inteira depois de uma importação em massa ou de um ajuste feito
+    fora do painel. A URL manteve o nome antigo, mas a operação é bidirecional.
+  Casos de uso em `app/application/progressao_use_cases.py`. Rotas em
+  `app/interfaces/api/progressao.py`.
   Migrations `0019_contato_ativo` (flag `contatos.ativo`). Painel:
   `web/app/admin/progressao/`.
 - **J1 · Acesso web por link:** princípio transversal já atendido pelo painel Next.js (App

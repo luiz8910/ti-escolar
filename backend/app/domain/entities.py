@@ -1640,11 +1640,28 @@ class ResultadoPromocao:
 
 @dataclass
 class ResponsavelInativado:
-    """Responsável cujo cadastro foi inativado por não ter mais alunos ativos (§F1)."""
+    """Responsável cuja situação (``ativo``) mudou pela sincronização com os alunos (§F1)."""
 
     contato_id: UUID
     nome: str
     telefone: str
+
+
+@dataclass
+class ResultadoSincronizacao:
+    """O que a sincronização de responsáveis mexeu.
+
+    Os dois lados importam para a tela: inativar sozinho pareceria perda de cadastro, e
+    reativar sem dizer deixaria a secretaria sem entender por que a família voltou a
+    receber aviso.
+    """
+
+    inativados: list[ResponsavelInativado] = field(default_factory=list)
+    reativados: list[ResponsavelInativado] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.inativados) + len(self.reativados)
 
 
 # --------------------------------------------------------------------------- #

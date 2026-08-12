@@ -12,7 +12,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.domain.entities import ResponsavelInativado, ResultadoPromocao
+from app.domain.entities import (
+    ResponsavelInativado,
+    ResultadoPromocao,
+    ResultadoSincronizacao,
+)
 from app.domain.ports import AlunoRepository, ContatoRepository, SalaRepository
 
 
@@ -86,9 +90,16 @@ class PromoverTurmas:
     série processada.
     """
 
-    def __init__(self, *, alunos: AlunoRepository, salas: SalaRepository) -> None:
+    def __init__(
+        self,
+        *,
+        alunos: AlunoRepository,
+        salas: SalaRepository,
+        contatos: ContatoRepository | None = None,
+    ) -> None:
         self._alunos = alunos
         self._salas = salas
+        self._contatos = contatos
 
     async def executar(
         self,
@@ -106,23 +117,47 @@ class PromoverTurmas:
                     destino_sala_id=destino_sala_id,
                 )
             )
+        # A virada de ano é **o** momento em que famílias inteiras deixam de ter aluno na
+        # escola. Sincronizar aqui, na mesma operação, é o que tira a inativação da
+        # dependência de alguém lembrar de clicar num botão (apontamento de 10/08). Um cron
+        # diário estaria, 364 dias por ano, recalculando nada.
+        if self._contatos is not None:
+            await SincronizarSituacaoDosResponsaveis(
+                alunos=self._alunos, contatos=self._contatos
+            ).executar(tenant_id=tenant_id)
         return resultados
 
 
-class InativarResponsaveisSemAlunosAtivos:
-    """Inativa responsáveis cujos alunos já são **todos** ex-alunos.
+class SincronizarSituacaoDosResponsaveis:
+    """Alinha o ``ativo`` dos responsáveis com a situação dos alunos deles (§F1).
 
-    Regra do cliente (§F1): só torna o responsável inativo quando **todos** os seus
-    alunos estão inativos. Responsáveis sem nenhum aluno vinculado são preservados
-    (podem ser cadastros novos ou de outra finalidade). Idempotente: quem já está
-    inativo é ignorado. Devolve os responsáveis efetivamente inativados.
+    Duas regras, simétricas:
+
+    - **inativa** quem tem alunos vinculados e **todos** já são ex-alunos;
+    - **reativa** quem está inativo e voltou a ter **algum** aluno ativo.
+
+    A reativação não é enfeite: sem ela a automação viraria uma armadilha. Desativar o
+    aluno inativa a família; a rematrícula (``ReativarAluno``) devolveria o aluno e
+    deixaria os responsáveis inativos — parando de receber aviso da escola sem ninguém
+    perceber. É seguro fazê-lo porque ``Contato.ativo`` **só é mexido por este caso de
+    uso**: não há desativação manual de responsável no painel.
+
+    Responsáveis **sem nenhum aluno vinculado são preservados** — podem ser cadastros
+    novos, ou de outra finalidade. Idempotente: quem já está no estado certo é ignorado.
+
+    ``contato_ids`` recorta o trabalho. A virada de ano roda sobre a escola inteira; a
+    desativação de **um** aluno só precisa olhar os responsáveis dele, e varrer a escola a
+    cada clique seria pagar caro por nada.
     """
 
     def __init__(self, *, alunos: AlunoRepository, contatos: ContatoRepository) -> None:
         self._alunos = alunos
         self._contatos = contatos
 
-    async def executar(self, *, tenant_id: UUID) -> list[ResponsavelInativado]:
+    async def executar(
+        self, *, tenant_id: UUID, contato_ids: Sequence[UUID] | None = None
+    ) -> ResultadoSincronizacao:
+        alvo = set(contato_ids) if contato_ids is not None else None
         alunos = await self._alunos.listar(tenant_id=tenant_id)
         # Mapa contato_id → [alunos] a partir dos responsáveis de cada aluno.
         por_contato: dict[UUID, list] = {}
@@ -131,19 +166,26 @@ class InativarResponsaveisSemAlunosAtivos:
                 por_contato.setdefault(responsavel.id, []).append(aluno)
 
         inativados: list[ResponsavelInativado] = []
+        reativados: list[ResponsavelInativado] = []
         for contato in await self._contatos.listar(tenant_id=tenant_id):
-            if not contato.ativo:
+            if alvo is not None and contato.id not in alvo:
                 continue
             alunos_do_contato = por_contato.get(contato.id, [])
             if not alunos_do_contato:
                 continue  # sem alunos vinculados: não mexe
-            if any(a.ativo for a in alunos_do_contato):
-                continue  # ainda tem aluno ativo
-            contato.ativo = False
-            await self._contatos.atualizar(contato)
-            inativados.append(
-                ResponsavelInativado(
-                    contato_id=contato.id, nome=contato.nome, telefone=contato.telefone
-                )
-            )
-        return inativados
+            tem_ativo = any(a.ativo for a in alunos_do_contato)
+            if contato.ativo and not tem_ativo:
+                contato.ativo = False
+                await self._contatos.atualizar(contato)
+                inativados.append(_resumo(contato))
+            elif not contato.ativo and tem_ativo:
+                contato.ativo = True
+                await self._contatos.atualizar(contato)
+                reativados.append(_resumo(contato))
+        return ResultadoSincronizacao(inativados=inativados, reativados=reativados)
+
+
+def _resumo(contato) -> ResponsavelInativado:
+    return ResponsavelInativado(
+        contato_id=contato.id, nome=contato.nome, telefone=contato.telefone
+    )
