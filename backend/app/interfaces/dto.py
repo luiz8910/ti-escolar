@@ -56,6 +56,15 @@ class UsuarioSaida(BaseModel):
     # usa isto para rotular a barra lateral: antes ela dizia "Escola Demonstração" para
     # todo mundo, em toda escola.
     tenant_nome: str = ""
+    # Posto na escola: "diretor" | "vice_diretor" | "coordenador" | "secretaria".
+    # Vazio para o super admin, que não ocupa cargo em escola nenhuma.
+    cargo: str = ""
+    cargo_rotulo: str = ""
+    # Pode abrir a tela de equipe e mexer em contas? A secretaria não pode.
+    gere_usuarios: bool = False
+    telefone: str = ""
+    endereco: str = ""
+    turno: str = ""
     # Funcionária desligada continua no cadastro (histórico), mas sem acesso ao painel.
     ativo: bool = True
     criado_em: datetime | None = None
@@ -74,6 +83,14 @@ class CriarUsuarioEntrada(BaseModel):
     senha: str
     papel: str = Field(..., examples=["tenant_admin", "super_admin"])
     tenant_id: UUID | None = None
+    # Cargo na escola — define o `papel` efetivo (secretaria não administra). Ausente
+    # mantém o comportamento antigo: cria um admin de escola.
+    cargo: str | None = Field(
+        None, examples=["diretor", "vice_diretor", "coordenador", "secretaria"]
+    )
+    telefone: str = ""
+    endereco: str = ""
+    turno: str = ""  # "manha" | "tarde" | "integral" | "noite"
 
 
 class AtualizarUsuarioEntrada(BaseModel):
@@ -82,6 +99,12 @@ class AtualizarUsuarioEntrada(BaseModel):
     nome: str | None = None
     senha: str | None = None
     ativo: bool | None = None
+    # Trocar o cargo troca junto o `papel`. Ausente = não mexer.
+    cargo: str | None = None
+    # Os três de contato andam juntos: ausentes, o contato não é tocado.
+    telefone: str | None = None
+    endereco: str | None = None
+    turno: str | None = None
 
 
 class GrupoEntrada(BaseModel):

@@ -244,11 +244,18 @@ class UsuarioORM(Base):
     nome: Mapped[str] = mapped_column(String(200))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     senha_hash: Mapped[str] = mapped_column(Text)
+    # Fronteira de autorização: "super_admin" | "tenant_admin" | "secretaria".
     papel: Mapped[str] = mapped_column(String(20))
     # NULL para super admin (cross-tenant).
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True
     )
+    # Posto na escola — ordena a hierarquia de quem gere quem. NULL só para super admin.
+    cargo: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # Existe para a fila de atendimento (§6j) poder notificar por WhatsApp.
+    telefone: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    endereco: Mapped[str] = mapped_column(Text, default="", server_default="")
+    turno: Mapped[str] = mapped_column(String(20), default="", server_default="")
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column()
 

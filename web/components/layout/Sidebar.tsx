@@ -43,7 +43,7 @@ const PRINCIPAL: NavItem[] = [
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
   { href: "/admin/progressao", label: "Progressão de série", icon: CapIcon },
   { href: "/admin/professores", label: "Professores", icon: TeacherIcon },
-  { href: "/admin/usuarios", label: "Equipe da secretaria", icon: UsersIcon },
+  { href: "/admin/usuarios", label: "Equipe da escola", icon: UsersIcon },
   { href: "/admin/conhecimento", label: "Base de conhecimento", icon: BookIcon },
   { href: "/admin/prompt", label: "Instruções da escola", icon: InstructionsIcon },
 ];

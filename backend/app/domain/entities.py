@@ -372,15 +372,94 @@ class FichaFinanceiraEscola:
 # Administração: usuários (super admin e admin de tenant)
 # --------------------------------------------------------------------------- #
 class Papel(str, enum.Enum):
+    """A **fronteira de autorização**: o que a conta pode fazer no sistema.
+
+    Distinto de ``Cargo``, que é o posto da pessoa na escola. Existem separados porque
+    respondem a perguntas diferentes — ``Papel`` é checado por rota, ``Cargo`` ordena a
+    hierarquia de quem gere quem. Colapsar os dois faria "coordenadora" virar uma regra
+    espalhada por dezenas de guardas.
+    """
+
     # Controle da plataforma (cross-tenant) — o "seu" controle.
     SUPER_ADMIN = "super_admin"
-    # Administra uma única escola (tenant).
+    # Administra uma única escola (tenant): gere usuários, cadastros e disparos.
     TENANT_ADMIN = "tenant_admin"
+    # Opera uma escola **sem gerir usuários**: a secretaria. Papel próprio, e não um
+    # ``tenant_admin`` com um campo a mais, para falhar **fechado**: uma rota que só
+    # pergunte "é tenant_admin?" recusa a secretaria por construção, em vez de liberar
+    # tudo porque alguém esqueceu de conferir o cargo.
+    SECRETARIA = "secretaria"
+
+
+class Cargo(str, enum.Enum):
+    """Posto na escola. A ordem importa: define **quem pode gerir quem**.
+
+    Um usuário só cria, edita ou desliga alguém **estritamente abaixo** de si. Coordenador
+    não mexe em vice-diretor, e ninguém se promove — senão a tela de equipe seria o
+    caminho mais curto para uma escalada de privilégio dentro da própria escola.
+    """
+
+    DIRETOR = "diretor"
+    VICE_DIRETOR = "vice_diretor"
+    COORDENADOR = "coordenador"
+    SECRETARIA = "secretaria"
+
+    @property
+    def nivel(self) -> int:
+        """Maior manda em menor. Só a ordem relativa importa."""
+        return _NIVEL_CARGO[self]
+
+    @property
+    def rotulo(self) -> str:
+        return _ROTULO_CARGO[self]
+
+    @property
+    def papel_correspondente(self) -> Papel:
+        """Todo cargo é admin da escola, **menos** a secretaria (§2.4 do plano)."""
+        return Papel.SECRETARIA if self is Cargo.SECRETARIA else Papel.TENANT_ADMIN
+
+
+_NIVEL_CARGO: dict[Cargo, int] = {
+    Cargo.DIRETOR: 4,
+    Cargo.VICE_DIRETOR: 3,
+    Cargo.COORDENADOR: 2,
+    Cargo.SECRETARIA: 1,
+}
+
+_ROTULO_CARGO: dict[Cargo, str] = {
+    Cargo.DIRETOR: "Diretor(a)",
+    Cargo.VICE_DIRETOR: "Vice-diretor(a)",
+    Cargo.COORDENADOR: "Coordenador(a)",
+    Cargo.SECRETARIA: "Secretaria",
+}
+
+
+class Turno(str, enum.Enum):
+    """Turno de trabalho (usuário) ou período da turma."""
+
+    MANHA = "manha"
+    TARDE = "tarde"
+    INTEGRAL = "integral"
+    NOITE = "noite"
+
+    @property
+    def rotulo(self) -> str:
+        return {
+            Turno.MANHA: "Manhã",
+            Turno.TARDE: "Tarde",
+            Turno.INTEGRAL: "Integral",
+            Turno.NOITE: "Noite",
+        }[self]
 
 
 @dataclass
 class Usuario:
-    """Usuário administrativo. ``tenant_id`` é None para o super admin."""
+    """Usuário administrativo. ``tenant_id`` é None para o super admin.
+
+    ``cargo`` é ``None`` só para o super admin, que não ocupa posto em escola nenhuma.
+    ``telefone`` existe para o dia em que a fila de atendimento (§6j) notificar por
+    WhatsApp — hoje a notificação é in-app, e a falta deste campo era o que a travava.
+    """
 
     nome: str
     email: str
@@ -388,12 +467,44 @@ class Usuario:
     papel: Papel
     id: UUID = field(default_factory=_new_id)
     tenant_id: UUID | None = None
+    cargo: Cargo | None = None
+    telefone: str = ""  # E.164
+    endereco: str = ""
+    turno: Turno | None = None
     ativo: bool = True
     criado_em: datetime = field(default_factory=_now)
 
     @property
     def eh_super_admin(self) -> bool:
         return self.papel == Papel.SUPER_ADMIN
+
+    @property
+    def gere_usuarios(self) -> bool:
+        """Pode abrir a tela de equipe e mexer em contas.
+
+        A secretaria **não** pode: é a única exceção do apontamento ("com exceção da
+        secretaria os usuários são admins da escola").
+        """
+        return self.papel in (Papel.SUPER_ADMIN, Papel.TENANT_ADMIN)
+
+    @property
+    def nivel_hierarquico(self) -> int:
+        """Posição na hierarquia. O super admin fica acima de qualquer cargo."""
+        if self.eh_super_admin:
+            return max(_NIVEL_CARGO.values()) + 1
+        return self.cargo.nivel if self.cargo else 0
+
+    def manda_em(self, outro: "Usuario") -> bool:
+        """Pode gerir ``outro``? Exige estar **estritamente acima** na hierarquia.
+
+        Estritamente, e não "no mesmo nível ou acima", porque diretor editando diretor é o
+        caminho por onde uma conta é tomada — inclusive a própria, com senha trocada.
+        """
+        if self.eh_super_admin:
+            return True
+        if outro.eh_super_admin or outro.tenant_id != self.tenant_id:
+            return False
+        return self.nivel_hierarquico > outro.nivel_hierarquico
 
 
 # --------------------------------------------------------------------------- #

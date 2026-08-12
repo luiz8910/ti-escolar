@@ -161,7 +161,8 @@ ti-escolar/
   `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id` → `0025_controle_taxa` →
   `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete` →
   `0029_atendimento_humano` → `0030_documentos_recebidos` →
-  `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo`.
+  `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo` →
+  `0033_usuario_cargo_hierarquia`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -169,11 +170,35 @@ ti-escolar/
 
 ### 6a. Administração e grupos
 
-- **`Usuario`** com `papel` ∈ {`super_admin`, `tenant_admin`}. O super admin tem `tenant_id = NULL`
-  (cross-tenant); o admin de tenant é amarrado a uma escola. Senhas com **PBKDF2-SHA256**
+- **`Usuario`** com `papel` ∈ {`super_admin`, `tenant_admin`, `secretaria`} e `cargo` ∈
+  {`diretor`, `vice_diretor`, `coordenador`, `secretaria`} (migration
+  `0033_usuario_cargo_hierarquia`), mais contato (`telefone` E.164, `endereco`, `turno`).
+  O super admin tem `tenant_id = NULL` e **não ocupa cargo**. Senhas com **PBKDF2-SHA256**
   (`app/infrastructure/security.py`, somente stdlib).
+  - **`Papel` × `Cargo` existem separados de propósito.** `Papel` é a **fronteira de
+    autorização**, checada por rota; `Cargo` é o posto na escola, que **ordena a
+    hierarquia**. Colapsar os dois faria "coordenadora" virar regra espalhada por dezenas
+    de guardas. O `papel` **decorre do cargo** (`Cargo.papel_correspondente`) e nunca é
+    editável por si — senão daria para criar uma secretaria com acesso de admin.
+  - **`Papel.SECRETARIA` é papel próprio, não um `tenant_admin` com um campo a mais**, para
+    falhar **fechado**: uma rota que só pergunte "é tenant_admin?" recusa a secretaria por
+    construção, em vez de liberar tudo porque alguém esqueceu de conferir o cargo. Ela
+    opera a escola (atende a fila §6j, cadastra, dispara) mas **não gerencia contas** — é a
+    exceção explícita do apontamento de 10/08.
+  - **Hierarquia:** só se cria/edita/desliga quem está **estritamente abaixo**
+    (`Usuario.manda_em`). Estritamente, e não "no mesmo nível ou acima", porque diretor
+    editando diretor é como uma conta é tomada — inclusive trocando a senha. Três travas
+    em `CriarUsuario`/`AtualizarUsuario`: criar acima de si, promover alguém (ou a si
+    mesmo) ao próprio nível, e a secretaria mexer em contas. Editar a **própria** conta
+    (nome, senha, contato) é sempre permitido; trocar o **próprio cargo**, nunca —
+    promover-se é o ataque óbvio e rebaixar-se deixa a escola sem ninguém no topo.
+    Cobertura: `tests/test_cargos_hierarquia.py`.
+  - **`Usuario.telefone` destrava o roadmap** de notificar o atendente por WhatsApp (§6j),
+    que estava parado exatamente por falta deste campo. O aviso de licença a vencer (§6e)
+    passou a excluir a secretaria: cobrança não é assunto do balcão.
 - **Permissões** (`CriarUsuario`): só super admin cria super admin; admin de tenant só cria/lista
-  dentro do próprio tenant. Acesso a grupos exige `_exige_acesso_tenant` (403 fora do tenant).
+  dentro do próprio tenant. Acesso a grupos exige `_exige_acesso_tenant` (403 fora do tenant);
+  a gestão de contas exige `_exige_gestao_de_usuarios` (403 para a secretaria).
 - **`Grupo`** (por tenant) agrega **`Contato`s** (N:N via `grupo_contatos`). `Contato` é único por
   `(tenant_id, telefone)`. `EnviarBroadcastParaGrupo` resolve os membros do grupo em destinatários
   e delega a `EnviarBroadcast` (template aprovado + cota + rate limit).
@@ -1238,7 +1263,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   da LLM no caminho real; `ReceberMensagemRecebida` removido.
 - [x] **Expediente por escola** (`Tenant.expediente_*`) governando o que o assistente
   promete ao responsável. **Falta:** feriados/recesso.
-- [x] **Tela de usuários da secretaria** (`web/app/admin/usuarios/`) — antes só existia a API.
+- [x] **Tela de equipe da escola** (`web/app/admin/usuarios/`) — antes só existia a API.
+  Desde 12/ago/2026 com **cargos e hierarquia** (§6a): a tela só oferece cargos abaixo do
+  seu e esconde as ações em quem você não pode gerir, mas quem impõe é o back-end — o
+  filtro na tela é conveniência, não segurança.
 - [ ] **Notificar o atendente por WhatsApp/e-mail** — hoje a notificação é in-app (badge com
   polling na sidebar). Exige um telefone no `Usuario`.
 - [ ] **Aprovar o template `retomada_atendimento` na Meta** e preencher

@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.application.admin_use_cases import (
     AdicionarContatoAoGrupo,
     AtualizarUsuario,
+    DadosUsuario,
     AutenticarUsuario,
     CriarGrupo,
     CriarUsuario,
@@ -43,7 +44,15 @@ from app.application.tenant_use_cases import (
     RemoverEscola,
 )
 from app.config import Settings
-from app.domain.entities import AtorAuditoria, Papel, PlanoTenant, Tenant, Usuario
+from app.domain.entities import (
+    AtorAuditoria,
+    Cargo,
+    Papel,
+    PlanoTenant,
+    Tenant,
+    Turno,
+    Usuario,
+)
 from app.infrastructure.db.repositories import (
     SqlBroadcastRepository,
     SqlConversaRepository,
@@ -133,9 +142,38 @@ def _usuario_saida(u: Usuario, *, tenant_nome: str = "") -> UsuarioSaida:
         papel=u.papel.value,
         tenant_id=u.tenant_id,
         tenant_nome=tenant_nome,
+        cargo=u.cargo.value if u.cargo else "",
+        cargo_rotulo=u.cargo.rotulo if u.cargo else "",
+        gere_usuarios=u.gere_usuarios,
+        telefone=u.telefone,
+        endereco=u.endereco,
+        turno=u.turno.value if u.turno else "",
         ativo=u.ativo,
         criado_em=u.criado_em,
     )
+
+
+def _enum_opcional(valor: str | None, enum_cls, rotulo: str):
+    """Converte string em enum, tratando "" como ausente e erro como 400."""
+    if valor is None or valor == "":
+        return None
+    try:
+        return enum_cls(valor)
+    except ValueError as e:
+        aceitos = ", ".join(m.value for m in enum_cls)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{rotulo} inválido: {valor}. Use um de: {aceitos}.",
+        ) from e
+
+
+def _exige_gestao_de_usuarios(usuario: Usuario) -> None:
+    """A secretaria opera a escola, mas **não mexe em contas** (§2.4 do plano)."""
+    if not usuario.gere_usuarios:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A secretaria não tem permissão para gerenciar usuários.",
+        )
 
 
 _NAO_AUTENTICADO = HTTPException(
@@ -275,6 +313,7 @@ async def criar_usuario(
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> UsuarioSaida:
+    _exige_gestao_de_usuarios(criador)
     try:
         usuario = await CriarUsuario(usuarios=usuarios).executar(
             criador=criador,
@@ -283,6 +322,12 @@ async def criar_usuario(
             senha=payload.senha,
             papel=Papel(payload.papel),
             tenant_id=payload.tenant_id,
+            cargo=_enum_opcional(payload.cargo, Cargo, "Cargo"),
+            dados=DadosUsuario(
+                telefone=payload.telefone,
+                endereco=payload.endereco,
+                turno=_enum_opcional(payload.turno, Turno, "Turno"),
+            ),
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
@@ -294,7 +339,11 @@ async def criar_usuario(
         acao="usuario.criar",
         tenant_id=usuario.tenant_id,
         descricao=f"Criou o usuário {usuario.email} ({usuario.papel.value})",
-        metadados={"usuario_id": str(usuario.id), "papel": usuario.papel.value},
+        metadados={
+            "usuario_id": str(usuario.id),
+            "papel": usuario.papel.value,
+            "cargo": usuario.cargo.value if usuario.cargo else "",
+        },
     )
     return _usuario_saida(usuario)
 
@@ -317,7 +366,27 @@ async def atualizar_usuario(
     usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> UsuarioSaida:
-    """Edita nome, senha e situação de um usuário (papel e escola não mudam aqui)."""
+    """Edita nome, senha, situação, cargo e contato. A escola nunca muda aqui.
+
+    O ``papel`` acompanha o cargo — não é editável por si. Editar a **própria** conta é
+    permitido (nome, senha, contato), mas trocar o próprio cargo não: promover-se é o
+    ataque óbvio, e rebaixar-se sozinho deixa a escola sem ninguém no topo.
+    """
+    # A secretaria pode editar a própria conta (trocar a senha), mas não mexer em outras.
+    if usuario_id != editor.id:
+        _exige_gestao_de_usuarios(editor)
+    # Os três campos de contato andam juntos: só monta `dados` se algum veio no corpo,
+    # senão uma edição de nome apagaria o telefone por omissão.
+    contato = (payload.telefone, payload.endereco, payload.turno)
+    dados = (
+        DadosUsuario(
+            telefone=payload.telefone or "",
+            endereco=payload.endereco or "",
+            turno=_enum_opcional(payload.turno, Turno, "Turno"),
+        )
+        if any(c is not None for c in contato)
+        else None
+    )
     try:
         usuario = await AtualizarUsuario(usuarios=usuarios).executar(
             editor=editor,
@@ -325,6 +394,8 @@ async def atualizar_usuario(
             nome=payload.nome,
             senha=payload.senha,
             ativo=payload.ativo,
+            cargo=_enum_opcional(payload.cargo, Cargo, "Cargo"),
+            dados=dados,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
@@ -339,6 +410,7 @@ async def atualizar_usuario(
         metadados={
             "usuario_id": str(usuario.id),
             "ativo": usuario.ativo,
+            "cargo": usuario.cargo.value if usuario.cargo else "",
             # Só o fato, nunca a senha — nem o tamanho dela.
             "senha_alterada": bool(payload.senha),
         },

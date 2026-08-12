@@ -506,7 +506,10 @@ class NotificarLicencasAVencer:
             if escola.plano != PlanoTenant.ANUAL or not escola.licenca_a_vencer(dias_aviso):
                 continue
             admins = await self._usuarios.listar(tenant_id=escola.id)
-            destinatarios = [u.email for u in admins if u.ativo]
+            # Só quem administra a escola. Vencimento de licença é assunto de cobrança, e
+            # desde que a secretaria virou papel próprio (§2.4) ela deixou de ser
+            # "admin do tenant" — mandar a cobrança para o balcão é ruído, não aviso.
+            destinatarios = [u.email for u in admins if u.ativo and u.gere_usuarios]
             dias = escola.dias_para_expirar or 0
             for email in destinatarios:
                 await self._emails.enviar(

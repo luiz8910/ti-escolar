@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.domain.entities import (
     Aluno,
     AtorAuditoria,
+    Cargo,
     Contato,
     Grupo,
     MetricasUsoEscola,
@@ -25,6 +26,7 @@ from app.domain.entities import (
     Sala,
     StatusTenant,
     Tenant,
+    Turno,
     Usuario,
 )
 from app.infrastructure.db.models import (
@@ -113,6 +115,10 @@ def _to_usuario(row: UsuarioORM) -> Usuario:
         senha_hash=row.senha_hash,
         papel=Papel(row.papel),
         tenant_id=row.tenant_id,
+        cargo=Cargo(row.cargo) if row.cargo else None,
+        telefone=row.telefone,
+        endereco=row.endereco,
+        turno=Turno(row.turno) if row.turno else None,
         ativo=row.ativo,
         criado_em=row.criado_em,
     )
@@ -385,6 +391,10 @@ class SqlUsuarioRepository:
                 senha_hash=usuario.senha_hash,
                 papel=usuario.papel.value,
                 tenant_id=usuario.tenant_id,
+                cargo=usuario.cargo.value if usuario.cargo else "",
+                telefone=usuario.telefone,
+                endereco=usuario.endereco,
+                turno=usuario.turno.value if usuario.turno else "",
                 ativo=usuario.ativo,
                 criado_em=usuario.criado_em,
             )
@@ -410,6 +420,14 @@ class SqlUsuarioRepository:
         row.nome = usuario.nome
         row.senha_hash = usuario.senha_hash
         row.ativo = usuario.ativo
+        # `papel` acompanha o cargo: quem vira secretaria perde a gestão de usuários na
+        # requisição seguinte, e quem sai de secretaria a ganha. Manter os dois em sincronia
+        # aqui evita o estado impossível "cargo de diretor, papel de secretaria".
+        row.papel = usuario.papel.value
+        row.cargo = usuario.cargo.value if usuario.cargo else ""
+        row.telefone = usuario.telefone
+        row.endereco = usuario.endereco
+        row.turno = usuario.turno.value if usuario.turno else ""
         await self._s.flush()
         return _to_usuario(row)
 

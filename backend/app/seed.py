@@ -38,9 +38,11 @@ from app.application.use_cases import IndexarConhecimento
 from app.bootstrap import avaliar_seed
 from app.config import get_settings
 from app.domain.entities import (
+    Cargo,
     CategoriaSolicitacao,
     Papel,
     TipoConhecimento,
+    Turno,
     Usuario,
 )
 from app.infrastructure.db.models import TemplateORM, TenantORM
@@ -279,6 +281,25 @@ async def _seed() -> None:
                     senha_hash=hash_senha(settings.demo_admin_senha),
                     papel=Papel.TENANT_ADMIN,
                     tenant_id=DEMO_TENANT_ID,
+                    cargo=Cargo.DIRETOR,
+                    telefone="+5515997536978",
+                    turno=Turno.INTEGRAL,
+                )
+            )
+        # Uma conta de secretaria: sem ela a hierarquia (§2.4) não é demonstrável — a tela
+        # de equipe teria só o diretor, e o caso interessante é justamente o de quem
+        # atende os responsáveis mas não mexe em contas. Mesma senha do admin demo.
+        email_secretaria = "secretaria@escola-demo.test"
+        if await usuarios.por_email(email_secretaria) is None:
+            await usuarios.criar(
+                Usuario(
+                    nome="Secretaria Escola Demonstração",
+                    email=email_secretaria,
+                    senha_hash=hash_senha(settings.demo_admin_senha),
+                    papel=Cargo.SECRETARIA.papel_correspondente,
+                    tenant_id=DEMO_TENANT_ID,
+                    cargo=Cargo.SECRETARIA,
+                    turno=Turno.MANHA,
                 )
             )
 
