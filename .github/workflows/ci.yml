@@ -58,6 +58,16 @@ jobs:
       - name: Migrations (alembic upgrade head)
         run: alembic upgrade head
 
+      # O seed é código que só roda contra um banco, então pytest não o cobre — e ele
+      # quebrou em silêncio quando a ficha de matrícula ganhou campos obrigatórios
+      # (PR #51), aparecendo só no `docker compose up` de quem foi rodar o projeto.
+      # Aqui já existe Postgres e schema; rodá-lo custa segundos.
+      - name: Seed de demonstração (fuma contra o banco)
+        env:
+          SEED_DEMO: "true"
+          APP_ENV: development
+        run: python -m app.seed
+
       - name: Testes (pytest)
         run: pytest -q
 

@@ -520,7 +520,12 @@ class RespostaRapidaRepository(Protocol):
 
 @runtime_checkable
 class SalaRepository(Protocol):
-    """CRUD de salas/turmas e vínculo N:N com pais, escopado por tenant."""
+    """CRUD de turmas, escopado por tenant.
+
+    O vínculo pai↔turma **não é mantido aqui**: ele é derivado dos alunos ativos da turma
+    (``pais``). ``vincular_pai``/``desvincular_pai`` existiram e foram removidos junto com
+    a tabela ``sala_contatos`` — ver §6c.
+    """
 
     async def criar(self, sala: Sala) -> Sala: ...
 
@@ -528,15 +533,13 @@ class SalaRepository(Protocol):
 
     async def listar(self, *, tenant_id: UUID) -> list[Sala]: ...
 
-    async def atualizar(self, *, tenant_id: UUID, sala_id: UUID, nome: str, descricao: str) -> Sala: ...
+    async def atualizar(self, sala: Sala) -> Sala: ...
 
     async def remover(self, *, tenant_id: UUID, sala_id: UUID) -> bool: ...
 
-    async def vincular_pai(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None: ...
-
-    async def desvincular_pai(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None: ...
-
-    async def pais(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]: ...
+    async def pais(self, *, tenant_id: UUID, sala_id: UUID) -> list[Contato]:
+        """Responsáveis com **aluno ativo** na turma. Derivado, não armazenado."""
+        ...
 
     async def definir_professor(
         self, *, tenant_id: UUID, sala_id: UUID, professor_id: UUID | None

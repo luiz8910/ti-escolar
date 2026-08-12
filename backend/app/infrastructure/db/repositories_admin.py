@@ -57,7 +57,6 @@ from app.infrastructure.db.models import (
     UsuarioORM,
     aluno_responsaveis,
     grupo_contatos,
-    sala_contatos,
 )
 
 
@@ -328,11 +327,8 @@ class SqlTenantRepository:
             )
         )
         await self._s.execute(delete(AlunoORM).where(AlunoORM.tenant_id == tenant_id))
-        # Séries (salas) e seus vínculos com pais; depois os professores que elas referenciam.
-        salas_do_tenant = select(SalaORM.id).where(SalaORM.tenant_id == tenant_id)
-        await self._s.execute(
-            delete(sala_contatos).where(sala_contatos.c.sala_id.in_(salas_do_tenant))
-        )
+        # Séries (turmas); depois os professores que elas referenciam. O vínculo manual
+        # pai↔turma não existe mais — ele é derivado dos alunos, já apagados acima.
         await self._s.execute(delete(SalaORM).where(SalaORM.tenant_id == tenant_id))
         # Fila de impressão (FK a professores SET NULL) antes de remover os professores.
         await self._s.execute(
@@ -625,14 +621,22 @@ def _to_professor(row: ProfessorORM) -> Professor:
     )
 
 
-def _to_sala(row: SalaORM) -> Sala:
+def _to_sala(row: SalaORM, *, pais: list[Contato] | None = None) -> Sala:
+    """``pais`` vem de fora porque **é derivado dos alunos** (ver `_pais_das_salas`), e
+    não de um vínculo próprio da turma."""
     return Sala(
         id=row.id,
         tenant_id=row.tenant_id,
         nome=row.nome,
         descricao=row.descricao,
+        ano_letivo=row.ano_letivo,
+        etapa=row.etapa,
+        turma=row.turma,
+        numero_sala=row.numero_sala,
+        periodo=Turno(row.periodo) if row.periodo else None,
+        grade_horario=dict(row.grade_horario or {}),
         criado_em=row.criado_em,
-        pais=[_to_contato(c) for c in row.pais],
+        pais=list(pais or []),
         professor_id=row.professor_id,
         professor_nome=row.professor.nome if row.professor else "",
     )
@@ -780,6 +784,12 @@ class SqlSalaRepository:
                 tenant_id=sala.tenant_id,
                 nome=sala.nome,
                 descricao=sala.descricao,
+                ano_letivo=sala.ano_letivo,
+                etapa=sala.etapa,
+                turma=sala.turma,
+                numero_sala=sala.numero_sala,
+                periodo=sala.periodo.value if sala.periodo else "",
+                grade_horario=dict(sala.grade_horario or {}),
                 criado_em=sala.criado_em,
             )
         )
@@ -790,41 +800,90 @@ class SqlSalaRepository:
         stmt = (
             select(SalaORM)
             .where(SalaORM.id == sala_id, SalaORM.tenant_id == tenant_id)
-            .options(selectinload(SalaORM.pais), selectinload(SalaORM.professor))
+            .options(selectinload(SalaORM.professor))
         )
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
     async def obter(self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID) -> Sala | None:
         row = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
-        return _to_sala(row) if row else None
+        if row is None:
+            return None
+        pais = await self._pais_das_salas(tenant_id=tenant_id, sala_ids=[sala_id])
+        return _to_sala(row, pais=pais.get(sala_id, []))
+
+    async def _pais_das_salas(
+        self, *, tenant_id: uuid.UUID, sala_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[Contato]]:
+        """Responsáveis por turma, **derivados dos alunos ativos**.
+
+        Antes existia um vínculo próprio (``sala_contatos``), mantido à mão. Ele permitia
+        um pai ligado a uma turma **sem nenhum filho nela** — e era o que fazia a cobertura
+        de contatos contar errado. Agora o pai pertence à turma porque tem aluno ativo lá.
+
+        Ex-aluno não conta: a família de quem já saiu não deve continuar recebendo o aviso
+        da turma. Uma consulta só para todas as turmas — a lista de turmas é a tela mais
+        aberta do painel.
+        """
+        if not sala_ids:
+            return {}
+        stmt = (
+            select(AlunoORM)
+            .where(
+                AlunoORM.tenant_id == tenant_id,
+                AlunoORM.sala_id.in_(list(sala_ids)),
+                AlunoORM.ativo.is_(True),
+            )
+            .options(selectinload(AlunoORM.responsaveis))
+        )
+        alunos = (await self._s.execute(stmt)).scalars().all()
+
+        por_sala: dict[uuid.UUID, list[Contato]] = {}
+        vistos: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for aluno in alunos:
+            ids = vistos.setdefault(aluno.sala_id, set())
+            for contato in aluno.responsaveis:
+                # Irmãos na mesma turma não duplicam o responsável no relatório.
+                if contato.id in ids:
+                    continue
+                ids.add(contato.id)
+                por_sala.setdefault(aluno.sala_id, []).append(_to_contato(contato))
+        for lista in por_sala.values():
+            lista.sort(key=lambda c: c.nome)
+        return por_sala
 
     async def listar(self, *, tenant_id: uuid.UUID) -> list[Sala]:
         stmt = (
             select(SalaORM)
             .where(SalaORM.tenant_id == tenant_id)
-            .options(selectinload(SalaORM.pais), selectinload(SalaORM.professor))
-            .order_by(SalaORM.nome)
+            .options(selectinload(SalaORM.professor))
+            # Ordena pela identificação estruturada; `nome` desempata as turmas antigas.
+            .order_by(SalaORM.ano_letivo.desc(), SalaORM.etapa, SalaORM.turma, SalaORM.nome)
         )
         rows = (await self._s.execute(stmt)).scalars().all()
-        return [_to_sala(r) for r in rows]
+        pais = await self._pais_das_salas(
+            tenant_id=tenant_id, sala_ids=[r.id for r in rows]
+        )
+        return [_to_sala(r, pais=pais.get(r.id, [])) for r in rows]
 
-    async def atualizar(
-        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID, nome: str, descricao: str
-    ) -> Sala:
-        row = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
+    async def atualizar(self, sala: Sala) -> Sala:
+        row = await self._orm(tenant_id=sala.tenant_id, sala_id=sala.id)
         if row is None:
             raise ValueError("Sala não encontrada para o tenant.")
-        row.nome = nome
-        row.descricao = descricao
+        row.nome = sala.nome
+        row.descricao = sala.descricao
+        row.ano_letivo = sala.ano_letivo
+        row.etapa = sala.etapa
+        row.turma = sala.turma
+        row.numero_sala = sala.numero_sala
+        row.periodo = sala.periodo.value if sala.periodo else ""
+        row.grade_horario = dict(sala.grade_horario or {})
         await self._s.flush()
-        return _to_sala(row)
+        return await self.obter(tenant_id=sala.tenant_id, sala_id=sala.id)
 
     async def remover(self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID) -> bool:
         row = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
         if row is None:
             return False
-        # Remove os vínculos antes (os pais em si permanecem cadastrados).
-        await self._s.execute(delete(sala_contatos).where(sala_contatos.c.sala_id == sala_id))
         await self._s.delete(row)
         await self._s.flush()
         return True
@@ -837,33 +896,17 @@ class SqlSalaRepository:
         )
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
-    async def vincular_pai(
-        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID, contato_id: uuid.UUID
-    ) -> None:
-        sala = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
-        if sala is None:
-            raise ValueError("Sala não encontrada para o tenant.")
-        contato = await self._contato_do_tenant(tenant_id=tenant_id, contato_id=contato_id)
-        if contato is None:
-            raise ValueError("Pai/responsável não encontrado para o tenant.")
-        if contato not in sala.pais:
-            sala.pais.append(contato)
-            await self._s.flush()
-
-    async def desvincular_pai(
-        self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID, contato_id: uuid.UUID
-    ) -> None:
-        sala = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
-        if sala is None:
-            raise ValueError("Sala não encontrada para o tenant.")
-        sala.pais = [c for c in sala.pais if c.id != contato_id]
-        await self._s.flush()
-
     async def pais(self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID) -> list[Contato]:
+        """Responsáveis da turma — **derivados dos alunos ativos** (ver `_pais_das_salas`).
+
+        Os métodos ``vincular_pai``/``desvincular_pai`` sumiram junto com a tabela
+        ``sala_contatos``: não há mais o que vincular à mão.
+        """
         row = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
         if row is None:
             raise ValueError("Sala não encontrada para o tenant.")
-        return [_to_contato(c) for c in row.pais]
+        pais = await self._pais_das_salas(tenant_id=tenant_id, sala_ids=[sala_id])
+        return pais.get(sala_id, [])
 
     async def definir_professor(
         self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID, professor_id: uuid.UUID | None

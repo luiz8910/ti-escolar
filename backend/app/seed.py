@@ -25,6 +25,7 @@ from app.application.cadastro_use_cases import (
     CadastrarAluno,
     CadastrarPai,
     DadosResponsavel,
+    DadosTurma,
     CadastrarProfessor,
     CriarSala,
 )
@@ -98,16 +99,45 @@ _GRUPOS_DEMO = {
 # (nome, telefone, tipo de filiação). O último é um **responsável legal** — termo de
 # guarda —, para o caso não ficar só na documentação: é ele que prova que quem responde
 # pela criança sem ser mãe/pai recebe aviso como qualquer outro responsável.
+# Turmas de demonstração, já estruturadas, e com **as duas formas de grade** da decisão B
+# — uma turma com cada, para o painel mostrar as duas lado a lado sem ninguém montar à mão.
 _SALAS_DEMO = {
-    "4ª série B": [
-        ("Beatriz Almeida", "+5511988880001", TipoFiliacao.MAE),
-        ("Rafael Nogueira", "+5511988880002", TipoFiliacao.PAI),
-    ],
-    "5ª série A": [
-        ("Cláudia Fonseca", "+5511988880003", TipoFiliacao.MAE),
-        ("Eduardo Tavares", "+5511988880004", TipoFiliacao.PAI),
-        ("Joana Ribeiro (avó)", "+5511988880005", TipoFiliacao.RESPONSAVEL_LEGAL),
-    ],
+    ("4ª série", "B"): {
+        "numero_sala": "12",
+        "periodo": Turno.MANHA,
+        "grade": {
+            "formato": "turno",
+            "inicio": "07:30",
+            "fim": "11:30",
+            "intervalo_inicio": "09:30",
+            "intervalo_minutos": 20,
+        },
+        "responsaveis": [
+            ("Beatriz Almeida", "+5511988880001", TipoFiliacao.MAE),
+            ("Rafael Nogueira", "+5511988880002", TipoFiliacao.PAI),
+        ],
+    },
+    ("5ª série", "A"): {
+        "numero_sala": "14",
+        "periodo": Turno.TARDE,
+        "grade": {
+            "formato": "aulas",
+            "blocos": [
+                b
+                for d in (1, 2, 3, 4, 5)
+                for b in (
+                    {"dia": d, "inicio": "13:00", "fim": "13:50", "tipo": "aula", "rotulo": "Português"},
+                    {"dia": d, "inicio": "13:50", "fim": "14:10", "tipo": "intervalo", "rotulo": "Recreio"},
+                    {"dia": d, "inicio": "14:10", "fim": "15:00", "tipo": "aula", "rotulo": "Matemática"},
+                )
+            ],
+        },
+        "responsaveis": [
+            ("Cláudia Fonseca", "+5511988880003", TipoFiliacao.MAE),
+            ("Eduardo Tavares", "+5511988880004", TipoFiliacao.PAI),
+            ("Joana Ribeiro (avó)", "+5511988880005", TipoFiliacao.RESPONSAVEL_LEGAL),
+        ],
+    },
 }
 
 # System prompt personalizado do tenant demo (o "CLAUDE.md" da escola).
@@ -326,43 +356,53 @@ async def _seed() -> None:
         # Salas (turmas) com pais/responsáveis vinculados — só cria se ainda não houver
         salas_repo = SqlSalaRepository(session)
         contatos_repo = SqlContatoRepository(session)
+        # Guarda quem foi cadastrado por turma: o responsável entra na turma **pelo
+        # aluno**, então a lista precisa vir daqui — perguntar a `salas_repo.pais()` antes
+        # de criar os alunos devolveria vazio, porque ela é derivada deles.
+        responsaveis_por_turma: dict[uuid.UUID, list[uuid.UUID]] = {}
         if not await salas_repo.listar(tenant_id=DEMO_TENANT_ID):
             criar_sala = CriarSala(salas=salas_repo)
-            cadastrar_pai = CadastrarPai(contatos=contatos_repo, salas=salas_repo)
-            for nome_sala, responsaveis in _SALAS_DEMO.items():
-                sala = await criar_sala.executar(tenant_id=DEMO_TENANT_ID, nome=nome_sala)
-                for nome, telefone, filiacao in responsaveis:
+            cadastrar_pai = CadastrarPai(contatos=contatos_repo)
+            ano_letivo = datetime.now(timezone.utc).year
+            for (etapa, letra), config in _SALAS_DEMO.items():
+                sala = await criar_sala.executar(
+                    tenant_id=DEMO_TENANT_ID,
+                    dados=DadosTurma(
+                        ano_letivo=ano_letivo,
+                        etapa=etapa,
+                        turma=letra,
+                        numero_sala=config["numero_sala"],
+                        periodo=config["periodo"],
+                        grade_horario=config["grade"],
+                    ),
+                )
+                for nome, telefone, filiacao in config["responsaveis"]:
                     existente = await contatos_repo.por_telefone(
                         tenant_id=DEMO_TENANT_ID, telefone=telefone
                     )
                     if existente is None:
-                        await cadastrar_pai.executar(
+                        existente = await cadastrar_pai.executar(
                             tenant_id=DEMO_TENANT_ID,
                             nome=nome,
                             telefone=telefone,
-                            sala_ids=[sala.id],
                             dados=DadosResponsavel(tipo_filiacao=filiacao),
                         )
-                    else:
-                        await salas_repo.vincular_pai(
-                            tenant_id=DEMO_TENANT_ID,
-                            sala_id=sala.id,
-                            contato_id=existente.id,
-                        )
+                    responsaveis_por_turma.setdefault(sala.id, []).append(existente.id)
 
-        # Alunos de demonstração — vinculados às salas e responsáveis já criados.
+        # Alunos de demonstração — é o vínculo deles que põe o responsável na turma.
         alunos_repo = SqlAlunoRepository(session)
         if not await alunos_repo.listar(tenant_id=DEMO_TENANT_ID):
             cadastrar_aluno = CadastrarAluno(alunos=alunos_repo, salas=salas_repo)
             salas_demo = await salas_repo.listar(tenant_id=DEMO_TENANT_ID)
             for i, sala in enumerate(salas_demo, start=1):
-                responsaveis = await salas_repo.pais(tenant_id=DEMO_TENANT_ID, sala_id=sala.id)
                 await cadastrar_aluno.executar(
                     tenant_id=DEMO_TENANT_ID,
                     nome=f"Aluno Demonstração {i}",
                     sala_id=sala.id,
                     matricula=f"2026-{i:03d}",
-                    responsavel_ids=[c.id for c in responsaveis[:1]],
+                    # Todos os responsáveis da turma, para o relatório derivado sair
+                    # populado — inclusive a avó com termo de guarda.
+                    responsavel_ids=responsaveis_por_turma.get(sala.id, []),
                 )
             # Um aluno propositalmente sem responsável com telefone, para demonstrar o
             # alerta de cobertura de contatos da turma e a notificação ao professor.
@@ -494,15 +534,22 @@ async def _seed() -> None:
             await SalvarFichaMatricula(fichas=fichas_repo, alunos=alunos_repo).executar(
                 tenant_id=DEMO_TENANT_ID,
                 aluno_id=alunos_demo[0].id,
+                # A ficha exige os campos com asterisco da ficha física; a demonstração
+                # precisa deles preenchidos para ser uma ficha de verdade.
                 campos={
                     "cor_raca": "Parda",
+                    "cpf": "52998224725",
+                    "ra_rm": "12.345.678-9",
                     "data_nascimento": "2015-04-12",
+                    "endereco": "Rua das Acácias, 120 — Centro, Sorocaba/SP",
+                    "sexo": "F",
+                    "cidade_natal": "Sorocaba",
                     "ano_etapa": "4ª série",
                     "periodo": "Manhã",
                     "autorizacao_van": True,
                     "autorizacao_imagem": True,
                     "alergia": "Nenhuma conhecida",
-                    "laudo_cid": "em investigação",
+                    "laudo_status": "em_investigacao",
                 },
             )
 

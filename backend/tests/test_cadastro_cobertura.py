@@ -35,7 +35,7 @@ async def _sala(salas, *, nome="4ª série B"):
 
 
 async def _pai(contatos, salas, *, telefone):
-    return await CadastrarPai(contatos=contatos, salas=salas).executar(
+    return await CadastrarPai(contatos=contatos).executar(
         tenant_id=TENANT, nome="Resp", telefone=telefone
     )
 

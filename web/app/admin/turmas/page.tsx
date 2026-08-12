@@ -4,34 +4,30 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   Aluno,
-  atualizarPai,
-  DADOS_RESPONSAVEL_VAZIO,
-  dadosDoResponsavel,
-  DadosResponsavel,
+  dadosDaTurma,
+  DadosTurma,
+  Turno,
+  TURNOS,
+  turmaVazia,
   atualizarSala,
-  cadastrarPai,
   CoberturaSala,
   coberturaDasSalas,
   criarSala,
-  desvincularPaiDaSala,
   exigeEscolhaDeEscola,
   getSessao,
   listarAlunos,
   listarSalas,
-  listarTodosOsPais,
   logout,
   notificarProfessor,
   Pai,
   relatorioPaisDaSala,
-  removerPai,
   removerSala,
   Sala,
   Usuario,
-  vincularPaiASala,
 } from "@/lib/admin";
 
 import { AppShell } from "@/components/layout/AppShell";
-import { CamposResponsavel } from "@/components/admin/CamposResponsavel";
+import { GradeHorario } from "@/components/admin/GradeHorario";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -46,20 +42,15 @@ export default function SalasEPais() {
   const router = useRouter();
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
-  const [pais, setPais] = useState<Pai[]>([]);
   const [coberturas, setCoberturas] = useState<Record<string, CoberturaSala>>({});
   const [selecionada, setSelecionada] = useState<Sala | null>(null);
   const toast = useToast();
 
   const recarregar = useCallback(async () => {
-    const [ss, ps, cobs] = await Promise.all([
-      listarSalas(),
-      listarTodosOsPais(),
-      coberturaDasSalas(),
-    ]);
+    // O cadastro de responsáveis saiu desta tela (apontamento de 10/08): ele vive em
+    // Alunos, e a lista da turma é derivada dos alunos ativos.
+    const [ss, cobs] = await Promise.all([listarSalas(), coberturaDasSalas()]);
     setSalas(ss);
-    // Cadastro de pais da escola: usado para vincular às turmas, precisa do conjunto.
-    setPais(ps);
     setCoberturas(Object.fromEntries(cobs.map((c) => [c.sala_id, c])));
     setSelecionada((atual) => (atual ? ss.find((s) => s.id === atual.id) ?? null : null));
   }, []);
@@ -106,13 +97,10 @@ export default function SalasEPais() {
           />
           <SalaDetalhe
             sala={selecionada}
-            pais={pais}
             cobertura={selecionada ? coberturas[selecionada.id] ?? null : null}
             onMudou={recarregar}
           />
         </div>
-
-        <PaisPanel pais={pais} onMudou={recarregar} />
       </div>
     </AppShell>
   );
@@ -133,47 +121,10 @@ function SalasPanel({
   onMudou: () => Promise<void>;
 }) {
   const toast = useToast();
-  const [nova, setNova] = useState("");
+  // `criando` abre o formulário estruturado; `editando` carrega a turma existente nele.
+  const [criando, setCriando] = useState(false);
   const [editando, setEditando] = useState<Sala | null>(null);
-  const [nomeEdicao, setNomeEdicao] = useState("");
   const [excluindo, setExcluindo] = useState<Sala | null>(null);
-
-  async function criar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!nova.trim()) return;
-    try {
-      await criarSala(nova.trim());
-      setNova("");
-      await onMudou();
-      toast({ tone: "success", title: "Sala criada." });
-    } catch (err) {
-      toast({
-        tone: "danger",
-        title: err instanceof Error ? err.message : "Não foi possível criar a sala.",
-      });
-    }
-  }
-
-  function abrirEdicao(sala: Sala) {
-    setEditando(sala);
-    setNomeEdicao(sala.nome);
-  }
-
-  async function salvarEdicao(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editando || !nomeEdicao.trim() || nomeEdicao.trim() === editando.nome) {
-      setEditando(null);
-      return;
-    }
-    try {
-      await atualizarSala(editando.id, nomeEdicao.trim(), editando.descricao);
-      setEditando(null);
-      await onMudou();
-      toast({ tone: "success", title: "Sala renomeada." });
-    } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao renomear." });
-    }
-  }
 
   return (
     <Card className="flex flex-col">
@@ -191,7 +142,24 @@ function SalasPanel({
               }
             >
               <button onClick={() => onSelecionar(s)} className="flex flex-1 items-center gap-2 text-left">
-                <span>{s.nome}</span>
+                <span>
+                  {s.nome}
+                  {(s.periodo || s.numero_sala) && (
+                    <span
+                      className={
+                        "ml-1.5 text-[11px] font-medium " +
+                        (active ? "text-white/70" : "text-n-400")
+                      }
+                    >
+                      {[
+                        s.periodo && TURNOS.find((t) => t.valor === s.periodo)?.rotulo,
+                        s.numero_sala && `sala ${s.numero_sala}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  )}
+                </span>
                 <span
                   className={
                     "rounded-full px-2 py-0.5 text-[11px] font-bold " +
@@ -213,8 +181,8 @@ function SalasPanel({
                 )}
               </button>
               <button
-                onClick={() => abrirEdicao(s)}
-                title="Renomear"
+                onClick={() => setEditando(s)}
+                title="Editar turma"
                 className={active ? "text-white/80 hover:text-white" : "text-n-400 hover:text-n-700"}
               >
                 ✏️
@@ -234,42 +202,30 @@ function SalasPanel({
         )}
       </div>
 
-      <form onSubmit={criar} className="mt-auto flex gap-2 border-t border-n-100 pt-3.5">
-        <Input
-          value={nova}
-          onChange={(e) => setNova(e.target.value)}
-          placeholder="Nova sala (ex.: 4ª série B)"
-        />
-        <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
-          Criar
+      <div className="mt-auto border-t border-n-100 pt-3.5">
+        <Button
+          size="sm"
+          onClick={() => setCriando(true)}
+          leftIcon={<PlusIcon size={15} />}
+        >
+          Nova turma
         </Button>
-      </form>
+      </div>
 
-      <Modal
-        open={!!editando}
-        onClose={() => setEditando(null)}
-        title="Renomear sala"
-        footer={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => setEditando(null)}>
-              Cancelar
-            </Button>
-            <Button size="sm" onClick={salvarEdicao}>
-              Salvar
-            </Button>
-          </>
-        }
-      >
-        <form onSubmit={salvarEdicao}>
-          <Field label="Nome da sala">
-            <Input
-              autoFocus
-              value={nomeEdicao}
-              onChange={(e) => setNomeEdicao(e.target.value)}
-            />
-          </Field>
-        </form>
-      </Modal>
+      {(criando || editando) && (
+        <TurmaModal
+          sala={editando}
+          onFechar={() => {
+            setCriando(false);
+            setEditando(null);
+          }}
+          onSalvo={async () => {
+            setCriando(false);
+            setEditando(null);
+            await onMudou();
+          }}
+        />
+      )}
 
       {excluindo && (
         <ExcluirSalaModal
@@ -536,18 +492,15 @@ function CoberturaAlerta({
 // --------------------------------------------------------------------------- //
 function SalaDetalhe({
   sala,
-  pais,
   cobertura,
   onMudou,
 }: {
   sala: Sala | null;
-  pais: Pai[];
   cobertura: CoberturaSala | null;
   onMudou: () => Promise<void>;
 }) {
   const toast = useToast();
   const [relatorio, setRelatorio] = useState<Pai[]>([]);
-  const [paiId, setPaiId] = useState("");
 
   const carregarRelatorio = useCallback(async () => {
     if (!sala) {
@@ -573,36 +526,11 @@ function SalaDetalhe({
       <Card className="flex items-center justify-center">
         <EmptyState
           icon={<UsersIcon size={24} />}
-          title="Selecione uma sala"
-          description="Escolha uma sala para ver o relatório de pais e gerenciar vínculos."
+          title="Selecione uma turma"
+          description="Escolha uma turma para ver os dados, a grade e os responsáveis."
         />
       </Card>
     );
-  }
-
-  const naoVinculados = pais.filter((p) => !relatorio.some((r) => r.id === p.id));
-
-  async function vincular(e: React.FormEvent) {
-    e.preventDefault();
-    if (!paiId) return;
-    try {
-      await vincularPaiASala(sala!.id, paiId);
-      setPaiId("");
-      await Promise.all([carregarRelatorio(), onMudou()]);
-      toast({ tone: "success", title: "Responsável vinculado." });
-    } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao vincular." });
-    }
-  }
-
-  async function desvincular(p: Pai) {
-    try {
-      await desvincularPaiDaSala(sala!.id, p.id);
-      await Promise.all([carregarRelatorio(), onMudou()]);
-      toast({ tone: "success", title: "Responsável removido da sala." });
-    } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao desvincular." });
-    }
   }
 
   return (
@@ -624,27 +552,25 @@ function SalaDetalhe({
             <tr>
               <Th>Responsável</Th>
               <Th>WhatsApp</Th>
-              <Th className="text-right">Ações</Th>
             </tr>
           </thead>
           <tbody>
             {relatorio.map((p) => (
               <Tr key={p.id}>
-                <Td className="font-medium">{p.nome}</Td>
-                <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
-                <Td className="text-right">
-                  <button
-                    onClick={() => desvincular(p)}
-                    className="text-xs font-semibold text-danger hover:underline print:hidden"
-                  >
-                    Remover da sala
-                  </button>
+                <Td className="font-medium">
+                  {p.nome}
+                  {p.tipo_filiacao === "responsavel_legal" && (
+                    <span className="ml-1.5 text-[11px] font-semibold text-accent">
+                      termo de guarda
+                    </span>
+                  )}
                 </Td>
+                <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
               </Tr>
             ))}
             {relatorio.length === 0 && (
               <Tr>
-                <Td colSpan={3} className="text-n-400">
+                <Td colSpan={2} className="text-n-400">
                   Nenhum responsável vinculado a esta sala.
                 </Td>
               </Tr>
@@ -653,207 +579,169 @@ function SalaDetalhe({
         </Table>
       </TableWrap>
 
-      <form onSubmit={vincular} className="mt-3.5 flex gap-2 print:hidden">
-        <Select className="flex-1" value={paiId} onChange={(e) => setPaiId(e.target.value)}>
-          <option value="">Vincular responsável já cadastrado…</option>
-          {naoVinculados.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.nome} — {p.telefone}
-            </option>
-          ))}
-        </Select>
-        <Button variant="secondary" size="sm" type="submit" disabled={!paiId} leftIcon={<PlusIcon size={14} />}>
-          Vincular
-        </Button>
-      </form>
+      <p className="mt-3.5 text-[11.5px] text-n-400 print:hidden">
+        Esta lista é <b>derivada dos alunos ativos</b> da turma: um responsável está aqui
+        porque tem filho matriculado nela. Para incluir ou tirar alguém, mude os
+        responsáveis do aluno em <b>Alunos</b>.
+      </p>
     </Card>
   );
 }
 
 // --------------------------------------------------------------------------- //
-function PaisPanel({
-  pais,
-  onMudou,
+
+// --------------------------------------------------------------------------- //
+/**
+ * Cadastro da turma: identificação estruturada + grade (nos dois formatos da decisão B).
+ *
+ * O `nome` deixou de ser digitado — o back-end o deriva de etapa + turma. Texto livre
+ * deixava "4ª B", "4ª série B" e "4a serie B" conviverem como turmas diferentes, com
+ * alunos espalhados entre elas.
+ */
+function TurmaModal({
+  sala,
+  onFechar,
+  onSalvo,
 }: {
-  pais: Pai[];
-  onMudou: () => Promise<void>;
+  /** `null` = criando. */
+  sala: Sala | null;
+  onFechar: () => void;
+  onSalvo: () => Promise<void>;
 }) {
   const toast = useToast();
-  const [nome, setNome] = useState("");
-  const [telefone, setTelefone] = useState("");
-  const [editando, setEditando] = useState<string | null>(null);
-  const [excluindo, setExcluindo] = useState<Pai | null>(null);
-  // Recolhido na criação (o mínimo é nome + telefone), aberto ao editar — é ali que a
-  // secretaria está completando a ficha.
-  const [abrirDados, setAbrirDados] = useState(false);
-  const [dados, setDados] = useState<DadosResponsavel>(DADOS_RESPONSAVEL_VAZIO);
+  const [dados, setDados] = useState<DadosTurma>(sala ? dadosDaTurma(sala) : turmaVazia());
+  const [descricao, setDescricao] = useState(sala?.descricao ?? "");
+  const [erro, setErro] = useState("");
+  const [salvando, setSalvando] = useState(false);
 
-  async function adicionar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!nome.trim() || !telefone.trim()) return;
+  const set = <K extends keyof DadosTurma>(campo: K, valor: DadosTurma[K]) =>
+    setDados((atual) => ({ ...atual, [campo]: valor }));
+
+  async function salvar() {
+    setSalvando(true);
+    setErro("");
     try {
-      if (editando) {
-        await atualizarPai(editando, nome.trim(), telefone.trim(), dados);
+      if (sala) {
+        await atualizarSala(sala.id, "", descricao, dados);
       } else {
-        await cadastrarPai(nome.trim(), telefone.trim(), [], dados);
+        await criarSala("", descricao, dados);
       }
-      setNome("");
-      setTelefone("");
-      setDados(DADOS_RESPONSAVEL_VAZIO);
-      setAbrirDados(false);
-      setEditando(null);
-      await onMudou();
-      toast({ tone: "success", title: editando ? "Responsável atualizado." : "Responsável cadastrado." });
-    } catch (err) {
-      toast({
-        tone: "danger",
-        title: err instanceof Error ? err.message : "Falha ao salvar responsável.",
-      });
+      toast({ tone: "success", title: sala ? "Turma atualizada." : "Turma criada." });
+      await onSalvo();
+    } catch (e) {
+      // O back-end recusa turma repetida no mesmo ano e grade inconsistente; mostrar no
+      // formulário, e não num toast que some, é o que permite corrigir sem reabrir.
+      setErro(e instanceof Error ? e.message : "Falha ao salvar a turma.");
+    } finally {
+      setSalvando(false);
     }
   }
 
-  function editar(p: Pai) {
-    setEditando(p.id);
-    setNome(p.nome);
-    setTelefone(p.telefone);
-    setDados(dadosDoResponsavel(p));
-    setAbrirDados(true);
-  }
-
-  function cancelar() {
-    setEditando(null);
-    setNome("");
-    setTelefone("");
-    setDados(DADOS_RESPONSAVEL_VAZIO);
-    setAbrirDados(false);
-  }
-
-  async function confirmarExclusao() {
-    if (!excluindo) return;
-    try {
-      await removerPai(excluindo.id);
-      setExcluindo(null);
-      await onMudou();
-      toast({ tone: "success", title: "Responsável excluído." });
-    } catch (err) {
-      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao excluir." });
-    }
-  }
+  const previa = [dados.etapa.trim(), dados.turma.trim().toUpperCase()]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <Card>
-      <CardHeader title="Pais / responsáveis cadastrados" count={pais.length} />
-
-      <form onSubmit={adicionar} className="mb-4 flex flex-wrap gap-2">
-        <Input
-          className="flex-1"
-          value={nome}
-          onChange={(e) => setNome(e.target.value)}
-          placeholder="Nome do responsável"
-        />
-        <Input
-          className="w-44"
-          mono
-          value={telefone}
-          onChange={(e) => setTelefone(e.target.value)}
-          placeholder="+5511999990000"
-        />
-        <Button size="sm" type="submit">
-          {editando ? "Salvar" : "Cadastrar"}
-        </Button>
-        {editando && (
-          <Button variant="secondary" size="sm" type="button" onClick={cancelar}>
+    <Modal
+      open
+      onClose={onFechar}
+      title={sala ? `Editar ${sala.nome}` : "Nova turma"}
+      className="max-w-2xl"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onFechar}>
             Cancelar
           </Button>
+          <Button size="sm" onClick={salvar} disabled={salvando}>
+            {salvando ? "Salvando…" : "Salvar turma"}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Field label="Ano letivo" htmlFor="t-ano">
+            <Input
+              id="t-ano"
+              type="number"
+              value={dados.ano_letivo || ""}
+              onChange={(e) => set("ano_letivo", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Etapa / série" htmlFor="t-etapa">
+            <Input
+              id="t-etapa"
+              value={dados.etapa}
+              onChange={(e) => set("etapa", e.target.value)}
+              placeholder="4ª série"
+            />
+          </Field>
+          <Field label="Turma" htmlFor="t-turma">
+            <Select
+              id="t-turma"
+              value={dados.turma}
+              onChange={(e) => set("turma", e.target.value)}
+            >
+              <option value="">—</option>
+              {["A", "B", "C", "D"].map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Nº da sala" htmlFor="t-sala">
+            <Input
+              id="t-sala"
+              value={dados.numero_sala}
+              onChange={(e) => set("numero_sala", e.target.value)}
+              placeholder="12"
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Field label="Período" htmlFor="t-periodo">
+            <Select
+              id="t-periodo"
+              value={dados.periodo}
+              onChange={(e) => set("periodo", e.target.value as Turno | "")}
+            >
+              <option value="">Não informado</option>
+              {TURNOS.map((t) => (
+                <option key={t.valor} value={t.valor}>
+                  {t.rotulo}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Observações" htmlFor="t-desc">
+            <Input
+              id="t-desc"
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+            />
+          </Field>
+        </div>
+
+        {previa && (
+          <p className="text-[12px] text-n-500">
+            A turma vai aparecer como <b>{previa}</b> — o nome é montado a partir da etapa e
+            da letra.
+          </p>
         )}
 
-        <div className="w-full">
-          <button
-            type="button"
-            onClick={() => setAbrirDados((v) => !v)}
-            className="text-[12.5px] font-semibold text-brand-600 hover:underline"
-          >
-            {abrirDados ? "− Ocultar" : "+ Preencher"} cadastro (CPF, filiação, termo de
-            guarda…)
-          </button>
-          {abrirDados && (
-            <div className="mt-3 border-t border-n-100 pt-3">
-              <CamposResponsavel
-                dados={dados}
-                onChange={setDados}
-                idPrefixo="turma-resp"
-              />
-            </div>
-          )}
-        </div>
-      </form>
+        <GradeHorario
+          grade={dados.grade_horario}
+          onChange={(g) => set("grade_horario", g)}
+        />
 
-      <TableWrap>
-        <Table>
-          <thead>
-            <tr>
-              <Th>Responsável</Th>
-              <Th>Filiação</Th>
-              <Th>CPF</Th>
-              <Th>WhatsApp</Th>
-              <Th className="text-right">Ações</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {pais.map((p) => (
-              <Tr key={p.id}>
-                <Td className="font-medium">{p.nome}</Td>
-                <Td className="text-xs">
-                  {p.tipo_filiacao ? (
-                    <Badge tone={p.tipo_filiacao === "responsavel_legal" ? "warning" : "neutral"}>
-                      {p.tipo_filiacao === "responsavel_legal"
-                        ? "Termo de guarda"
-                        : p.tipo_filiacao_rotulo}
-                    </Badge>
-                  ) : (
-                    <span className="text-n-400">—</span>
-                  )}
-                </Td>
-                <Td className="font-mono text-xs text-n-500">
-                  {p.cpf_formatado || <span className="text-n-400">—</span>}
-                </Td>
-                <Td className="font-mono text-xs text-n-500">{p.telefone}</Td>
-                <Td className="text-right">
-                  <span className="flex items-center justify-end gap-3">
-                    <button
-                      onClick={() => editar(p)}
-                      className="text-xs font-semibold text-n-500 hover:text-n-800"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      onClick={() => setExcluindo(p)}
-                      className="text-xs font-semibold text-danger hover:underline"
-                    >
-                      Excluir
-                    </button>
-                  </span>
-                </Td>
-              </Tr>
-            ))}
-            {pais.length === 0 && (
-              <Tr>
-                <Td colSpan={5} className="text-n-400">
-                  Nenhum responsável cadastrado ainda.
-                </Td>
-              </Tr>
-            )}
-          </tbody>
-        </Table>
-      </TableWrap>
-
-      <ConfirmDialog
-        open={!!excluindo}
-        onClose={() => setExcluindo(null)}
-        onConfirm={confirmarExclusao}
-        title="Excluir responsável"
-        message={`Excluir o responsável "${excluindo?.nome}"?`}
-      />
-    </Card>
+        {erro && (
+          <p className="rounded-lg bg-danger-soft px-3 py-2 text-[12.5px] text-danger">
+            {erro}
+          </p>
+        )}
+      </div>
+    </Modal>
   );
 }

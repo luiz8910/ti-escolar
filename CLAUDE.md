@@ -163,7 +163,8 @@ ti-escolar/
   `0029_atendimento_humano` → `0030_documentos_recebidos` →
   `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo` →
   `0033_usuario_cargo_hierarquia` →
-  `0034_contato_responsavel` → `0035_aluno_foto`.
+  `0034_contato_responsavel` → `0035_aluno_foto` →
+  `0036_turma_estruturada`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -292,9 +293,27 @@ ti-escolar/
 > segue `Sala`**, e as rotas da API seguem `/api/admin/salas`: renomear tudo por causa de
 > um rótulo seria um diff enorme sem ganho. Dívida anotada.
 
-- **`Sala`** (turma, ex.: "4ª série B") por tenant, única por `(tenant_id, nome)`. Agrega
-  **`Contato`s** (pais/responsáveis) em **N:N** via `sala_contatos` — um responsável pode estar em
-  mais de uma sala. Casos de uso em `app/application/cadastro_use_cases.py`.
+- **`Sala`** (turma) por tenant, **estruturada** desde 12/ago/2026 (migration
+  `0036_turma_estruturada`): `ano_letivo`, `etapa`, `turma`, `numero_sala`, `periodo` e
+  `grade_horario`. `nome` virou **derivado** (`etapa` + `turma`) e a unicidade é
+  `(tenant_id, ano_letivo, etapa, turma)`.
+  - **O UNIQUE antigo em `(tenant_id, nome)` foi removido**, e não é detalhe: o nome
+    derivado **se repete legitimamente entre anos letivos** — a "4ª série B" de 2026 e a de
+    2027 são turmas diferentes, e o índice antigo recusava a segunda. Só apareceu ao
+    exercitar a criação de turma do ano seguinte.
+  - **Os responsáveis da turma são derivados dos alunos ativos**, não vinculados à mão. A
+    tabela `sala_contatos` e as rotas `POST/DELETE /salas/{id}/pais` **deixaram de
+    existir**: elas permitiam um pai ligado a uma turma **sem nenhum filho lá** — o estado
+    que fazia a cobertura de contatos (§6c-ter) contar errado. O `downgrade` da migration
+    **recria a tabela já populada** a partir da derivação.
+  - **Grade de horário em dois formatos** (decisão B do plano de 10/08), sobre a mesma
+    coluna JSON: `turno` (entrada, saída e intervalo) e `aulas` (bloco por dia/horário,
+    com o **intervalo como bloco** — tratá-lo à parte faria a carga horária ignorá-lo).
+    Validação em `app/application/grade_horario.py`, compartilhada por painel e seed:
+    recusa hora fora de formato, fim antes do início, intervalo fora do turno e **aulas
+    sobrepostas no mesmo dia**. Como o formato gravado é o mesmo, descartar um deles
+    depois é apagar componente de tela, não migrar dado.
+  - Casos de uso em `app/application/cadastro_use_cases.py`.
 - **CRUD completo** de pais e de salas, vínculo/desvínculo pai↔sala e **relatório de pais por
   sala** (`RelatorioPaisDaSala`). `Contato` continua único por `(tenant_id, telefone)`.
 - **Rotas** em `app/interfaces/api/cadastro.py` (prefixo `/api/admin`, reaproveitando

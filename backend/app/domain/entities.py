@@ -677,23 +677,78 @@ class SolicitacaoImpressao:
 
 @dataclass
 class Sala:
-    """Sala/turma da escola (ex.: "4ª série B"), dentro de um tenant.
+    """Turma da escola, dentro de um tenant.
 
-    Agrega os ``Contato``s (pais/responsáveis) vinculados àquela turma (N:N — um
-    responsável pode ter filhos em salas diferentes). É a base do relatório de pais
-    por sala. ``professor_id`` é o **professor responsável** pela série (1:1 — uma
-    série tem no máximo um professor; um professor pode ter várias séries);
-    ``professor_nome`` é denormalizado só para exibição.
+    Chamada ``Sala`` no domínio por herança — no painel a seção é **Turmas**, que é o
+    vocabulário da escola ("sala" lá é o espaço físico, e virou ``numero_sala``).
+
+    Nasceu com ``nome`` em texto livre ("4ª série B"). A partir de 12/ago/2026 a turma é
+    **estruturada**: ``ano_letivo``, ``etapa``, ``turma``, ``numero_sala`` e ``periodo``.
+    Texto livre impedia ordenar, promover série automaticamente e cruzar com a ficha; e
+    "4ª B", "4ª série B" e "4a serie B" conviviam como turmas diferentes.
+
+    ``nome`` continua existindo, agora **derivado** (``etapa`` + ``turma``), para não
+    quebrar relatórios, seed e telas que já o exibem.
+
+    ``pais`` é **derivado dos alunos** desde a mesma data: um responsável pertence à turma
+    porque tem um aluno ativo nela. Antes era um vínculo manual (``sala_contatos``), que
+    permitia pai vinculado a turma sem nenhum filho lá — e fazia a cobertura de contatos
+    contar errado.
+
+    ``professor_id`` é o **professor responsável** pela turma (1:1 — uma turma tem no
+    máximo um professor; um professor pode ter várias); ``professor_nome`` é denormalizado
+    só para exibição.
     """
 
     tenant_id: UUID
-    nome: str  # ex.: "4ª série B"
+    nome: str  # derivado de etapa + turma; ex.: "4ª série B"
     descricao: str = ""
+    # Identificação estruturada da turma (ficha física: ANO · ETAPA · TURMA · PERÍODO).
+    ano_letivo: int = 0
+    etapa: str = ""  # "1º", "4ª série"…
+    turma: str = ""  # "A", "B", "C", "D"
+    numero_sala: str = ""  # a sala física
+    periodo: Turno | None = None
+    # Grade de horário — JSON, com os dois formatos da decisão B. Ver `GRADE_*`.
+    grade_horario: dict = field(default_factory=dict)
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     pais: list[Contato] = field(default_factory=list)
     professor_id: UUID | None = None
     professor_nome: str = ""
+
+    @property
+    def nome_derivado(self) -> str:
+        """``etapa`` + ``turma``, com o ``nome`` atual como retaguarda.
+
+        A retaguarda importa para as turmas anteriores à migration, cujo texto livre pode
+        não ter sido separável em etapa/turma.
+        """
+        composto = " ".join(p for p in (self.etapa.strip(), self.turma.strip()) if p)
+        return composto or self.nome
+
+    @property
+    def chave_unica(self) -> tuple[int, str, str]:
+        """O que identifica a turma dentro da escola: ano + etapa + turma."""
+        return (self.ano_letivo, self.etapa.strip().casefold(), self.turma.strip().casefold())
+
+
+# Formatos da grade de horário (decisão B do plano de 10/08: **os dois**, sobre a mesma
+# coluna JSON, para comparar na prática antes de escolher). Como o formato gravado é o
+# mesmo, descartar um deles depois é apagar componente de tela, não migrar dado.
+#
+# - ``turno``: o suficiente para a secretaria hoje — entrada, saída e o intervalo.
+# - ``aulas``: a grade aula a aula, com um bloco por dia/horário.
+GRADE_TURNO = "turno"
+GRADE_AULAS = "aulas"
+GRADE_FORMATOS = (GRADE_TURNO, GRADE_AULAS)
+
+# Tipos de bloco na grade aula a aula. O intervalo é bloco como qualquer outro: era o que
+# o apontamento pedia ("grade de horário com intervalo incluso") e tratá-lo à parte faria
+# a soma da carga horária ignorá-lo.
+BLOCO_AULA = "aula"
+BLOCO_INTERVALO = "intervalo"
+BLOCO_TIPOS = (BLOCO_AULA, BLOCO_INTERVALO)
 
 
 @dataclass

@@ -289,23 +289,6 @@ aluno_responsaveis = Table(
 
 
 # Associação N:N entre salas (turmas) e contatos (pais/responsáveis).
-sala_contatos = Table(
-    "sala_contatos",
-    Base.metadata,
-    Column(
-        "sala_id",
-        PGUUID(as_uuid=True),
-        ForeignKey("salas.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column(
-        "contato_id",
-        PGUUID(as_uuid=True),
-        ForeignKey("contatos.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
-
 
 class ContatoORM(Base):
     __tablename__ = "contatos"
@@ -333,9 +316,6 @@ class ContatoORM(Base):
 
     grupos: Mapped[list["GrupoORM"]] = relationship(
         secondary=grupo_contatos, back_populates="membros"
-    )
-    salas: Mapped[list["SalaORM"]] = relationship(
-        secondary=sala_contatos, back_populates="pais"
     )
     alunos: Mapped[list["AlunoORM"]] = relationship(
         secondary=aluno_responsaveis, back_populates="responsaveis"
@@ -449,8 +429,17 @@ class SalaORM(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
     )
+    # Derivado de etapa + turma; mantido em coluna porque relatórios e telas já o exibem.
     nome: Mapped[str] = mapped_column(String(200))
     descricao: Mapped[str] = mapped_column(Text, default="")
+    # Identificação estruturada (ficha física: ANO · ETAPA · TURMA · PERÍODO).
+    ano_letivo: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    etapa: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    turma: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    numero_sala: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    periodo: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # Grade de horário nos dois formatos da decisão B, sobre a mesma coluna.
+    grade_horario: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     # Professor responsável pela série (1:1; um professor pode ter várias séries).
     # ON DELETE SET NULL: remover o professor apenas desvincula as séries.
     professor_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -461,12 +450,17 @@ class SalaORM(Base):
     )
     criado_em: Mapped[datetime] = mapped_column()
 
-    pais: Mapped[list[ContatoORM]] = relationship(
-        secondary=sala_contatos, back_populates="salas"
-    )
     professor: Mapped["ProfessorORM | None"] = relationship()
 
-    __table_args__ = (UniqueConstraint("tenant_id", "nome", name="uq_sala_tenant_nome"),)
+    __table_args__ = (
+        # A turma é identificada por **ano + etapa + letra**. O UNIQUE antigo em `nome` foi
+        # removido na 0036: `nome` é derivado de etapa + turma e **se repete legitimamente
+        # entre anos letivos** — a "4ª série B" de 2026 e a de 2027 são turmas diferentes,
+        # e o índice antigo recusava a segunda.
+        UniqueConstraint(
+            "tenant_id", "ano_letivo", "etapa", "turma", name="uq_sala_tenant_ano_turma"
+        ),
+    )
 
 
 class AlunoORM(Base):

@@ -374,8 +374,6 @@ class PaiEntrada(BaseModel):
     tenant_id: UUID
     nome: str
     telefone: str = Field(..., examples=["+5511999990000"])
-    # Salas às quais já vincular o responsável no cadastro (opcional).
-    sala_ids: list[UUID] = []
     # Cadastro do responsável — todos opcionais; o mínimo é nome + telefone.
     cpf: str = ""
     # "mae" | "pai" | "responsavel_legal" (termo de guarda) | "outro".
@@ -423,20 +421,58 @@ class PaiSaida(BaseModel):
 
 class SalaEntrada(BaseModel):
     tenant_id: UUID
-    nome: str = Field(..., examples=["4ª série B"])
+    # Opcional quando etapa + turma vêm preenchidos: o nome é derivado deles.
+    nome: str = Field("", examples=["4ª série B"])
     descricao: str = ""
+    # Identificação estruturada da turma (ficha física: ANO · ETAPA · TURMA · PERÍODO).
+    # `nome` é derivado de etapa + turma quando os dois vêm preenchidos.
+    ano_letivo: int = 0
+    etapa: str = Field("", examples=["4ª série"])
+    turma: str = Field("", examples=["A", "B", "C", "D"])
+    numero_sala: str = Field("", examples=["12"])
+    periodo: str = Field("", examples=["manha", "tarde", "integral", "noite"])
+    # Grade nos dois formatos da decisão B — ver `app/application/grade_horario.py`.
+    grade_horario: dict | None = None
 
 
 class SalaAtualizar(BaseModel):
     tenant_id: UUID
-    nome: str = Field(..., examples=["4ª série B"])
+    nome: str = Field("", examples=["4ª série B"])
     descricao: str = ""
+    # Identificação estruturada da turma (ficha física: ANO · ETAPA · TURMA · PERÍODO).
+    # `nome` é derivado de etapa + turma quando os dois vêm preenchidos.
+    ano_letivo: int = 0
+    etapa: str = Field("", examples=["4ª série"])
+    turma: str = Field("", examples=["A", "B", "C", "D"])
+    numero_sala: str = Field("", examples=["12"])
+    periodo: str = Field("", examples=["manha", "tarde", "integral", "noite"])
+    # Grade nos dois formatos da decisão B — ver `app/application/grade_horario.py`.
+    grade_horario: dict | None = None
+
+
+class VinculoPaiEntrada(BaseModel):
+    """Vincula um responsável a um **aluno**.
+
+    Não existe mais vínculo responsável↔turma: a lista da turma é derivada dos alunos.
+    """
+
+    tenant_id: UUID
+    contato_id: UUID
 
 
 class SalaSaida(BaseModel):
     id: UUID
     nome: str
     descricao: str
+    ano_letivo: int = 0
+    etapa: str = ""
+    turma: str = ""
+    numero_sala: str = ""
+    periodo: str = ""
+    grade_horario: dict = {}
+    # Minutos de aula por semana — só o formato "aulas" tem o dado; "turno" devolve 0.
+    minutos_de_aula: int = 0
+    # Responsáveis **derivados dos alunos ativos** da turma, não vinculados à mão.
     total_pais: int
     pais: list[PaiSaida] = []
     professor_id: UUID | None = None
@@ -447,11 +483,6 @@ class TenantRef(BaseModel):
     """Corpo mínimo para operações que só precisam confirmar o tenant."""
 
     tenant_id: UUID
-
-
-class VinculoPaiEntrada(BaseModel):
-    tenant_id: UUID
-    contato_id: UUID
 
 
 # --------------------------------------------------------------------------- #

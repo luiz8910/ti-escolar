@@ -601,8 +601,10 @@ class FakeProfessorRepo:
 class FakeSalaRepo:
     def __init__(self) -> None:
         self.salas: dict[uuid.UUID, "Sala"] = {}
-        # Resolve pais pelo id para o vínculo (compartilhado com o FakeContatoRepo nos testes).
+        # Resolve pais pelo id (compartilhado com o FakeContatoRepo nos testes).
         self.contatos: FakeContatoRepo | None = None
+        # Deriva os responsáveis da turma a partir dos alunos, como o repositório SQL.
+        self.alunos: "FakeAlunoRepo | None" = None
         # Resolve o nome do professor ao atribuí-lo a uma série (compartilhado nos testes).
         self.professores: FakeProfessorRepo | None = None
 
@@ -617,13 +619,12 @@ class FakeSalaRepo:
     async def listar(self, *, tenant_id):
         return [s for s in self.salas.values() if s.tenant_id == tenant_id]
 
-    async def atualizar(self, *, tenant_id, sala_id, nome, descricao):
-        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
-        if s is None:
+    async def atualizar(self, sala):
+        atual = await self.obter(tenant_id=sala.tenant_id, sala_id=sala.id)
+        if atual is None:
             raise ValueError("Sala não encontrada para o tenant.")
-        s.nome = nome
-        s.descricao = descricao
-        return s
+        self.salas[sala.id] = sala
+        return sala
 
     async def remover(self, *, tenant_id, sala_id):
         s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
@@ -632,27 +633,28 @@ class FakeSalaRepo:
         del self.salas[sala_id]
         return True
 
-    async def vincular_pai(self, *, tenant_id, sala_id, contato_id):
-        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
-        if s is None:
-            raise ValueError("Sala não encontrada para o tenant.")
-        contato = self.contatos.contatos.get(contato_id) if self.contatos else None
-        if contato is None or contato.tenant_id != tenant_id:
-            raise ValueError("Pai/responsável não encontrado para o tenant.")
-        if all(c.id != contato_id for c in s.pais):
-            s.pais.append(contato)
-
-    async def desvincular_pai(self, *, tenant_id, sala_id, contato_id):
-        s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
-        if s is None:
-            raise ValueError("Sala não encontrada para o tenant.")
-        s.pais = [c for c in s.pais if c.id != contato_id]
-
     async def pais(self, *, tenant_id, sala_id):
+        """Derivado dos alunos ativos, como o repositório SQL.
+
+        `self.alunos` é ligado pelos testes que precisam da derivação; sem ele o fake cai
+        no que estiver em `sala.pais`, que é o que os testes de turma montam à mão.
+        """
         s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
         if s is None:
             raise ValueError("Sala não encontrada para o tenant.")
-        return list(s.pais)
+        if self.alunos is None:
+            return list(s.pais)
+        derivados: list = []
+        vistos: set = set()
+        for aluno in self.alunos.alunos.values():
+            if aluno.tenant_id != tenant_id or aluno.sala_id != sala_id or not aluno.ativo:
+                continue
+            for contato in aluno.responsaveis:
+                if contato.id in vistos:
+                    continue
+                vistos.add(contato.id)
+                derivados.append(contato)
+        return sorted(derivados, key=lambda c: c.nome)
 
     async def definir_professor(self, *, tenant_id, sala_id, professor_id):
         s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)

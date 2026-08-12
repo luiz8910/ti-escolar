@@ -762,14 +762,88 @@ export function dadosDoResponsavel(p: Pai): DadosResponsavel {
   };
 }
 
+/** Formatos da grade (decisão B: os dois, sobre a mesma coluna JSON). */
+export type FormatoGrade = "turno" | "aulas";
+
+export interface BlocoGrade {
+  /** Dia ISO: 1 = segunda … 7 = domingo. */
+  dia: number;
+  inicio: string;
+  fim: string;
+  tipo: "aula" | "intervalo";
+  rotulo: string;
+}
+
+export interface Grade {
+  formato?: FormatoGrade;
+  // formato "turno"
+  inicio?: string;
+  fim?: string;
+  intervalo_inicio?: string;
+  intervalo_minutos?: number;
+  // formato "aulas"
+  blocos?: BlocoGrade[];
+}
+
+export const DIAS_SEMANA = [
+  { valor: 1, curto: "Seg" },
+  { valor: 2, curto: "Ter" },
+  { valor: 3, curto: "Qua" },
+  { valor: 4, curto: "Qui" },
+  { valor: 5, curto: "Sex" },
+  { valor: 6, curto: "Sáb" },
+];
+
 export interface Sala {
   id: string;
+  /** Derivado de etapa + turma pelo back-end. */
   nome: string;
   descricao: string;
+  ano_letivo: number;
+  etapa: string;
+  turma: string;
+  numero_sala: string;
+  periodo: Turno | "";
+  grade_horario: Grade;
+  /** Minutos de aula por semana — só o formato "aulas" tem o dado. */
+  minutos_de_aula: number;
+  /** Responsáveis **derivados dos alunos ativos**, não vinculados à mão. */
   total_pais: number;
   pais: Pai[];
   professor_id: string | null;
   professor_nome: string;
+}
+
+/** Identificação e grade da turma, na forma que a API recebe. */
+export interface DadosTurma {
+  ano_letivo: number;
+  etapa: string;
+  turma: string;
+  numero_sala: string;
+  periodo: Turno | "";
+  grade_horario: Grade;
+}
+
+export function dadosDaTurma(s: Sala): DadosTurma {
+  return {
+    ano_letivo: s.ano_letivo,
+    etapa: s.etapa,
+    turma: s.turma,
+    numero_sala: s.numero_sala,
+    periodo: s.periodo,
+    grade_horario: s.grade_horario ?? {},
+  };
+}
+
+export function turmaVazia(): DadosTurma {
+  return {
+    ano_letivo: new Date().getFullYear(),
+    etapa: "",
+    turma: "",
+    numero_sala: "",
+    periodo: "",
+    grade_horario: { formato: "turno" },
+  };
 }
 
 async function jsonOuErro<T>(resp: Response, contexto: string): Promise<T> {
@@ -862,26 +936,35 @@ export async function listarSalas(): Promise<Sala[]> {
   return jsonOuErro(resp, "listar salas");
 }
 
-export async function criarSala(nome: string, descricao = ""): Promise<Sala> {
+/**
+ * `nome` é opcional quando `dados` traz etapa + turma: o back-end o deriva dos dois.
+ * Continua aceito sozinho para a criação rápida (ex.: a série destino ao excluir uma turma).
+ */
+export async function criarSala(
+  nome = "",
+  descricao = "",
+  dados?: DadosTurma
+): Promise<Sala> {
   const resp = await apiFetch(`${API_URL}/api/admin/salas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao, ...(dados ?? {}) }),
   });
-  return jsonOuErro(resp, "criar sala");
+  return jsonOuErro(resp, "criar turma");
 }
 
 export async function atualizarSala(
   salaId: string,
   nome: string,
-  descricao: string
+  descricao: string,
+  dados?: DadosTurma
 ): Promise<Sala> {
   const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao, ...(dados ?? {}) }),
   });
-  return jsonOuErro(resp, "atualizar sala");
+  return jsonOuErro(resp, "atualizar turma");
 }
 
 // Remove uma série. Sem `moverPara`, exclui os alunos da série junto; com `moverPara`,
@@ -900,28 +983,9 @@ export async function removerSala(salaId: string, moverPara?: string): Promise<v
 }
 
 // ----- vínculo e relatório ----- //
-export async function vincularPaiASala(salaId: string, contatoId: string): Promise<void> {
-  const resp = await apiFetch(`${API_URL}/api/admin/salas/${salaId}/pais`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), contato_id: contatoId }),
-  });
-  if (!resp.ok && resp.status !== 204) {
-    const erro = await resp.json().catch(() => ({}));
-    throw new Error(erro.detail ?? `Erro ${resp.status} ao vincular responsável`);
-  }
-}
-
-export async function desvincularPaiDaSala(salaId: string, contatoId: string): Promise<void> {
-  const resp = await apiFetch(
-    `${API_URL}/api/admin/salas/${salaId}/pais/${contatoId}?tenant_id=${tenantEmFoco()}`,
-    { method: "DELETE", headers: authHeaders() }
-  );
-  if (!resp.ok && resp.status !== 204) {
-    const erro = await resp.json().catch(() => ({}));
-    throw new Error(erro.detail ?? `Erro ${resp.status} ao desvincular responsável`);
-  }
-}
+// `vincularPaiASala`/`desvincularPaiDaSala` não existem mais: a lista de responsáveis da
+// turma é **derivada dos alunos ativos**. Quem muda essa lista é o vínculo
+// aluno↔responsável, na tela de Alunos.
 
 export async function relatorioPaisDaSala(salaId: string): Promise<Pai[]> {
   const resp = await apiFetch(
