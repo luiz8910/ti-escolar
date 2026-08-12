@@ -227,6 +227,12 @@ export interface RegistroAuditoria {
   ator: "usuario" | "llm" | "sistema";
   ator_id: string;
   ator_nome: string;
+  /**
+   * Id do usuário quando ele **ainda tem conta** — é o que autoriza o link para o
+   * perfil. Vazio para LLM/sistema e para conta que não existe mais: um link para o
+   * nada é pior que texto puro.
+   */
+  ator_perfil_id: string;
   acao: string;
   descricao: string;
   metadados: Record<string, unknown>;

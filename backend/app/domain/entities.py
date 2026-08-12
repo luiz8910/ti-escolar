@@ -993,7 +993,15 @@ class RegistroAuditoria:
     acao: str
     tenant_id: UUID | None = None
     ator_id: str = ""  # id do usuário ou telefone do contato (LLM)
+    # Retrato do nome no momento da ação. Fica como **fallback histórico**: quem lê o log
+    # é resolvido na leitura contra o cadastro atual (ver `ListarAuditoria`), senão um
+    # nome corrigido depois deixaria a mesma pessoa aparecendo com dois nomes no log — e
+    # registro antigo, gravado antes de o campo existir, ficaria anônimo para sempre.
     ator_nome: str = ""
+    # **Não persistido.** Preenchido na leitura com o id do `Usuario` que ainda existe,
+    # e é o que autoriza o painel a linkar para o perfil. Vazio = ator sem conta (LLM,
+    # sistema) ou conta que não está mais lá: um link para o nada é pior que texto puro.
+    ator_perfil_id: str = ""
     descricao: str = ""
     metadados: dict = field(default_factory=dict)
     id: UUID = field(default_factory=_new_id)

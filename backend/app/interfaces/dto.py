@@ -366,6 +366,10 @@ class RegistroAuditoriaSaida(BaseModel):
     ator: str  # "usuario" | "llm" | "sistema"
     ator_id: str = ""
     ator_nome: str = ""
+    # Id do usuário quando ele **ainda tem conta** — é o que autoriza o painel a linkar
+    # para o perfil. Vazio para LLM/sistema e para conta que não existe mais.
+    ator_perfil_id: str = ""
+
     acao: str
     descricao: str = ""
     metadados: dict = {}
