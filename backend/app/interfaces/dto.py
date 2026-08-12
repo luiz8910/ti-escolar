@@ -1052,6 +1052,17 @@ class ResponsavelInativadoSaida(BaseModel):
     telefone: str
 
 
+class SincronizacaoResponsaveisSaida(BaseModel):
+    """Os dois lados da sincronização (§F1).
+
+    Reportar só as inativações pareceria perda de cadastro; só as reativações deixaria a
+    secretaria sem entender por que uma família voltou a receber aviso.
+    """
+
+    inativados: list[ResponsavelInativadoSaida] = []
+    reativados: list[ResponsavelInativadoSaida] = []
+
+
 # --------------------------------------------------------------------------- #
 # Onda 3 · I1 — Aviso de falta e chamada de eventual
 # --------------------------------------------------------------------------- #

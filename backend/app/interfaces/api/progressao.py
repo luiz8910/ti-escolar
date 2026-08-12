@@ -8,8 +8,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.application.progressao_use_cases import (
-    InativarResponsaveisSemAlunosAtivos,
     PromoverTurmas,
+    SincronizarSituacaoDosResponsaveis,
 )
 from app.domain.entities import Usuario
 from app.infrastructure.db.repositories_admin import (
@@ -23,6 +23,7 @@ from app.interfaces.dto import (
     InativarResponsaveisEntrada,
     PromoverTurmasEntrada,
     ResponsavelInativadoSaida,
+    SincronizacaoResponsaveisSaida,
     ResultadoPromocaoSaida,
 )
 
@@ -35,14 +36,20 @@ async def promover_turmas(
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
     salas: SqlSalaRepository = Depends(get_sala_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
 ) -> list[ResultadoPromocaoSaida]:
-    """Promove os alunos das séries (origem → destino; destino nulo = última série)."""
+    """Promove os alunos das séries (origem → destino; destino nulo = última série).
+
+    A sincronização da situação dos responsáveis roda **junto**, na mesma operação: a
+    virada de ano é o momento em que famílias inteiras deixam de ter aluno na escola, e
+    era isso que dependia de alguém lembrar de clicar no botão abaixo.
+    """
     _exige_acesso_tenant(usuario, payload.tenant_id)
     promocoes = [(p.origem_sala_id, p.destino_sala_id) for p in payload.promocoes]
     try:
-        resultados = await PromoverTurmas(alunos=alunos, salas=salas).executar(
-            tenant_id=payload.tenant_id, promocoes=promocoes
-        )
+        resultados = await PromoverTurmas(
+            alunos=alunos, salas=salas, contatos=contatos
+        ).executar(tenant_id=payload.tenant_id, promocoes=promocoes)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return [
@@ -58,21 +65,30 @@ async def promover_turmas(
     ]
 
 
-@router.post("/inativar-responsaveis", response_model=list[ResponsavelInativadoSaida])
+@router.post("/inativar-responsaveis", response_model=SincronizacaoResponsaveisSaida)
 async def inativar_responsaveis(
     payload: InativarResponsaveisEntrada,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
     contatos: SqlContatoRepository = Depends(get_contato_repo),
-) -> list[ResponsavelInativadoSaida]:
-    """Inativa os responsáveis cujos alunos já são todos ex-alunos."""
+) -> SincronizacaoResponsaveisSaida:
+    """Alinha a situação dos responsáveis com a dos alunos, na escola inteira.
+
+    Desde 12/ago/2026 isto acontece **sozinho** na promoção de turmas e ao desativar ou
+    reativar um aluno. A rota permanece como **reprocessamento**: serve para conferir a
+    escola inteira depois de uma importação em massa ou de um ajuste feito no banco.
+
+    A URL manteve o nome ``inativar-responsaveis`` por compatibilidade, mas a operação é
+    bidirecional — ver ``SincronizarSituacaoDosResponsaveis``.
+    """
     _exige_acesso_tenant(usuario, payload.tenant_id)
-    inativados = await InativarResponsaveisSemAlunosAtivos(
+    resultado = await SincronizarSituacaoDosResponsaveis(
         alunos=alunos, contatos=contatos
     ).executar(tenant_id=payload.tenant_id)
-    return [
-        ResponsavelInativadoSaida(
-            contato_id=r.contato_id, nome=r.nome, telefone=r.telefone
-        )
-        for r in inativados
-    ]
+    saida = lambda r: ResponsavelInativadoSaida(  # noqa: E731
+        contato_id=r.contato_id, nome=r.nome, telefone=r.telefone
+    )
+    return SincronizacaoResponsaveisSaida(
+        inativados=[saida(r) for r in resultado.inativados],
+        reativados=[saida(r) for r in resultado.reativados],
+    )

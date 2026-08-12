@@ -776,6 +776,7 @@ async def desativar_aluno(
     motivo: str = "",
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
 ) -> AlunoSaida:
     """Desativa o aluno (**soft delete**) e devolve o registro atualizado.
 
@@ -784,7 +785,9 @@ async def desativar_aluno(
     na escola — histórico, declarações, prestação de contas.
     """
     _exige_acesso_tenant(usuario, tenant_id)
-    aluno = await DesativarAluno(alunos=alunos).executar(
+    # `contatos` liga a sincronização automática da situação dos responsáveis (§F1):
+    # quem ficou sem aluno ativo passa a inativo aqui, sem depender de clique.
+    aluno = await DesativarAluno(alunos=alunos, contatos=contatos).executar(
         tenant_id=tenant_id, aluno_id=aluno_id, motivo=motivo
     )
     if aluno is None:
@@ -798,10 +801,17 @@ async def reativar_aluno(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
 ) -> AlunoSaida:
-    """Rematrícula do ex-aluno — ou desfaz uma desativação feita por engano."""
+    """Rematrícula do ex-aluno — ou desfaz uma desativação feita por engano.
+
+    Sincroniza os responsáveis no caminho de volta: sem isso a família ficaria inativa
+    depois da rematrícula e pararia de receber aviso, sem ninguém perceber.
+    """
     _exige_acesso_tenant(usuario, tenant_id)
-    aluno = await ReativarAluno(alunos=alunos).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+    aluno = await ReativarAluno(alunos=alunos, contatos=contatos).executar(
+        tenant_id=tenant_id, aluno_id=aluno_id
+    )
     if aluno is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado")
     return _aluno_saida(aluno)

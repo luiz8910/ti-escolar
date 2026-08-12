@@ -1969,13 +1969,25 @@ export async function promoverTurmas(
   return jsonOuErro(resp, "promover turmas");
 }
 
-export async function inativarResponsaveis(): Promise<ResponsavelInativado[]> {
+export interface SincronizacaoResponsaveis {
+  inativados: ResponsavelInativado[];
+  reativados: ResponsavelInativado[];
+}
+
+/**
+ * **Reprocessamento** da situação dos responsáveis na escola inteira.
+ *
+ * A sincronização acontece sozinha na promoção de turmas e ao desativar/reativar um aluno.
+ * Esta rota serve para conferir tudo depois de uma importação em massa ou de um ajuste
+ * feito direto no banco. A URL manteve o nome antigo, mas a operação é bidirecional.
+ */
+export async function sincronizarResponsaveis(): Promise<SincronizacaoResponsaveis> {
   const resp = await apiFetch(`${API_URL}/api/admin/progressao/inativar-responsaveis`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco() }),
   });
-  return jsonOuErro(resp, "inativar responsáveis");
+  return jsonOuErro(resp, "sincronizar responsáveis");
 }
 
 // --------------------- postura de segurança (super admin) ------------------ //

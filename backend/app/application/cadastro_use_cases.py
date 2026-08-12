@@ -579,6 +579,36 @@ class AtualizarAluno:
         return await self._alunos.atualizar(atual)
 
 
+class _SituacaoDosResponsaveis:
+    """Sincroniza a situação dos responsáveis **daquele aluno**, se houver repositório.
+
+    O gatilho mora aqui, e não num cron, porque é neste instante que se sabe que a
+    família mudou de estado — um agendador diário passaria 364 dias por ano recalculando
+    nada (apontamento de 10/08: "ativado por automação e não disparado por clique").
+
+    Recorta pelos responsáveis do aluno: varrer a escola inteira a cada desativação seria
+    pagar caro por uma mudança que atinge duas ou três pessoas.
+    """
+
+    def __init__(self, contatos: ContatoRepository | None, alunos: AlunoRepository) -> None:
+        self._contatos = contatos
+        self._alunos = alunos
+
+    async def sincronizar(self, aluno: Aluno) -> None:
+        if self._contatos is None or not aluno.responsaveis:
+            return
+        from app.application.progressao_use_cases import (
+            SincronizarSituacaoDosResponsaveis,
+        )
+
+        await SincronizarSituacaoDosResponsaveis(
+            alunos=self._alunos, contatos=self._contatos
+        ).executar(
+            tenant_id=aluno.tenant_id,
+            contato_ids=[c.id for c in aluno.responsaveis],
+        )
+
+
 class DesativarAluno:
     """"Exclusão" de aluno pelo painel — que é sempre **soft delete**.
 
@@ -586,10 +616,16 @@ class DesativarAluno:
     (histórico escolar, declarações, prestação de contas). Marcar como ex-aluno preserva
     esse rastro, os vínculos com responsáveis e a ficha de matrícula, e ainda permite
     desfazer o clique errado (``ReativarAluno``).
+
+    Ao desativar, **sincroniza os responsáveis**: quem ficou sem nenhum aluno ativo passa
+    a inativo na hora, sem depender de alguém clicar no botão da progressão.
     """
 
-    def __init__(self, *, alunos: AlunoRepository) -> None:
+    def __init__(
+        self, *, alunos: AlunoRepository, contatos: ContatoRepository | None = None
+    ) -> None:
         self._alunos = alunos
+        self._situacao = _SituacaoDosResponsaveis(contatos, alunos)
 
     async def executar(
         self, *, tenant_id: UUID, aluno_id: UUID, motivo: str = ""
@@ -598,21 +634,33 @@ class DesativarAluno:
         if aluno is None:
             return None
         aluno.desativar(motivo=motivo)
-        return await self._alunos.atualizar(aluno)
+        salvo = await self._alunos.atualizar(aluno)
+        await self._situacao.sincronizar(salvo)
+        return salvo
 
 
 class ReativarAluno:
-    """Volta o ex-aluno à condição de matriculado (rematrícula ou correção)."""
+    """Volta o ex-aluno à condição de matriculado (rematrícula ou correção).
 
-    def __init__(self, *, alunos: AlunoRepository) -> None:
+    Sincroniza os responsáveis no caminho de volta — sem isso a automação seria uma
+    armadilha: a rematrícula devolveria o aluno e deixaria a família inativa, parando de
+    receber aviso da escola sem ninguém perceber.
+    """
+
+    def __init__(
+        self, *, alunos: AlunoRepository, contatos: ContatoRepository | None = None
+    ) -> None:
         self._alunos = alunos
+        self._situacao = _SituacaoDosResponsaveis(contatos, alunos)
 
     async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno | None:
         aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
             return None
         aluno.reativar()
-        return await self._alunos.atualizar(aluno)
+        salvo = await self._alunos.atualizar(aluno)
+        await self._situacao.sincronizar(salvo)
+        return salvo
 
 
 class VincularResponsavelAoAluno:
