@@ -7,9 +7,11 @@ do módulo ``admin``.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.application.cadastro_use_cases import (
     AtribuirProfessorASala,
@@ -51,6 +53,11 @@ from app.application.importacao_use_cases import (
     ConfirmarImportacaoAlunos,
     PrevisualizarImportacaoAlunos,
 )
+from app.application.foto_aluno_use_cases import (
+    DefinirFotoDoAluno,
+    ObterFotoDoAluno,
+    RemoverFotoDoAluno,
+)
 from app.application.validacao import formatar_cpf
 from app.domain.entities import (
     Aluno,
@@ -80,10 +87,13 @@ from app.interfaces.deps import (
     get_llm,
     get_professor_repo,
     get_sala_repo,
+    get_session,
 )
 from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
+from app.infrastructure.storage import PostgresArquivoStorage
 from app.interfaces.dto import (
     AlunosPaginaSaida,
+    FotoAlunoEntrada,
     PaginaMeta,
     PaisPaginaSaida,
     AlunoAtualizar,
@@ -236,6 +246,7 @@ def _aluno_saida(a: Aluno) -> AlunoSaida:
         sala_id=a.sala_id,
         sala_nome=a.sala_nome,
         responsaveis=[_pai_saida(c) for c in a.responsaveis],
+        tem_foto=bool(a.foto_chave),
     )
 
 
@@ -657,6 +668,89 @@ async def atualizar_aluno(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _aluno_saida(aluno)
+
+
+# --------------------------------------------------------------------------- #
+# Foto do aluno (opcional — decisão D do plano de 10/08)
+# --------------------------------------------------------------------------- #
+@router.put("/alunos/{aluno_id}/foto", response_model=AlunoSaida)
+async def definir_foto(
+    aluno_id: UUID,
+    payload: FotoAlunoEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    session=Depends(get_session),
+) -> AlunoSaida:
+    """Recebe a foto em base64.
+
+    Base64 num JSON, e não multipart, para seguir o mesmo caminho do upload da base de
+    conhecimento (§6b): o navegador lê o arquivo e manda o conteúdo — sem dependência de
+    parser de formulário no servidor. Custa ~33% de overhead num arquivo que já é pequeno.
+    """
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        conteudo = base64.b64decode(payload.conteudo_base64, validate=True)
+    except (ValueError, binascii.Error) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo inválido."
+        ) from e
+    uc = DefinirFotoDoAluno(alunos=alunos, storage=PostgresArquivoStorage(session))
+    try:
+        aluno = await uc.executar(
+            tenant_id=payload.tenant_id,
+            aluno_id=aluno_id,
+            conteudo=conteudo,
+            mime=payload.mime,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _aluno_saida(aluno)
+
+
+@router.get("/alunos/{aluno_id}/foto", response_class=Response)
+async def obter_foto(
+    aluno_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    session=Depends(get_session),
+) -> Response:
+    """Os bytes da foto. **Autenticado e escopado por tenant** — nunca URL pública.
+
+    Foto de criança é dado pessoal: vale a mesma regra dos documentos recebidos (§6k), e
+    `no-store` mantém a imagem fora do cache do navegador compartilhado da secretaria.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    arquivo = await ObterFotoDoAluno(
+        alunos=alunos, storage=PostgresArquivoStorage(session)
+    ).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+    if arquivo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Aluno sem foto"
+        )
+    return Response(
+        content=arquivo.conteudo,
+        media_type=arquivo.mime,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.delete("/alunos/{aluno_id}/foto", response_model=AlunoSaida)
+async def remover_foto(
+    aluno_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    session=Depends(get_session),
+) -> AlunoSaida:
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        aluno = await RemoverFotoDoAluno(
+            alunos=alunos, storage=PostgresArquivoStorage(session)
+        ).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return _aluno_saida(aluno)
 
 
