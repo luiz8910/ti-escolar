@@ -86,9 +86,9 @@ export default function EscolasPage() {
 
   return (
     <AppShell
+      exigeEscola={false}
       title="Escolas"
       user={{ name: usuario.nome, role: "Super Admin" }}
-      tenantName="Plataforma"
       isSuperAdmin
       onLogout={sair}
     >

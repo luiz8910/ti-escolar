@@ -51,6 +51,11 @@ class UsuarioSaida(BaseModel):
     email: str
     papel: str
     tenant_id: UUID | None = None
+    # Nome da escola do usuário. Só o login preenche — as listagens de usuário são todas
+    # dentro de um tenant só, onde repetir o nome da escola em cada linha é ruído. O painel
+    # usa isto para rotular a barra lateral: antes ela dizia "Escola Demonstração" para
+    # todo mundo, em toda escola.
+    tenant_nome: str = ""
     # Funcionária desligada continua no cadastro (histórico), mas sem acesso ao painel.
     ativo: bool = True
     criado_em: datetime | None = None
@@ -552,12 +557,36 @@ class DocumentoConhecimentoEntrada(BaseModel):
     tipo: str = "procedimento"
 
 
+class DocumentoConhecimentoAtualizacao(BaseModel):
+    """Edição de um documento já indexado. O texto vem inteiro — reindexamos tudo."""
+
+    tenant_id: UUID
+    nome: str
+    conteudo: str
+    tipo: str = "procedimento"
+    ativo: bool = True
+
+
+class FonteConhecimentoAtivoEntrada(BaseModel):
+    """Só o interruptor de indexação (decisão A) — não carrega o texto à toa."""
+
+    tenant_id: UUID
+    ativo: bool
+
+
 class FonteConhecimentoSaida(BaseModel):
+    """Lista/edição. ``conteudo`` só vem preenchido no detalhe — ver ``incluir_conteudo``
+    em ``_fonte_saida``: despejar o texto de cada documento na listagem seria pagar por
+    algo que a tela não mostra."""
+
     id: UUID
     nome: str
     tipo: str
     total_trechos: int
+    ativo: bool = True
+    conteudo: str = ""
     criado_em: datetime
+    atualizado_em: datetime | None = None
 
 
 class RespostaRapidaEntrada(BaseModel):

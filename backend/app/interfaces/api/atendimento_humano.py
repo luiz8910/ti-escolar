@@ -32,6 +32,7 @@ from app.domain.entities import (
 from app.infrastructure.db.repositories import SqlConversaRepository
 from app.infrastructure.db.repositories_admin import (
     SqlAuditLogRepository,
+    SqlContatoRepository,
     SqlTenantRepository,
 )
 from app.infrastructure.db.repositories_comunicacao import (
@@ -46,6 +47,7 @@ from app.interfaces.api.admin import (
 from app.interfaces.deps import (
     get_atendimento_humano_repo,
     get_audit_repo,
+    get_contato_repo,
     get_conversa_repo,
     get_responder_atendimento,
     get_tenant_repo,
@@ -110,9 +112,13 @@ def _status_do_filtro(bruto: str) -> list[StatusAtendimentoHumano] | None:
 
 
 async def _carregar_ou_404(
-    repo: SqlAtendimentoHumanoRepository, *, tenant_id: UUID, atendimento_id: UUID
+    repo: SqlAtendimentoHumanoRepository,
+    *,
+    tenant_id: UUID,
+    atendimento_id: UUID,
+    contatos: SqlContatoRepository | None = None,
 ) -> AtendimentoHumano:
-    atendimento = await ObterAtendimento(atendimentos=repo).executar(
+    atendimento = await ObterAtendimento(atendimentos=repo, contatos=contatos).executar(
         tenant_id=tenant_id, atendimento_id=atendimento_id
     )
     if atendimento is None:
@@ -132,9 +138,10 @@ async def listar(
     por_pagina: int = POR_PAGINA_PADRAO,
     usuario: Usuario = Depends(usuario_autenticado),
     repo: SqlAtendimentoHumanoRepository = Depends(get_atendimento_humano_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
 ) -> AtendimentosPaginaSaida:
     _exige_acesso_tenant(usuario, tenant_id)
-    resultado = await ListarAtendimentos(atendimentos=repo).executar(
+    resultado = await ListarAtendimentos(atendimentos=repo, contatos=contatos).executar(
         tenant_id=tenant_id,
         status=_status_do_filtro(status_filtro),
         atendente_id=usuario.id if meus else None,
@@ -171,11 +178,12 @@ async def detalhar(
     usuario: Usuario = Depends(usuario_autenticado),
     repo: SqlAtendimentoHumanoRepository = Depends(get_atendimento_humano_repo),
     conversas: SqlConversaRepository = Depends(get_conversa_repo),
+    contatos: SqlContatoRepository = Depends(get_contato_repo),
 ) -> AtendimentoDetalheSaida:
     """O card + a conversa inteira: quem atende precisa ler o que já foi dito."""
     _exige_acesso_tenant(usuario, tenant_id)
     atendimento = await _carregar_ou_404(
-        repo, tenant_id=tenant_id, atendimento_id=atendimento_id
+        repo, tenant_id=tenant_id, atendimento_id=atendimento_id, contatos=contatos
     )
     mensagens = await conversas.mensagens(conversa_id=atendimento.conversa_id)
     return AtendimentoDetalheSaida(

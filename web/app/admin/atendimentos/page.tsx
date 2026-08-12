@@ -11,14 +11,23 @@
  *
  * O aviso da **janela de 24h** aparece antes de a pessoa digitar. Descobrir que a
  * resposta não pode sair depois de escrevê-la é a pior ordem possível.
+ *
+ * **Refresh automático** (apontamento de 10/08): a tela recarregava uma vez e só voltava
+ * a buscar depois de uma ação da própria pessoa — quem ficasse com a fila aberta não via
+ * chegar nada. Agora há polling em dois níveis, no padrão que a Sidebar já usa (falha
+ * silenciosa, sem toast: um refresh que não voltou não justifica um erro atravessando a
+ * tela). A conversa aberta é conferida mais de perto que a lista, porque é ali que existe
+ * alguém esperando do outro lado; e tudo pausa com a aba escondida, senão o painel aberto
+ * a noite inteira gera requisição por nada.
  */
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Atendimento,
   AtendimentoDetalhe,
   assumirAtendimento,
+  exigeEscolhaDeEscola,
   getSessao,
   listarAtendimentos,
   logout,
@@ -62,6 +71,10 @@ const STATUS_TONE: Record<
   descartado: "neutral",
 };
 
+/** De quanto em quanto tempo a fila e a conversa aberta são reconferidas. */
+const INTERVALO_FILA_MS = 20_000;
+const INTERVALO_CONVERSA_MS = 10_000;
+
 type Aba = "fila" | "meus" | "resolvido";
 
 const ABAS: { chave: Aba; rotulo: string; status: string; meus: boolean }[] = [
@@ -101,6 +114,10 @@ export default function FilaDeAtendimento() {
   });
   const [aberto, setAberto] = useState<AtendimentoDetalhe | null>(null);
   const toast = useToast();
+  // O polling precisa saber qual conversa está aberta sem se reinscrever a cada
+  // atualização dela — daí a ref em vez da dependência direta no efeito.
+  const abertoId = useRef<string | null>(null);
+  abertoId.current = aberto?.atendimento.id ?? null;
 
   const carregar = useCallback(
     async (pagina = 1, porPagina?: number) => {
@@ -124,8 +141,42 @@ export default function FilaDeAtendimento() {
       return;
     }
     setUsuario(s.usuario);
+    // Super admin sem escola escolhida: a AppShell mostra o pedido de escolha e
+    // nenhuma busca é disparada — `tenantEmFoco()` lançaria, e antes desta guarda o
+    // painel simplesmente operava sobre a escola de demonstração.
+    if (exigeEscolhaDeEscola()) return;
     carregar().catch(() => toast({ tone: "danger", title: "Falha ao carregar a fila." }));
   }, [router, carregar, toast]);
+
+  // Fila: recarrega sozinha. Silenciosa de propósito — nem toast de erro, nem spinner:
+  // a lista simplesmente continua mostrando o último estado bom.
+  useEffect(() => {
+    if (!usuario) return;
+    const timer = setInterval(() => {
+      if (document.hidden || !getSessao()) return;
+      carregar(meta.pagina).catch(() => undefined);
+    }, INTERVALO_FILA_MS);
+    return () => clearInterval(timer);
+  }, [usuario, carregar, meta.pagina]);
+
+  // Conversa aberta: intervalo mais curto, porque é aqui que alguém está esperando.
+  // Só o objeto do detalhe é trocado; o texto que a pessoa está digitando vive no estado
+  // do formulário e não é tocado.
+  useEffect(() => {
+    if (!usuario) return;
+    const timer = setInterval(() => {
+      const id = abertoId.current;
+      if (!id || document.hidden || !getSessao()) return;
+      obterAtendimento(id)
+        .then((d) => {
+          // Guarda contra a corrida: a conversa pode ter sido fechada ou trocada
+          // enquanto a requisição estava no ar.
+          if (abertoId.current === d.atendimento.id) setAberto(d);
+        })
+        .catch(() => undefined);
+    }, INTERVALO_CONVERSA_MS);
+    return () => clearInterval(timer);
+  }, [usuario]);
 
   async function abrir(id: string) {
     try {
@@ -155,7 +206,6 @@ export default function FilaDeAtendimento() {
         name: usuario.nome,
         role: usuario.papel === "super_admin" ? "Super Admin" : "Admin da escola",
       }}
-      tenantName="Escola Demonstração"
       isSuperAdmin={usuario.papel === "super_admin"}
       onLogout={() => {
         logout();

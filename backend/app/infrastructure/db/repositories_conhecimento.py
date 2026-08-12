@@ -49,7 +49,10 @@ def _to_fonte(row: FonteConhecimentoORM) -> FonteConhecimento:
         nome=row.nome,
         tipo=TipoConhecimento(row.tipo),
         total_trechos=row.total_trechos,
+        conteudo=row.conteudo or "",
+        ativo=row.ativo,
         criado_em=row.criado_em,
+        atualizado_em=row.atualizado_em or row.criado_em,
     )
 
 
@@ -65,11 +68,31 @@ class SqlFonteConhecimentoRepository:
                 nome=fonte.nome,
                 tipo=fonte.tipo.value,
                 total_trechos=fonte.total_trechos,
+                conteudo=fonte.conteudo,
+                ativo=fonte.ativo,
                 criado_em=fonte.criado_em,
+                atualizado_em=fonte.atualizado_em,
             )
         )
         await self._s.flush()
         return fonte
+
+    async def atualizar(self, fonte: FonteConhecimento) -> FonteConhecimento:
+        stmt = select(FonteConhecimentoORM).where(
+            FonteConhecimentoORM.id == fonte.id,
+            FonteConhecimentoORM.tenant_id == fonte.tenant_id,
+        )
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            raise ValueError("Documento não encontrado para o tenant.")
+        row.nome = fonte.nome
+        row.tipo = fonte.tipo.value
+        row.total_trechos = fonte.total_trechos
+        row.conteudo = fonte.conteudo
+        row.ativo = fonte.ativo
+        row.atualizado_em = _now()
+        await self._s.flush()
+        return _to_fonte(row)
 
     async def obter(
         self, *, tenant_id: uuid.UUID, fonte_id: uuid.UUID

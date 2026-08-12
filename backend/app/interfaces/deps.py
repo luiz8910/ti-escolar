@@ -33,7 +33,11 @@ from app.infrastructure.db.repositories import (
     SqlConversaRepository,
     SqlTemplateRepository,
 )
-from app.application.conhecimento_use_cases import IngerirDocumento
+from app.application.conhecimento_use_cases import (
+    AtualizarFonteConhecimento,
+    DefinirAtivoFonteConhecimento,
+    IngerirDocumento,
+)
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
     SqlAuditLogRepository,
@@ -330,6 +334,30 @@ def get_ingerir_documento(
         embedder=criar_embedder(settings),
         store=PgVectorStore(session),
         fontes=SqlFonteConhecimentoRepository(session),
+    )
+
+
+def get_atualizar_fonte_conhecimento(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> AtualizarFonteConhecimento:
+    """Edição de um documento da base — reindexa o RAG com o texto novo."""
+    return AtualizarFonteConhecimento(
+        fontes=SqlFonteConhecimentoRepository(session),
+        embedder=criar_embedder(settings),
+        store=PgVectorStore(session),
+    )
+
+
+def get_definir_ativo_fonte_conhecimento(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> DefinirAtivoFonteConhecimento:
+    """Interruptor de indexação (decisão A) — a alternativa da escola ao DELETE."""
+    return DefinirAtivoFonteConhecimento(
+        fontes=SqlFonteConhecimentoRepository(session),
+        embedder=criar_embedder(settings),
+        store=PgVectorStore(session),
     )
 
 

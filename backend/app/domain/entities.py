@@ -812,15 +812,28 @@ class FonteConhecimento:
 
     A escola sobe um texto/arquivo de procedimentos; ele é fragmentado em vários
     ``TrechoConhecimento`` indexados no vector store. Esta entidade guarda os
-    metadados do documento original para gestão (listar/remover) no painel admin.
+    metadados **e o texto original** do documento, para gestão no painel admin.
+
+    ``conteudo`` guarda o texto **como foi enviado**. Sem ele o documento só existia
+    fragmentado no vector store: dava para apagar, nunca para reler ou corrigir — e um
+    procedimento que muda de ano em ano tinha de ser reenviado do zero.
+
+    ``ativo`` separa **existir** de **estar indexado**. Um procedimento que saiu de vigência
+    precisa parar de alimentar o bot sem que o texto seja destruído (quem apaga é o super
+    admin). Desativada, a fonte não tem nenhum trecho no vector store; ``total_trechos``
+    continua contando os fragmentos que o texto *tem*, para o número não oscilar a cada
+    clique no interruptor.
     """
 
     tenant_id: UUID
     nome: str  # ex.: "Manual de procedimentos 2026"
     tipo: TipoConhecimento = TipoConhecimento.PROCEDIMENTO
     total_trechos: int = 0
+    conteudo: str = ""
+    ativo: bool = True
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime = field(default_factory=_now)
 
 
 @dataclass

@@ -21,6 +21,7 @@ from app.application.atendimento_humano_use_cases import (
     EscalarParaSecretaria,
     ListarAtendimentos,
     MesaDeAtendimento,
+    ObterAtendimento,
     OferecerAtendimentoHumano,
     ReabrirAtendimento,
     ResolverAtendimento,
@@ -661,3 +662,80 @@ async def test_ferramentas_de_atendimento_so_existem_com_mesa():
     # O FakeLLM guarda os turnos, não as ferramentas; o que se verifica é que o caso de
     # uso funciona sem mesa — nenhuma chamada de encaminhamento é possível.
     assert llm.turnos_recebidos
+
+
+# --------------------------------------------------------------------------- #
+# Nome do responsável: resolvido na LEITURA, não congelado no nascimento
+# --------------------------------------------------------------------------- #
+async def _abrir(repo: FakeAtendimentoHumanoRepo, telefone: str) -> AtendimentoHumano:
+    return await repo.criar(
+        AtendimentoHumano(
+            tenant_id=TENANT,
+            conversa_id=uuid.uuid4(),
+            contato=telefone,
+            status=StatusAtendimentoHumano.ABERTO,
+            ultima_mensagem_responsavel_em=datetime.now(timezone.utc),
+        )
+    )
+
+
+async def test_lista_nomeia_responsavel_cadastrado_depois_do_atendimento():
+    """O caso comum: a pessoa escreve antes de estar cadastrada.
+
+    O nome persistido é um retrato do nascimento do atendimento; sem releitura o card
+    ficaria com o telefone cru para sempre, mesmo depois de a secretaria cadastrá-la.
+    """
+    repo = FakeAtendimentoHumanoRepo()
+    aberto = await _abrir(repo, CONTATO)
+    assert aberto.contato_nome == ""
+
+    contatos = FakeContatoRepo()
+    await contatos.criar(Contato(tenant_id=TENANT, nome="Maria Souza", telefone=CONTATO))
+
+    pagina = await ListarAtendimentos(atendimentos=repo, contatos=contatos).executar(
+        tenant_id=TENANT
+    )
+
+    assert [a.contato_nome for a in pagina.itens] == ["Maria Souza"]
+
+
+async def test_detalhe_tambem_nomeia_o_responsavel():
+    repo = FakeAtendimentoHumanoRepo()
+    aberto = await _abrir(repo, CONTATO)
+    contatos = FakeContatoRepo()
+    await contatos.criar(Contato(tenant_id=TENANT, nome="Maria Souza", telefone=CONTATO))
+
+    obtido = await ObterAtendimento(atendimentos=repo, contatos=contatos).executar(
+        tenant_id=TENANT, atendimento_id=aberto.id
+    )
+
+    assert obtido is not None
+    assert obtido.contato_nome == "Maria Souza"
+
+
+async def test_nome_nao_vaza_de_outra_escola():
+    """Mesmo telefone em duas escolas não pode trazer o nome cadastrado na outra."""
+    repo = FakeAtendimentoHumanoRepo()
+    await _abrir(repo, CONTATO)
+    contatos = FakeContatoRepo()
+    await contatos.criar(
+        Contato(tenant_id=OUTRO_TENANT, nome="Homônimo de Outra Escola", telefone=CONTATO)
+    )
+
+    pagina = await ListarAtendimentos(atendimentos=repo, contatos=contatos).executar(
+        tenant_id=TENANT
+    )
+
+    assert pagina.itens[0].contato_nome == ""
+
+
+async def test_sem_cadastro_o_telefone_permanece_e_a_lista_nao_quebra():
+    repo = FakeAtendimentoHumanoRepo()
+    await _abrir(repo, CONTATO)
+
+    pagina = await ListarAtendimentos(
+        atendimentos=repo, contatos=FakeContatoRepo()
+    ).executar(tenant_id=TENANT)
+
+    assert pagina.itens[0].contato_nome == ""
+    assert pagina.itens[0].contato == CONTATO

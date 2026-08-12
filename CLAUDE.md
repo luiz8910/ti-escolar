@@ -160,7 +160,8 @@ ti-escolar/
   `0020_avisos_falta` → `0021_ficha_matricula` → `0022_solicitacoes_matricula` →
   `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id` → `0025_controle_taxa` →
   `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete` →
-  `0029_atendimento_humano` → `0030_documentos_recebidos`.
+  `0029_atendimento_humano` → `0030_documentos_recebidos` →
+  `0031_fonte_conhecimento_conteudo`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -187,6 +188,17 @@ ti-escolar/
   decodifica o token (`app/infrastructure/security.py`, só stdlib) e **revalida o usuário
   no banco** (existência + `ativo`) a cada requisição. O painel guarda o token no
   `localStorage` (`web/lib/admin.ts`) e o reenvia no cabeçalho `Authorization`.
+- **Escola em foco (super admin).** O `tenant_admin` é amarrado à sua escola; o super admin
+  tem `tenant_id = NULL` e precisa **dizer** sobre qual escola está operando. Até 11/ago/2026
+  não dizia: `tenantEmFoco()` caía num `DEMO_TENANT_ID` e **toda tela de escola** —
+  instruções, base de conhecimento, alunos, turmas, atendimentos, documentos — agia em
+  silêncio sobre a escola de demonstração. Agora a escolha é explícita
+  (`getEscolaEmFoco`/`setEscolaEmFoco`, guardada ao lado da sessão e **descartada no
+  logout**), feita no `SeletorDeEscola` da `Topbar` ou ao abrir `/admin/escolas/[tenantId]`.
+  Sem escolha, `tenantEmFoco()` **lança** em vez de chutar, e a `AppShell` mostra o pedido de
+  escolha no lugar da tela (`exigeEscola={false}` nas telas cross-tenant: escolas, segurança,
+  logs). O `POST /login` passou a devolver `usuario.tenant_nome`, porque a barra lateral
+  também exibia "Escola Demonstração" cravado em toda página, para toda escola.
 
 ---
 
@@ -196,8 +208,24 @@ ti-escolar/
   (`FonteConhecimento`); o caso de uso `IngerirDocumento` fragmenta o conteúdo
   (`fragmentar`), gera embeddings e indexa cada trecho no `VectorStore` com `fonte_id`
   apontando para a fonte. Isso enriquece o contexto da LLM **apenas daquele tenant**.
-  Gestão (listar/remover) via `app/interfaces/api/conhecimento.py`
-  (`/api/admin/conhecimento`); remover uma fonte apaga seus trechos indexados.
+  Gestão via `app/interfaces/api/conhecimento.py` (`/api/admin/conhecimento`):
+  listar, **abrir**, **editar** e **ligar/desligar a indexação**; remover apaga a fonte e
+  seus trechos.
+  - **O texto original é persistido** (`FonteConhecimento.conteudo`, migration
+    `0031_fonte_conhecimento_conteudo`). Antes o documento só existia fragmentado no vector
+    store: dava para apagar, nunca para reler ou corrigir uma linha. A migration **recupera
+    o texto dos documentos antigos** recolando os trechos indexados (`string_agg` ordenado
+    por `criado_em, id`) — reconstrução, não o original byte a byte, e exata para documento
+    de um trecho só.
+  - **`ativo` separa existir de estar indexado.** Desativada, a fonte fica com zero trechos
+    no vector store; `total_trechos` continua contando os fragmentos que o texto *tem*,
+    para o número não oscilar a cada clique. `AtualizarFonteConhecimento` **reindexa
+    sempre** (apaga os trechos e regrava), porque reindexação incremental deixaria trecho
+    órfão quando o texto encurtasse — e trecho órfão no RAG é o bot respondendo regra
+    revogada.
+  - **Apagar exige super admin**; a escola tem `PUT .../ativo` no lugar. Destruir o texto é
+    irreversível, e o que a secretaria precisa no dia a dia é tirar do ar um procedimento
+    vencido — sem esperar por nós, senão o assistente segue citando a regra antiga.
 - **System prompt do tenant (`PromptTenant`):** um "CLAUDE.md" por escola, editável no
   painel (`/api/admin/prompt`). É anexado às diretrizes-base do assistente
   (`montar_sistema` / `montar_sistema_agente`) e tem **prioridade institucional**.
@@ -207,7 +235,13 @@ ti-escolar/
   (editor das instruções). O upload lê o arquivo no navegador e envia o texto via JSON
   (sem multipart no servidor).
 
-### 6c. Salas (turmas), pais/responsáveis e relatório
+### 6c. Turmas (`Sala`), pais/responsáveis e relatório
+
+> **Nome no painel:** a seção se chama **Turmas** desde 11/ago/2026 — é o vocabulário da
+> escola ("sala" lá é o espaço físico). A rota `/admin/salas` redireciona para
+> `/admin/turmas` porque a secretaria guarda link em favorito. **No domínio a entidade
+> segue `Sala`**, e as rotas da API seguem `/api/admin/salas`: renomear tudo por causa de
+> um rótulo seria um diff enorme sem ganho. Dívida anotada.
 
 - **`Sala`** (turma, ex.: "4ª série B") por tenant, única por `(tenant_id, nome)`. Agrega
   **`Contato`s** (pais/responsáveis) em **N:N** via `sala_contatos` — um responsável pode estar em
@@ -218,7 +252,7 @@ ti-escolar/
   `usuario_autenticado` e `_exige_acesso_tenant`): `pais` (POST/GET/PUT/DELETE),
   `salas` (POST/GET/PUT/DELETE), `salas/{id}/pais` (GET relatório · POST vincular) e
   `salas/{id}/pais/{contato_id}` (DELETE desvincular).
-- **Painel:** `web/app/admin/salas/` — CRUD de salas e pais, vínculo e **relatório imprimível**
+- **Painel:** `web/app/admin/turmas/` — CRUD de salas e pais, vínculo e **relatório imprimível**
   (PDF). O seed cria salas demo ("4ª série B", "5ª série A") com responsáveis vinculados.
 
 ### 6c-bis. Alunos (CRUD)
@@ -264,7 +298,7 @@ ti-escolar/
 - **Rotas** em `app/interfaces/api/cadastro.py`: `GET /salas/tenant/{tenant_id}/cobertura`
   (resumo de todas), `GET /salas/{id}/cobertura?tenant_id=` (detalhe) e
   `POST /salas/{id}/notificar-professor` (corpo: `telefone`, `mensagem` opcional).
-- **Painel:** `web/app/admin/salas/` — badge ⚠ na lista de turmas e, no detalhe da turma, um alerta
+- **Painel:** `web/app/admin/turmas/` — badge ⚠ na lista de turmas e, no detalhe da turma, um alerta
   com os alunos sem contato e o botão **"Notificar professor"** (modal pedindo o WhatsApp do
   professor + mensagem opcional). O seed cria um "Aluno Sem Contato" na primeira turma demo.
 
@@ -631,7 +665,15 @@ resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro
   `SqlAtendimentoHumanoRepository` (`repositories_comunicacao.py`); rotas
   `app/interfaces/api/atendimento_humano.py` (`/api/admin/atendimentos`), com
   `_exige_tenant_ativo` na resposta (consome canal).
-- **Painel:** `web/app/admin/atendimentos/` (fila Na fila / Meus / Resolvidos, motivo já
+- **Nome do responsável resolvido na leitura.** `AtendimentoHumano.contato_nome` é um
+  retrato do nascimento do atendimento — e o caso comum é a pessoa ainda não estar
+  cadastrada quando escreve, então o card ficava com o telefone cru para sempre, mesmo
+  depois de a secretaria cadastrá-la. `ListarAtendimentos`/`ObterAtendimento` recebem o
+  `ContatoRepository` e renomeiam **em lote** (`ContatoRepository.por_telefones`, uma
+  consulta por página); o campo persistido virou fallback histórico.
+- **Painel:** `web/app/admin/atendimentos/` (fila Na fila / Meus / Resolvidos, **refresh
+  automático** — 20 s na lista, 10 s na conversa aberta, pausado com a aba escondida e em
+  falha silenciosa, sem toast —, motivo já
   resumido pelo assistente, tempo de espera, selo de fora do expediente, contador da janela
   de 24h e a thread completa com caixa de resposta) e **badge de contagem no `Sidebar`**
   (polling de 20s em `/pendentes`) — é a notificação in-app. Expediente editável no
@@ -1088,7 +1130,7 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] **Base de conhecimento por tenant** (upload de documentos → RAG) e **system prompt
   personalizado por escola** (um "CLAUDE.md" do tenant), com painel em `web/app/admin/`.
 - [x] **Cadastro escolar:** CRUD de **pais/responsáveis** e **salas (turmas)**, vínculo N:N e
-  **relatório de pais por sala** (`app/interfaces/api/cadastro.py`, `web/app/admin/salas/`).
+  **relatório de pais por sala** (`app/interfaces/api/cadastro.py`, `web/app/admin/turmas/`).
 - [x] **Gestão de escolas pelo super admin:** CRUD de tenants + visão de **conversas e broadcasts**
   por escola (`app/application/tenant_use_cases.py`, `web/app/admin/escolas/`).
 - [x] Modelo de **administração** (super admin / admin de tenant) + **grupos de contatos**.
@@ -1221,7 +1263,7 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] **Alerta de aluno sem responsável com telefone vinculado** — a turma (`Sala`) sinaliza
   quantos alunos **ativos** estão **sem nenhum responsável (`Contato`) com telefone vinculado**
   e permite **disparar uma notificação ao professor** para solicitar os contatos faltantes.
-  Ver §6c-ter (`app/interfaces/api/cadastro.py`, `web/app/admin/salas/`).
+  Ver §6c-ter (`app/interfaces/api/cadastro.py`, `web/app/admin/turmas/`).
 - [ ] **Confirmação de recebimento de avisos (não-entrega reativa)** — análogo à "confirmação de
   recebimento" de e-mail: após um broadcast, se algum número **não recebeu** a mensagem (celular
   desligado, sem sinal, etc.), depois de um intervalo o sistema **aponta que o responsável X não

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
+  exigeEscolhaDeEscola,
   getSessao,
   inativarResponsaveis,
   listarSalas,
@@ -43,6 +44,10 @@ export default function ProgressaoPage() {
       return;
     }
     setUsuario(s.usuario);
+    // Super admin sem escola escolhida: a AppShell mostra o pedido de escolha e
+    // nenhuma busca é disparada — `tenantEmFoco()` lançaria, e antes desta guarda o
+    // painel simplesmente operava sobre a escola de demonstração.
+    if (exigeEscolhaDeEscola()) return;
     recarregar().catch(() =>
       toast({ tone: "danger", title: "Falha ao carregar as séries." })
     );
@@ -92,7 +97,6 @@ export default function ProgressaoPage() {
         name: usuario.nome,
         role: usuario.papel === "super_admin" ? "Super Admin" : "Admin da escola",
       }}
-      tenantName="Escola Demonstração"
       isSuperAdmin={usuario.papel === "super_admin"}
       onLogout={() => {
         logout();
