@@ -15,10 +15,17 @@ import json
 import re
 from uuid import UUID
 
+from app.application.validacao import (
+    data_nao_futura,
+    normalizar_cpf,
+    normalizar_data,
+    normalizar_email,
+)
 from app.domain.entities import (
     CAMPOS_FICHA_MATRICULA,
     FichaMatricula,
     PreviaFichaMatricula,
+    TipoFiliacao,
     _now,
 )
 from app.domain.ports import (
@@ -67,11 +74,89 @@ def _ficha_de_campos(
     return ficha
 
 
+# Campos que a ficha física marca com asterisco (apontamento de 10/08). São exigidos ao
+# **salvar a ficha**, e não ao cadastrar o aluno: a importação em massa (§6c-quater) e o
+# cadastro do dia a dia criam o aluno só com nome e série, e exigir CPF ali travaria o
+# caminho que a escola mais usa. A ficha é o momento em que a secretaria tem a papelada
+# na mão — a lista de "ficha pendente" no painel é o que cobra o resto.
+_OBRIGATORIOS_FICHA: tuple[tuple[str, str], ...] = (
+    ("cor_raca", "cor/raça"),
+    ("cpf", "CPF"),
+    ("ra_rm", "RA/RM"),
+    ("data_nascimento", "data de nascimento"),
+    ("endereco", "endereço"),
+    ("sexo", "sexo"),
+)
+
+_LAUDO_STATUS_VALIDOS = ("", "nao", "sim", "em_investigacao")
+
+
+def _normalizar_campos_ficha(campos: dict) -> dict:
+    """Canoniza os formatos antes de gravar e recusa o que é erro de digitação.
+
+    A ficha é fonte de declaração e de histórico escolar: CPF ora com pontuação ora sem
+    inviabiliza cruzar o aluno com o cadastro do responsável e com o censo.
+    """
+    normalizados = dict(campos)
+    normalizados["cpf"] = normalizar_cpf(str(campos.get("cpf", "") or ""))
+    normalizados["data_nascimento"] = data_nao_futura(
+        normalizar_data(
+            str(campos.get("data_nascimento", "") or ""), campo="Data de nascimento"
+        ),
+        campo="Data de nascimento",
+    )
+    if campos.get("email"):
+        normalizados["email"] = normalizar_email(str(campos["email"]))
+
+    status = str(campos.get("laudo_status", "") or "").strip()
+    if status not in _LAUDO_STATUS_VALIDOS:
+        raise ValueError(
+            "Situação do laudo inválida. Use: nao, sim ou em_investigacao."
+        )
+    # "Sem laudo" e "em investigação" não carregam CID — deixar o texto antigo pendurado
+    # faria a ficha afirmar um diagnóstico que a escola acabou de negar.
+    if status in ("", "nao", "em_investigacao"):
+        normalizados["laudo_cid"] = ""
+    normalizados["laudo_status"] = status
+    return normalizados
+
+
+def _preencher_filiacao(ficha: FichaMatricula, aluno) -> None:
+    """Copia os responsáveis **vinculados ao aluno** para os campos de filiação da ficha.
+
+    A ficha nasceu com ``filiacao1_*``/``filiacao2_*``/``responsavel_legal`` como texto
+    solto — uma segunda cópia dos mesmos dados que moram em ``Contato``, digitada à mão e
+    livre para divergir. Agora eles são **derivados**: a secretaria mantém o responsável
+    num lugar só, e a ficha impressa continua saindo completa.
+
+    Mãe e pai ocupam as duas primeiras linhas quando declarados; o responsável legal
+    (termo de guarda) vai para a linha própria da ficha física.
+    """
+    responsaveis = list(getattr(aluno, "responsaveis", []) or [])
+    legal = next((c for c in responsaveis if c.eh_responsavel_legal), None)
+    filiacao = [c for c in responsaveis if c is not legal]
+    # Mãe e pai primeiro, na ordem da ficha; o resto entra depois, se sobrar linha.
+    ordem = {TipoFiliacao.MAE: 0, TipoFiliacao.PAI: 1}
+    filiacao.sort(key=lambda c: ordem.get(c.tipo_filiacao, 2))
+
+    for indice, prefixo in enumerate(("filiacao1", "filiacao2")):
+        contato = filiacao[indice] if indice < len(filiacao) else None
+        setattr(ficha, f"{prefixo}_nome", contato.nome if contato else "")
+        setattr(ficha, f"{prefixo}_cpf", contato.cpf if contato else "")
+        setattr(ficha, f"{prefixo}_telefone", contato.telefone if contato else "")
+
+    ficha.responsavel_legal = legal.nome if legal else ""
+    # O booleano continua existindo para a ficha impressa, mas deixou de ser a fonte da
+    # verdade: quem responde pelo aluno é o `Contato` (§6a).
+    ficha.termo_guarda = legal is not None
+
+
 class SalvarFichaMatricula:
     """Cria ou atualiza (upsert) a ficha de matrícula de um aluno do tenant.
 
-    Valida que o aluno pertence ao tenant e que ``cor_raca`` (obrigatória, §D2) foi
-    informada. ``aluno_nome`` é resolvido para exibição.
+    Valida que o aluno pertence ao tenant e que os campos obrigatórios da ficha física
+    foram informados. Os campos de **filiação são derivados** dos responsáveis vinculados
+    ao aluno — ver ``_preencher_filiacao``.
     """
 
     def __init__(
@@ -87,13 +172,23 @@ class SalvarFichaMatricula:
         if aluno is None:
             raise ValueError("Aluno não encontrado para o tenant.")
 
-        cor_raca = str(campos.get("cor_raca", "") or "").strip()
-        if not cor_raca:
-            raise ValueError("O campo cor/raça é obrigatório na ficha de matrícula.")
+        faltando = [
+            rotulo
+            for campo, rotulo in _OBRIGATORIOS_FICHA
+            if not str(campos.get(campo, "") or "").strip()
+        ]
+        if faltando:
+            raise ValueError(
+                "A ficha de matrícula exige: " + ", ".join(faltando) + "."
+            )
 
         ficha = _ficha_de_campos(
-            tenant_id=tenant_id, aluno_id=aluno_id, campos=campos, aluno_nome=aluno.nome
+            tenant_id=tenant_id,
+            aluno_id=aluno_id,
+            campos=_normalizar_campos_ficha(campos),
+            aluno_nome=aluno.nome,
         )
+        _preencher_filiacao(ficha, aluno)
         ficha.atualizado_em = _now()
         return await self._fichas.salvar(ficha)
 

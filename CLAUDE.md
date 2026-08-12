@@ -163,7 +163,7 @@ ti-escolar/
   `0029_atendimento_humano` → `0030_documentos_recebidos` →
   `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo` →
   `0033_usuario_cargo_hierarquia` →
-  `0034_contato_responsavel`.
+  `0034_contato_responsavel` → `0035_aluno_foto`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -308,7 +308,16 @@ ti-escolar/
 
 - **`Aluno`** por tenant, com **série 1:1 obrigatória** (`sala_id` → `Sala`, FK restritiva) e
   **responsáveis N:N** (`Contato`s via `aluno_responsaveis`, `ON DELETE CASCADE`). Campos: `nome`,
-  `matricula` (opcional), `ativo` (marca **ex-aluno**), `desativado_em` e `motivo_desativacao`.
+  `matricula` (opcional), `ativo` (marca **ex-aluno**), `desativado_em`,
+  `motivo_desativacao` e `foto_chave` (migration `0035_aluno_foto`).
+  **A foto é opcional** (decisão D do plano de 10/08): foto de criança eleva o risco LGPD
+  e um campo obrigatório travaria o cadastro de quem não a tem no dia da matrícula. Só a
+  **chave** fica no aluno — os bytes vão para o `ArquivoStorage` (§6k), com allowlist de
+  imagem e teto de 5 MB (`MIMES_FOTO`/`TAMANHO_MAXIMO_FOTO`). Trocar a foto **apaga a
+  anterior**: imagem de criança que ninguém referencia é dado pessoal sem finalidade. Os
+  bytes saem por `GET /alunos/{id}/foto`, autenticado, escopado por tenant e com
+  `no-store` — **nunca por URL pública**. Casos de uso em
+  `app/application/foto_aluno_use_cases.py`; cobertura em `tests/test_foto_aluno.py`.
   **O aluno nunca é apagado pelo painel:** "excluir" é `DesativarAluno` (soft delete), porque o
   registro de que ele estudou na escola sustenta histórico escolar, declarações e prestação de
   contas. `ReativarAluno` desfaz (rematrícula ou clique errado); desativar duas vezes não
@@ -646,6 +655,23 @@ a porta `LLMProvider`, como a importação em massa). Todas escopadas por `tenan
   e devolve para revisão; `ConfirmarFichaMatricula` persiste. Repositório
   `SqlFichaMatriculaRepository`; rotas `app/interfaces/api/fichas.py` (`/api/admin/fichas`,
   `.../importar/previa`, `.../importar/confirmar`). Migration `0021_ficha_matricula`.
+  - **A ficha ganhou tela em 12/ago/2026** (`web/components/admin/FichaMatricula.tsx`,
+    aberta pelo botão "Ficha" em `web/app/admin/alunos/`). Ela existia só como API desde a
+    Onda 3 — dava para gravar por endpoint e nada mais.
+  - **Obrigatórios ao salvar a ficha**, não ao cadastrar o aluno: `cor_raca`, `cpf`,
+    `ra_rm`, `data_nascimento`, `endereco` e `sexo` (os campos com asterisco da ficha
+    física). A importação em massa (§6c-quater) cria aluno só com nome e série, e exigir
+    CPF ali travaria o caminho que a escola mais usa. O erro lista **todos os que faltam
+    de uma vez** — uma mensagem por campo faria a secretaria salvar seis vezes.
+  - **`laudo_status`** ∈ {`nao`, `sim`, `em_investigacao`} acompanha `laudo_cid`, como as
+    três caixas da ficha física. Texto livre não distinguia "não tem laudo" de "está em
+    investigação", e a segunda é pendência que a escola acompanha. Fora de `sim`, o CID é
+    **limpo**: deixá-lo pendurado faria a ficha afirmar um diagnóstico recém-negado.
+  - **A filiação é derivada**, não digitada. `filiacao1_*`/`filiacao2_*`/
+    `responsavel_legal`/`termo_guarda` são preenchidos a partir dos `Contato`s vinculados
+    ao aluno (mãe e pai nas duas primeiras linhas; o responsável legal na linha do termo
+    de guarda). Eram uma segunda cópia dos mesmos dados, livre para divergir; o que vier
+    no corpo da requisição é ignorado.
 - **E1 · Matrícula self-service pelo WhatsApp (`SolicitacaoMatricula`):** o responsável
   inicia a matrícula; `IniciarMatricula` cria a solicitação (idempotente por telefone) e
   `montar_mensagem_documentos` devolve a **lista de documentos exigidos** (reusa os atalhos

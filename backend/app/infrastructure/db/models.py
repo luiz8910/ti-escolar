@@ -487,6 +487,8 @@ class AlunoORM(Base):
     # Soft delete: o aluno nunca é apagado pelo painel — o registro de que ele estudou
     # aqui é o lastro da escola (histórico, declarações). ativo=False é a "exclusão".
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Chave da foto no `ArquivoStorage` (§6k). Vazio = sem foto — é opcional.
+    foto_chave: Mapped[str] = mapped_column(String(120), default="", server_default="")
     desativado_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

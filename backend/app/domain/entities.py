@@ -714,6 +714,10 @@ class Aluno:
     sala_id: UUID
     matricula: str = ""
     ativo: bool = True
+    # Foto do aluno — **opcional** (decisão D do plano de 10/08). Aponta para o
+    # `ArquivoStorage`, o mesmo dos documentos recebidos (§6k): os bytes não moram no
+    # cadastro. Vazio = sem foto, e a tela não cobra.
+    foto_chave: str = ""
     desativado_em: datetime | None = None
     motivo_desativacao: str = ""
     id: UUID = field(default_factory=_new_id)
@@ -1700,6 +1704,10 @@ class FichaMatricula:
     nis: str = ""
     deficiencia: str = ""
     necessidade_especial: str = ""
+    # A ficha física tem três caixas: NÃO · SIM (com CID) · EM INVESTIGAÇÃO. Só um texto
+    # livre não distingue "não tem laudo" de "está sendo investigado", e a diferença
+    # importa: uma fecha o assunto, a outra é pendência que a escola precisa acompanhar.
+    laudo_status: str = ""  # "" | "nao" | "sim" | "em_investigacao"
     laudo_cid: str = ""
     restricao_alimentar: str = ""
     alergia: str = ""
@@ -1745,6 +1753,7 @@ CAMPOS_FICHA_MATRICULA: tuple[str, ...] = (
     "nis",
     "deficiencia",
     "necessidade_especial",
+    "laudo_status",
     "laudo_cid",
     "restricao_alimentar",
     "alergia",
@@ -2052,6 +2061,11 @@ MIMES_ACEITOS = frozenset(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
 )
+
+# Foto do aluno: só imagem, e um teto bem menor que o dos documentos. Uma foto 3x4 não
+# passa de alguns megabytes, e aceitar PDF aqui só criaria "foto" que a tela não exibe.
+MIMES_FOTO = frozenset({"image/jpeg", "image/png", "image/webp"})
+TAMANHO_MAXIMO_FOTO = 5 * 1024 * 1024
 
 # Teto por arquivo. A Meta já limita a mídia, mas o teto aqui é nosso: protege o banco e
 # deixa o limite explícito em vez de herdado.

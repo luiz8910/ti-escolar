@@ -996,6 +996,57 @@ export interface Aluno {
   sala_id: string;
   sala_nome: string;
   responsaveis: Pai[];
+  /** A foto é opcional. Os bytes saem por `urlFotoAluno`, nunca por URL pública. */
+  tem_foto: boolean;
+}
+
+// --------------------------- foto do aluno -------------------------------- //
+/**
+ * Envia a foto em base64 — o navegador lê o arquivo e manda o conteúdo, mesmo caminho do
+ * upload da base de conhecimento. Sem multipart no servidor.
+ */
+export async function definirFotoAluno(alunoId: string, arquivo: File): Promise<Aluno> {
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const leitor = new FileReader();
+    leitor.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    // `readAsDataURL` devolve "data:image/jpeg;base64,XXXX" — só o depois da vírgula.
+    leitor.onload = () => resolve(String(leitor.result).split(",")[1] ?? "");
+    leitor.readAsDataURL(arquivo);
+  });
+  const resp = await apiFetch(`${API_URL}/api/admin/alunos/${alunoId}/foto`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: tenantEmFoco(),
+      conteudo_base64: base64,
+      mime: arquivo.type,
+    }),
+  });
+  return jsonOuErro(resp, "enviar a foto");
+}
+
+export async function removerFotoAluno(alunoId: string): Promise<Aluno> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/${alunoId}/foto?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "remover a foto");
+}
+
+/**
+ * Baixa a foto e devolve um blob URL para exibir.
+ *
+ * O endpoint é autenticado, então não dá para pendurar a URL num `<img src>` — o
+ * navegador não manda o cabeçalho `Authorization`. Quem chamar precisa revogar o blob ao
+ * desmontar, senão a imagem fica na memória da aba.
+ */
+export async function urlFotoAluno(alunoId: string): Promise<string | null> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/alunos/${alunoId}/foto?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  if (!resp.ok) return null;
+  return URL.createObjectURL(await resp.blob());
 }
 
 /** `apenasAtivos`: undefined = todos; true = matriculados; false = ex-alunos. */
@@ -2304,4 +2355,40 @@ export async function expurgarDocumentos(): Promise<{ removidos: number; falhas:
   });
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao expurgar`);
   return resp.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Ficha de matrícula (§D1/D2)
+// --------------------------------------------------------------------------- //
+/**
+ * A ficha é um mapa de campos livre no back-end (JSON `conteudo`), de propósito: cada
+ * escola tem uma variação da ficha física, e `dados_extra` acomoda o que não couber.
+ * Aqui os campos são tipados como `string | boolean` porque é o que a tela manipula.
+ */
+export type CamposFicha = Record<string, string | boolean>;
+
+export interface Ficha {
+  aluno_id: string;
+  aluno_nome: string;
+  campos: CamposFicha;
+  atualizado_em: string;
+}
+
+/** Devolve `null` quando o aluno ainda não tem ficha — é a "ficha pendente" do painel. */
+export async function obterFicha(alunoId: string): Promise<Ficha | null> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/fichas/aluno/${alunoId}?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  if (resp.status === 404) return null;
+  return jsonOuErro(resp, "carregar a ficha");
+}
+
+export async function salvarFicha(alunoId: string, campos: CamposFicha): Promise<Ficha> {
+  const resp = await apiFetch(`${API_URL}/api/admin/fichas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), aluno_id: alunoId, campos }),
+  });
+  return jsonOuErro(resp, "salvar a ficha");
 }

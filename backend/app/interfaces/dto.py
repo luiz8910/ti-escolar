@@ -551,6 +551,18 @@ class AlunoSaida(BaseModel):
     sala_id: UUID
     sala_nome: str = ""
     responsaveis: list[PaiSaida] = []
+    # A foto é opcional (decisão D). Só o fato de existir — os bytes saem pelo endpoint
+    # autenticado `/alunos/{id}/foto`, nunca por URL pública.
+    tem_foto: bool = False
+
+
+class FotoAlunoEntrada(BaseModel):
+    """Foto em base64. O navegador lê o arquivo e manda o conteúdo — mesmo caminho do
+    upload da base de conhecimento (§6b), sem parser de multipart no servidor."""
+
+    tenant_id: UUID
+    conteudo_base64: str
+    mime: str = Field(..., examples=["image/jpeg", "image/png", "image/webp"])
 
 
 # --------------------------------------------------------------------------- #

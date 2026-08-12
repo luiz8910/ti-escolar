@@ -31,6 +31,7 @@ import {
 
 import { AppShell } from "@/components/layout/AppShell";
 import { CamposResponsavel } from "@/components/admin/CamposResponsavel";
+import { FichaMatricula } from "@/components/admin/FichaMatricula";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field } from "@/components/ui/form";
@@ -495,6 +496,7 @@ function ListaAlunos({
   const toast = useToast();
   const [editando, setEditando] = useState<Aluno | null>(null);
   const [gerenciando, setGerenciando] = useState<Aluno | null>(null);
+  const [ficha, setFicha] = useState<Aluno | null>(null);
   // "Excluir" aqui é desativar: o aluno vira ex-aluno e o registro permanece.
   const [desativando, setDesativando] = useState<Aluno | null>(null);
   const [motivo, setMotivo] = useState("");
@@ -601,6 +603,12 @@ function ListaAlunos({
                 <Td className="text-right">
                   <span className="flex items-center justify-end gap-3">
                     <button
+                      onClick={() => setFicha(a)}
+                      className="text-xs font-semibold text-brand-600 hover:underline"
+                    >
+                      Ficha
+                    </button>
+                    <button
                       onClick={() => setGerenciando(a)}
                       className="text-xs font-semibold text-n-500 hover:text-n-800"
                     >
@@ -665,6 +673,14 @@ function ListaAlunos({
           pais={pais}
           onClose={() => setGerenciando(null)}
           onMudou={onMudou}
+        />
+      )}
+
+      {ficha && (
+        <FichaMatricula
+          aluno={ficha}
+          onFechar={() => setFicha(null)}
+          onSalvo={onMudou}
         />
       )}
 

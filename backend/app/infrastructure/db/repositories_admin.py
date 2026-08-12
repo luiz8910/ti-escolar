@@ -989,6 +989,7 @@ def _to_aluno(row: AlunoORM) -> Aluno:
         matricula=row.matricula,
         sala_id=row.sala_id,
         ativo=row.ativo,
+        foto_chave=row.foto_chave,
         desativado_em=row.desativado_em,
         motivo_desativacao=row.motivo_desativacao,
         criado_em=row.criado_em,
@@ -1020,6 +1021,7 @@ class SqlAlunoRepository:
                 matricula=aluno.matricula,
                 sala_id=aluno.sala_id,
                 ativo=aluno.ativo,
+                foto_chave=aluno.foto_chave,
                 criado_em=aluno.criado_em,
             )
         )
@@ -1077,6 +1079,7 @@ class SqlAlunoRepository:
         row.matricula = aluno.matricula
         row.sala_id = aluno.sala_id
         row.ativo = aluno.ativo
+        row.foto_chave = aluno.foto_chave
         row.desativado_em = aluno.desativado_em
         row.motivo_desativacao = aluno.motivo_desativacao
         await self._s.flush()
