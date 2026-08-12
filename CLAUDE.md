@@ -161,7 +161,7 @@ ti-escolar/
   `0023_remover_content_sid` → `0024_tenant_meta_phone_number_id` → `0025_controle_taxa` →
   `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete` →
   `0029_atendimento_humano` → `0030_documentos_recebidos` →
-  `0031_fonte_conhecimento_conteudo`.
+  `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo`.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -304,8 +304,28 @@ ti-escolar/
 
 ### 6c-quinquies. Professores (CRUD + atribuição à série)
 
-- **`Professor`** por tenant, modelo **enxuto: apenas `nome` e `telefone`** (WhatsApp, E.164).
-  Único por `(tenant_id, telefone)` (migration `0008_professores`, tabela `professores`).
+- **`Professor`** por tenant. Nasceu enxuto — só `nome` e `telefone` — e ganhou o
+  **cadastro funcional** em 12/ago/2026 (migration `0032_professor_cadastro_completo`):
+  `cpf`, `data_nascimento`, `matricula`, `endereco`, `telefone_2`, `email`,
+  `educacao_fisica` e `titular`. Único por `(tenant_id, telefone)`
+  (migration `0008_professores`, tabela `professores`) **e** por `(tenant_id, cpf)` —
+  este último num **índice UNIQUE parcial** (`WHERE cpf <> ''`), porque o default é `''`
+  e um UNIQUE simples permitiria um só professor sem CPF cadastrado.
+  - **`titular=False` significa eventual**, e não é rótulo: é a lista que a chamada de
+    eventual (§I1) recebia digitada à mão a cada aviso de falta.
+    `ListarEventuaisDisponiveis` (`GET /professores/tenant/{id}/eventuais`) devolve os
+    eventuais **com telefone** — quem não tem número não é chamável, e listá-lo faria a
+    secretaria "convocar" quem não recebe. A escolha de quem chamar segue humana.
+  - **`telefone` é o número da escola** (mural, recados, chamada de eventual);
+    **`telefone_2` é emergência e não recebe disparo nenhum** — dois números ativos no
+    canal entregariam a mesma mensagem duas vezes. A tela diz isso em texto.
+  - **Só `nome` e `telefone` são obrigatórios.** Exigir CPF e matrícula de saída travaria o
+    cadastro de quem já está dando aula; o bloco funcional é recolhido por padrão na
+    criação e aberto na edição.
+  - Formatos normalizados em `app/application/validacao.py` (CPF com dígitos
+    verificadores conferidos e sequências repetidas recusadas, datas em ISO aceitando
+    `DD/MM/AAAA`, e-mail e telefone em E.164). O módulo é compartilhado — responsáveis e
+    alunos usam o mesmo.
 - **Vínculo professor ↔ série:** o relacionamento mora na **série**, via
   **`Sala.professor_id`** (FK `salas.professor_id` → `professores.id`, `ON DELETE SET NULL`).
   Assim uma **série tem no máximo um professor**, e um **professor pode conduzir várias séries**
@@ -320,9 +340,12 @@ ti-escolar/
 - **Rotas** em `app/interfaces/api/cadastro.py`: `professores` (POST · GET `tenant/{tenant_id}`),
   `professores/{id}` (GET/PUT/DELETE), `professores/{id}/series` (GET) e
   `PUT /salas/{id}/professor` (corpo `professor_id`; `null` desvincula).
-- **Painel:** `web/app/admin/professores/` — cadastro/edição/exclusão de professores, atribuição do
-  professor responsável por série e a lista das séries de cada professor. O seed cria um professor
-  demo ("Prof. Carla Mendes") atribuído às séries de demonstração.
+- **Painel:** `web/app/admin/professores/` — cadastro/edição/exclusão, atribuição do professor
+  responsável por série e a lista das séries de cada professor. Os campos funcionais moram em
+  `web/components/admin/CamposProfessor.tsx`, reusado pelo formulário e pelo modal de edição.
+  O seed cria "Prof. Carla Mendes" (titular, atribuída às séries demo) e
+  "Prof. Rita Alencar" (**eventual**), para a chamada de falta ter candidatos em vez de uma
+  tela vazia na demonstração.
 - A remoção de tenant (`SqlTenantRepository.remover`) apaga, na cascata explícita, `sala_contatos`
   → `salas` → `professores` (antes inexistente para `salas`; necessário pelas novas FKs).
 

@@ -409,6 +409,17 @@ class ProfessorEntrada(BaseModel):
     telefone: str = Field(..., examples=["+5511999990000"])
     # Senha opcional: habilita o login do professor no mural (§A1).
     senha: str = ""
+    # Cadastro funcional — todos opcionais: o mínimo continua sendo nome + telefone.
+    cpf: str = ""
+    data_nascimento: str = ""  # "AAAA-MM-DD" (aceita também "DD/MM/AAAA")
+    matricula: str = ""
+    endereco: str = ""
+    # Emergência: NÃO recebe disparo nem mural. Ver o docstring de `Professor`.
+    telefone_2: str = ""
+    email: str = ""
+    educacao_fisica: bool = False
+    # `titular=False` = eventual, a lista de quem cobre falta (§I1).
+    titular: bool = True
 
 
 class ProfessorAtualizar(BaseModel):
@@ -417,12 +428,34 @@ class ProfessorAtualizar(BaseModel):
     telefone: str = Field(..., examples=["+5511999990000"])
     # ``None`` mantém a senha atual; "" limpa o acesso; texto define nova senha.
     senha: str | None = None
+    # Cadastro funcional — todos opcionais: o mínimo continua sendo nome + telefone.
+    cpf: str = ""
+    data_nascimento: str = ""  # "AAAA-MM-DD" (aceita também "DD/MM/AAAA")
+    matricula: str = ""
+    endereco: str = ""
+    # Emergência: NÃO recebe disparo nem mural. Ver o docstring de `Professor`.
+    telefone_2: str = ""
+    email: str = ""
+    educacao_fisica: bool = False
+    # `titular=False` = eventual, a lista de quem cobre falta (§I1).
+    titular: bool = True
+
 
 
 class ProfessorSaida(BaseModel):
     id: UUID
     nome: str
     telefone: str
+    cpf: str = ""
+    # CPF já pontuado para a tela não ter de formatar (o banco guarda só dígitos).
+    cpf_formatado: str = ""
+    data_nascimento: str = ""
+    matricula: str = ""
+    endereco: str = ""
+    telefone_2: str = ""
+    email: str = ""
+    educacao_fisica: bool = False
+    titular: bool = True
     tem_acesso: bool = False
 
 

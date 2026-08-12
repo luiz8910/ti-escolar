@@ -20,6 +20,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -354,12 +355,34 @@ class ProfessorORM(Base):
     )
     nome: Mapped[str] = mapped_column(String(200))
     telefone: Mapped[str] = mapped_column(String(50))
+    # Cadastro funcional. CPF em 11 dígitos sem pontuação; datas em ISO (AAAA-MM-DD).
+    cpf: Mapped[str] = mapped_column(String(11), default="", server_default="")
+    data_nascimento: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    matricula: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    endereco: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Emergência — não recebe disparo. Ver o docstring de `Professor`.
+    telefone_2: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    email: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    educacao_fisica: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    # `titular=False` = eventual: é a lista de quem cobre falta (§I1).
+    titular: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # Senha (hash PBKDF2) para o login do professor no mural (§A1); vazio = sem acesso.
     senha_hash: Mapped[str] = mapped_column(Text, default="", server_default="")
     criado_em: Mapped[datetime] = mapped_column()
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "telefone", name="uq_professor_tenant_telefone"),
+        # UNIQUE parcial: o CPF é único por escola quando informado, mas o default é ''
+        # e um UNIQUE simples permitiria **um só** professor sem CPF cadastrado.
+        Index(
+            "uq_professor_tenant_cpf",
+            "tenant_id",
+            "cpf",
+            unique=True,
+            postgresql_where=text("cpf <> ''"),
+        ),
     )
 
 

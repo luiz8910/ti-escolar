@@ -556,8 +556,23 @@ class FakeProfessorRepo:
             None,
         )
 
-    async def listar(self, *, tenant_id):
-        return [p for p in self.professores.values() if p.tenant_id == tenant_id]
+    async def por_cpf(self, *, tenant_id, cpf):
+        if not cpf:
+            return None
+        return next(
+            (
+                p
+                for p in self.professores.values()
+                if p.tenant_id == tenant_id and p.cpf == cpf
+            ),
+            None,
+        )
+
+    async def listar(self, *, tenant_id, apenas_eventuais=False):
+        itens = [p for p in self.professores.values() if p.tenant_id == tenant_id]
+        if apenas_eventuais:
+            itens = [p for p in itens if not p.titular and p.telefone]
+        return sorted(itens, key=lambda p: p.nome)
 
     async def atualizar(self, professor):
         self.professores[professor.id] = professor

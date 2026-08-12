@@ -30,6 +30,7 @@ from app.domain.entities import (
     ResultadoImportacaoAlunos,
     Sala,
 )
+from app.application.validacao import normalizar_telefone
 from app.domain.ports import (
     AlunoRepository,
     ContatoRepository,
@@ -48,23 +49,6 @@ MARCADOR_IMPORTACAO = "IMPORTACAO_ALUNOS_JSON_V1"
 def _chave_serie(nome: str) -> str:
     """Chave canônica para comparar nomes de série (case/espaços-insensível)."""
     return " ".join(nome.casefold().split())
-
-
-def normalizar_telefone(bruto: str) -> tuple[str, str]:
-    """Normaliza um telefone brasileiro para E.164. Retorna ``(e164, aviso)``.
-
-    ``e164`` vazio quando não há telefone ou o formato não é reconhecível (com o
-    motivo em ``aviso``). Aceita números com ou sem DDI (55) e com 10/11 dígitos
-    (DDD + número).
-    """
-    digitos = re.sub(r"\D", "", bruto or "")
-    if not digitos:
-        return "", ""
-    if digitos.startswith("55") and len(digitos) in (12, 13):
-        return "+" + digitos, ""
-    if len(digitos) in (10, 11):
-        return "+55" + digitos, ""
-    return "", f"Telefone em formato não reconhecido: {bruto.strip()}"
 
 
 def _extrair_json_objeto(texto: str) -> dict:
