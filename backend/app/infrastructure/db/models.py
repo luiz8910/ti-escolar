@@ -89,12 +89,23 @@ class ConversaORM(Base):
     )
     contato: Mapped[str] = mapped_column(String(50), index=True)
     criado_em: Mapped[datetime] = mapped_column()
+    # Base da janela de inatividade da sessão (ver `Conversa`).
+    ultima_mensagem_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sessão fechada por inatividade ou por atendimento resolvido. NULL = viva.
+    encerrada_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     mensagens: Mapped[list["MensagemORM"]] = relationship(
         back_populates="conversa", cascade="all, delete-orphan", order_by="MensagemORM.criado_em"
     )
 
-    __table_args__ = (UniqueConstraint("tenant_id", "contato", name="uq_conversa_tenant_contato"),)
+    __table_args__ = (
+        # O UNIQUE (tenant, contato) saiu na 0037: **o mesmo responsável passa a ter várias
+        # conversas**, uma por sessão. O índice abaixo é o que sustenta a busca da sessão
+        # viva, que roda a cada mensagem recebida.
+        Index("ix_conversa_sessao_viva", "tenant_id", "contato", "encerrada_em"),
+    )
 
 
 class MensagemORM(Base):

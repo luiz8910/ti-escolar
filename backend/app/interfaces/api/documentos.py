@@ -54,6 +54,7 @@ from app.interfaces.dto import (
     DocumentoClassificacaoEntrada,
     DocumentoRecebidoSaida,
     DocumentosPaginaSaida,
+    DocumentosPendentesSaida,
     ExpurgoSaida,
     PaginaMeta,
 )
@@ -125,6 +126,19 @@ async def listar(
             total_paginas=resultado.total_paginas,
         ),
     )
+
+
+@router.get("/tenant/{tenant_id}/pendentes", response_model=DocumentosPendentesSaida)
+async def pendentes(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    repo: SqlDocumentoRecebidoRepository = Depends(get_documento_repo),
+) -> DocumentosPendentesSaida:
+    """Quantos documentos estão **a conferir**. Consultado em polling pela central de
+    notificações, por isso devolve só o número — a listagem é outra rota."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    total = await repo.contar(tenant_id=tenant_id, status=StatusDocumento.RECEBIDO)
+    return DocumentosPendentesSaida(pendentes=total)
 
 
 @router.get("/{documento_id}", response_model=DocumentoRecebidoSaida)

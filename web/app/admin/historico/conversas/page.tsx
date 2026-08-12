@@ -179,6 +179,10 @@ function Conversas({
                   </p>
                   <p className={cn("text-[10px]", active ? "text-white/60" : "text-n-400")}>
                     {formatar(c.ultima_em ?? c.criado_em)}
+                    {/* Cada linha é uma SESSÃO, não a conversa inteira do responsável: o
+                        mesmo telefone aparece uma vez por assunto. Sem o selo, duas
+                        sessões do mesmo número pareceriam duplicata. */}
+                    {c.encerrada_em ? " · encerrada" : " · em andamento"}
                   </p>
                 </button>
               );
@@ -212,6 +216,14 @@ function Conversas({
               <h2 className="text-sm font-bold text-n-900">{aberta.contato}</h2>
               <p className="text-xs text-n-400">
                 Iniciada em {formatar(aberta.criado_em)} · {aberta.mensagens.length} mensagens
+                {aberta.encerrada_em
+                  ? ` · encerrada em ${formatar(aberta.encerrada_em)}`
+                  : " · em andamento"}
+              </p>
+              <p className="mt-1 text-[11px] text-n-400">
+                Esta é <b>uma sessão</b> da conversa. Depois de 24h sem mensagem — ou quando
+                a secretaria resolve o atendimento —, a próxima mensagem do responsável abre
+                outra, e o assistente deixa de carregar o assunto antigo no contexto.
               </p>
             </div>
             <div className="flex flex-col gap-2">

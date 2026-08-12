@@ -916,6 +916,7 @@ async def listar_conversas(
             total_mensagens=r.total_mensagens,
             ultima_mensagem=r.ultima_mensagem,
             ultima_em=r.ultima_em,
+            encerrada_em=r.conversa.encerrada_em,
         )
         for r in resultado.itens
     ]
@@ -941,6 +942,7 @@ async def obter_conversa(
         id=resultado.conversa.id,
         contato=resultado.conversa.contato,
         criado_em=resultado.conversa.criado_em,
+        encerrada_em=resultado.conversa.encerrada_em,
         mensagens=[
             MensagemConversaSaida(
                 id=m.id,

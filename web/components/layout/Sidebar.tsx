@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
-import { contarAtendimentosPendentes, getSessao } from "@/lib/admin";
+import { useEffect, type ReactNode } from "react";
+import { BadgeContador, type Pendencias } from "../admin/Notificacoes";
 import { cn } from "../ui/cn";
 import {
   GridIcon,
@@ -31,9 +31,6 @@ interface NavItem {
   /** Badge de contagem (destaque). Zero é omitido — badge "0" é só ruído. */
   contador?: number;
 }
-
-/** De quanto em quanto tempo o badge de atendimentos é reconferido. */
-const INTERVALO_PENDENTES_MS = 20_000;
 
 const PRINCIPAL: NavItem[] = [
   { href: "/admin", label: "Grupos & disparos", icon: GridIcon },
@@ -121,9 +118,7 @@ function NavLink({
       {item.label}
       {item.contador ? (
         // Alguém está esperando resposta agora: cor de alerta, não de rótulo.
-        <span className="ml-auto min-w-[20px] rounded-full bg-danger px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
-          {item.contador > 99 ? "99+" : item.contador}
-        </span>
+        <BadgeContador total={item.contador} />
       ) : (
         item.badge && (
           <span className="ml-auto rounded-[5px] bg-brand-100 px-1.5 py-0.5 text-[9.5px] font-bold text-brand-700">
@@ -136,12 +131,15 @@ function NavLink({
 }
 
 export function Sidebar({
-  subtitle = "Escola Demonstração",
+  subtitle = "",
+  pendencias,
   isSuperAdmin = false,
   open = false,
   onClose,
 }: {
   subtitle?: string;
+  /** Contadores da central de notificações — a Sidebar não faz polling próprio. */
+  pendencias?: Pendencias;
   isSuperAdmin?: boolean;
   /** Drawer aberto no mobile (sem efeito a partir de `lg`). */
   open?: boolean;
@@ -150,28 +148,6 @@ export function Sidebar({
   const pathname = usePathname();
   const isActive = (href: string) =>
     href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
-
-  // Responsáveis esperando a secretaria (§6j). Polling curto porque, aqui, o atraso é
-  // sentido por uma pessoa real do outro lado do WhatsApp. Falha silenciosa de propósito:
-  // um badge que não atualizou não justifica um toast de erro atravessando o painel.
-  const [pendentes, setPendentes] = useState(0);
-  useEffect(() => {
-    let vivo = true;
-    const conferir = () => {
-      // Sem sessão (logout no meio do intervalo), nem tenta: a chamada dispararia o
-      // redirecionamento para o login por causa de um badge.
-      if (!getSessao()) return;
-      contarAtendimentosPendentes()
-        .then((n) => vivo && setPendentes(n))
-        .catch(() => undefined);
-    };
-    conferir();
-    const timer = setInterval(conferir, INTERVALO_PENDENTES_MS);
-    return () => {
-      vivo = false;
-      clearInterval(timer);
-    };
-  }, []);
 
   // Fecha o drawer com Esc e trava o scroll do body enquanto aberto (só mobile).
   useEffect(() => {
@@ -220,7 +196,11 @@ export function Sidebar({
             <NavLink
               key={item.href}
               item={
-                item.href === "/admin/atendimentos" ? { ...item, contador: pendentes } : item
+                item.href === "/admin/atendimentos"
+                  ? { ...item, contador: pendencias?.atendimentos ?? 0 }
+                  : item.href === "/admin/documentos"
+                    ? { ...item, contador: pendencias?.documentos ?? 0 }
+                    : item
               }
               active={isActive(item.href)}
               onNavigate={onClose}

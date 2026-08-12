@@ -260,11 +260,16 @@ async def resolver(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     repo: SqlAtendimentoHumanoRepository = Depends(get_atendimento_humano_repo),
+    conversas: SqlConversaRepository = Depends(get_conversa_repo),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> AtendimentoSaida:
     _exige_acesso_tenant(usuario, tenant_id)
     try:
-        atendimento = await ResolverAtendimento(atendimentos=repo).executar(
+        # Resolver encerra a sessão de conversa junto (§13): assunto fechado não deve
+        # continuar carregando contexto para o próximo, que costuma ser outro.
+        atendimento = await ResolverAtendimento(
+            atendimentos=repo, conversas=conversas
+        ).executar(
             tenant_id=tenant_id, atendimento_id=atendimento_id, usuario=usuario
         )
     except ValueError as e:

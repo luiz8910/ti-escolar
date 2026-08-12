@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     # sem acionar a LLM. 0 desativa o limite.
     mensagem_pai_max_chars: int = 1000
 
+    # Sessão de conversa (§13). Uma conversa parada por mais que isto é encerrada, e a
+    # próxima mensagem do responsável abre outra. 24h alinha com a janela da Meta, que é o
+    # relógio que ele percebe. **0 desliga o recorte** e devolve a conversa eterna de
+    # antes — existe como válvula, não como caminho recomendado: sem ela o contexto
+    # enviado à LLM cresce sem limite.
+    conversa_janela_horas: int = 24
+
     # Documentos recebidos dos responsáveis (§6k)
     # Retenção dos arquivos enviados pelos pais. É dado sensível de menor (atestado é dado
     # de saúde), então o prazo é obrigatório: um ano cobre o ciclo letivo inteiro sem

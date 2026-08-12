@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { getEscolaEmFoco, getSessao } from "@/lib/admin";
+import { usePendencias } from "../admin/Notificacoes";
 import { Sidebar } from "./Sidebar";
 import { Topbar, type TopbarUser } from "./Topbar";
 
@@ -42,6 +43,9 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [menuAberto, setMenuAberto] = useState(false);
+  // Uma leitura por ciclo para o painel inteiro: o sininho e o badge do menu leem daqui,
+  // em vez de cada um fazer o seu polling.
+  const pendencias = usePendencias();
   const [escola, setEscola] = useState("");
   const [semEscola, setSemEscola] = useState(false);
   const [pronto, setPronto] = useState(false);
@@ -64,6 +68,7 @@ export function AppShell({
     <div className="flex min-h-screen bg-bg">
       <Sidebar
         subtitle={escola}
+        pendencias={pendencias}
         isSuperAdmin={isSuperAdmin}
         open={menuAberto}
         onClose={() => setMenuAberto(false)}
@@ -73,6 +78,7 @@ export function AppShell({
           title={title}
           user={user}
           showTenant={isSuperAdmin}
+          pendencias={pendencias}
           onLogout={onLogout}
           onMenu={() => setMenuAberto(true)}
         />

@@ -289,12 +289,16 @@ class FichaFinanceiraSaida(BaseModel):
 # Visualização de conversas (inbound) e broadcasts (outbound) da escola
 # --------------------------------------------------------------------------- #
 class ConversaResumoSaida(BaseModel):
+    """Uma **sessão** de conversa (§13), não o fio eterno do responsável."""
+
     id: UUID
     contato: str
     criado_em: datetime
     total_mensagens: int
     ultima_mensagem: str
     ultima_em: datetime | None = None
+    # Sessão fechada (por inatividade ou por atendimento resolvido). None = em andamento.
+    encerrada_em: datetime | None = None
 
 
 class MensagemConversaSaida(BaseModel):
@@ -309,6 +313,7 @@ class ConversaDetalheSaida(BaseModel):
     id: UUID
     contato: str
     criado_em: datetime
+    encerrada_em: datetime | None = None
     mensagens: list[MensagemConversaSaida] = []
 
 
@@ -1417,6 +1422,12 @@ class DocumentoClassificacaoEntrada(BaseModel):
     status: str | None = None
     aluno_id: UUID | None = None
     observacao: str | None = None
+
+
+class DocumentosPendentesSaida(BaseModel):
+    """Contador do badge da central de notificações — só o número."""
+
+    pendentes: int
 
 
 class ExpurgoSaida(BaseModel):

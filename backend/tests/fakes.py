@@ -210,21 +210,61 @@ class FakeLLM:
 
 
 class FakeConversaRepo:
-    def __init__(self) -> None:
+    """Espelha a **sessão** do repositório SQL: uma conversa viva por contato, encerrada
+    ao passar da janela ou por chamada explícita."""
+
+    def __init__(self, janela_horas: int = 24) -> None:
         self.mensagens: dict[uuid.UUID, list[dict]] = {}
-        self.conversas: dict[tuple, Conversa] = {}
+        # Todas as sessões, na ordem em que nasceram (inclusive as encerradas).
+        self.sessoes: list[Conversa] = []
+        self.janela_horas = janela_horas
+        # Relógio injetável, para o teste andar no tempo sem dormir.
+        self.agora: datetime | None = None
+
+    def _agora(self) -> datetime:
+        return self.agora or datetime.now(timezone.utc)
+
+    @property
+    def conversas(self) -> dict[tuple, Conversa]:
+        """Compatibilidade com os testes antigos: a sessão viva por (tenant, contato)."""
+        return {
+            (c.tenant_id, c.contato): c for c in self.sessoes if c.encerrada_em is None
+        }
 
     async def obter_ou_criar(self, *, tenant_id, contato) -> Conversa:
-        chave = (tenant_id, contato)
-        if chave not in self.conversas:
-            c = Conversa(tenant_id=tenant_id, contato=contato)
-            self.conversas[chave] = c
-            self.mensagens[c.id] = []
-        return self.conversas[chave]
+        agora = self._agora()
+        viva = next(
+            (
+                c
+                for c in reversed(self.sessoes)
+                if c.tenant_id == tenant_id and c.contato == contato and not c.encerrada
+            ),
+            None,
+        )
+        if viva is not None:
+            if not viva.vencida_em(agora, janela_horas=self.janela_horas):
+                return viva
+            viva.encerrada_em = agora
+
+        nova = Conversa(
+            tenant_id=tenant_id, contato=contato, criado_em=agora, ultima_mensagem_em=agora
+        )
+        self.sessoes.append(nova)
+        self.mensagens[nova.id] = []
+        return nova
+
+    async def encerrar(self, *, conversa_id) -> None:
+        for c in self.sessoes:
+            if c.id == conversa_id and c.encerrada_em is None:
+                c.encerrada_em = self._agora()
 
     async def adicionar_mensagem(
         self, *, conversa_id, autor, texto, fontes=None, autor_nome=""
     ) -> None:
+        # Renova a janela da sessão, como o repositório SQL.
+        for c in self.sessoes:
+            if c.id == conversa_id:
+                c.ultima_mensagem_em = self._agora()
         self.mensagens.setdefault(conversa_id, []).append(
             {
                 "autor": autor,

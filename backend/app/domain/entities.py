@@ -915,11 +915,47 @@ class Mensagem:
 
 @dataclass
 class Conversa:
+    """Uma **sessão** de conversa com um responsável, não a conversa eterna dele.
+
+    Até 12/ago/2026 havia uma ``Conversa`` por ``(tenant, contato)``, para sempre. Duas
+    consequências, e a segunda custa dinheiro:
+
+    1. o histórico do painel virava um fio infinito, impossível de ler;
+    2. **o contexto enviado à LLM crescia sem limite** — cada mensagem nova carregava meses
+       de assunto encerrado, encarecendo a chamada e piorando a resposta (o modelo responde
+       sobre a matrícula de março quando perguntam do uniforme de agosto).
+
+    Agora a sessão **viva** é a que não foi encerrada e cuja última mensagem está dentro de
+    ``CONVERSA_JANELA_HORAS`` (24 por padrão — o mesmo relógio da janela da Meta, que é o
+    que o responsável percebe). Fora disso, a próxima mensagem abre uma sessão nova.
+
+    Resolver um ``AtendimentoHumano`` também encerra a sessão: assunto resolvido não deve
+    continuar carregando contexto para o próximo, que costuma ser outro completamente.
+    """
+
     tenant_id: UUID
     # Telefone (E.164) ou identificador do usuário no canal.
     contato: str
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+    # Quando a última mensagem entrou — a base da janela de 24h da sessão.
+    ultima_mensagem_em: datetime = field(default_factory=_now)
+    # Sessão fechada (por inatividade ou por atendimento resolvido). None = viva.
+    encerrada_em: datetime | None = None
+
+    @property
+    def encerrada(self) -> bool:
+        return self.encerrada_em is not None
+
+    def vencida_em(self, agora: datetime, *, janela_horas: int) -> bool:
+        """A sessão passou da janela de inatividade?
+
+        ``janela_horas <= 0`` desliga o recorte e devolve a conversa eterna de antes —
+        existe como válvula, não como caminho recomendado.
+        """
+        if janela_horas <= 0:
+            return False
+        return (agora - self.ultima_mensagem_em) > timedelta(hours=janela_horas)
 
 
 @dataclass
