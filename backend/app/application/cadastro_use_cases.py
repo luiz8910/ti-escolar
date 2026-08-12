@@ -8,12 +8,20 @@ A camada de aplicação apenas orquestra as portas ``ContatoRepository`` e
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from app.application.paginacao import (
     POR_PAGINA_PADRAO,
     Pagina,
     normalizar_paginacao,
+)
+from app.application.validacao import (
+    data_nao_futura,
+    normalizar_cpf,
+    normalizar_data,
+    normalizar_email,
+    normalizar_telefone,
 )
 from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Professor, Sala
 from app.domain.ports import (
@@ -491,22 +499,82 @@ class DesvincularResponsavelDoAluno:
 # --------------------------------------------------------------------------- #
 # Professores (CRUD) e atribuição à série (Sala.professor_id)
 # --------------------------------------------------------------------------- #
+@dataclass
+class DadosProfessor:
+    """Campos do cadastro funcional, agrupados para não estourar a lista de argumentos.
+
+    Todos opcionais: o cadastro mínimo continua sendo **nome + telefone**, que é o que a
+    escola tem no primeiro dia. Exigir CPF e matrícula de saída travaria o cadastro de
+    quem já está dando aula.
+    """
+
+    cpf: str = ""
+    data_nascimento: str = ""
+    matricula: str = ""
+    endereco: str = ""
+    telefone_2: str = ""
+    email: str = ""
+    educacao_fisica: bool = False
+    titular: bool = True
+
+
+def _validar_dados_professor(dados: DadosProfessor) -> DadosProfessor:
+    """Normaliza os formatos e recusa o que é erro de digitação, não escolha."""
+    return DadosProfessor(
+        cpf=normalizar_cpf(dados.cpf),
+        data_nascimento=data_nao_futura(
+            normalizar_data(dados.data_nascimento, campo="Data de nascimento"),
+            campo="Data de nascimento",
+        ),
+        matricula=dados.matricula.strip(),
+        endereco=dados.endereco.strip(),
+        # O segundo telefone é de emergência e não roteia nada, mas guardar "(15) 9 9999"
+        # e "+5515999990000" na mesma coluna torna a busca por número inútil.
+        telefone_2=_e164_ou_erro(dados.telefone_2, campo="Telefone 2"),
+        email=normalizar_email(dados.email),
+        educacao_fisica=dados.educacao_fisica,
+        titular=dados.titular,
+    )
+
+
+def _e164_ou_erro(bruto: str, *, campo: str) -> str:
+    e164, aviso = normalizar_telefone(bruto)
+    if aviso:
+        raise ValueError(f"{campo}: {aviso}")
+    return e164
+
+
 class CadastrarProfessor:
-    """Cadastra um professor (nome + telefone). Telefone único por tenant (E.164)."""
+    """Cadastra um professor. Telefone e CPF únicos por tenant."""
 
     def __init__(self, *, professores: ProfessorRepository) -> None:
         self._professores = professores
 
     async def executar(
-        self, *, tenant_id: UUID, nome: str, telefone: str, senha: str = ""
+        self,
+        *,
+        tenant_id: UUID,
+        nome: str,
+        telefone: str,
+        senha: str = "",
+        dados: DadosProfessor | None = None,
     ) -> Professor:
         if await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone):
             raise ValueError("Já existe um professor com este telefone neste tenant.")
+        validos = _validar_dados_professor(dados or DadosProfessor())
+        if validos.cpf and await self._professores.por_cpf(
+            tenant_id=tenant_id, cpf=validos.cpf
+        ):
+            raise ValueError("Já existe um professor com este CPF neste tenant.")
         # Senha opcional habilita o login do professor no mural (§A1).
         senha_hash = hash_senha(senha) if senha else ""
         return await self._professores.criar(
             Professor(
-                tenant_id=tenant_id, nome=nome, telefone=telefone, senha_hash=senha_hash
+                tenant_id=tenant_id,
+                nome=nome,
+                telefone=telefone,
+                senha_hash=senha_hash,
+                **asdict(validos),
             )
         )
 
@@ -515,8 +583,27 @@ class ListarProfessores:
     def __init__(self, *, professores: ProfessorRepository) -> None:
         self._professores = professores
 
+    async def executar(
+        self, *, tenant_id: UUID, apenas_eventuais: bool = False
+    ) -> list[Professor]:
+        return await self._professores.listar(
+            tenant_id=tenant_id, apenas_eventuais=apenas_eventuais
+        )
+
+
+class ListarEventuaisDisponiveis:
+    """Professores que podem cobrir uma falta (§I1) — ``titular=False`` e com telefone.
+
+    Existe para tirar da mão da secretaria a lista de telefones que ela redigita a cada
+    aviso de falta. É consulta, não disparo: quem chama continua sendo ``ChamarEventual``,
+    e a escolha de quem chamar segue humana.
+    """
+
+    def __init__(self, *, professores: ProfessorRepository) -> None:
+        self._professores = professores
+
     async def executar(self, *, tenant_id: UUID) -> list[Professor]:
-        return await self._professores.listar(tenant_id=tenant_id)
+        return await self._professores.listar(tenant_id=tenant_id, apenas_eventuais=True)
 
 
 class ObterProfessor:
@@ -542,6 +629,7 @@ class AtualizarProfessor:
         nome: str,
         telefone: str,
         senha: str | None = None,
+        dados: DadosProfessor | None = None,
     ) -> Professor:
         atual = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
         if atual is None:
@@ -552,6 +640,16 @@ class AtualizarProfessor:
                 raise ValueError("Já existe um professor com este telefone neste tenant.")
         atual.nome = nome
         atual.telefone = telefone
+        if dados is not None:
+            validos = _validar_dados_professor(dados)
+            if validos.cpf and validos.cpf != atual.cpf:
+                duplicado = await self._professores.por_cpf(
+                    tenant_id=tenant_id, cpf=validos.cpf
+                )
+                if duplicado is not None and duplicado.id != professor_id:
+                    raise ValueError("Já existe um professor com este CPF neste tenant.")
+            for campo, valor in asdict(validos).items():
+                setattr(atual, campo, valor)
         # ``senha=None`` mantém a atual; string vazia limpa o acesso; texto define nova senha.
         if senha is not None:
             atual.senha_hash = hash_senha(senha) if senha else ""

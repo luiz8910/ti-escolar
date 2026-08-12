@@ -586,6 +586,14 @@ def _to_professor(row: ProfessorORM) -> Professor:
         tenant_id=row.tenant_id,
         nome=row.nome,
         telefone=row.telefone,
+        cpf=row.cpf,
+        data_nascimento=row.data_nascimento,
+        matricula=row.matricula,
+        endereco=row.endereco,
+        telefone_2=row.telefone_2,
+        email=row.email,
+        educacao_fisica=row.educacao_fisica,
+        titular=row.titular,
         senha_hash=row.senha_hash,
         criado_em=row.criado_em,
     )
@@ -836,6 +844,14 @@ class SqlProfessorRepository:
                 tenant_id=professor.tenant_id,
                 nome=professor.nome,
                 telefone=professor.telefone,
+                cpf=professor.cpf,
+                data_nascimento=professor.data_nascimento,
+                matricula=professor.matricula,
+                endereco=professor.endereco,
+                telefone_2=professor.telefone_2,
+                email=professor.email,
+                educacao_fisica=professor.educacao_fisica,
+                titular=professor.titular,
                 senha_hash=professor.senha_hash,
                 criado_em=professor.criado_em,
             )
@@ -860,13 +876,28 @@ class SqlProfessorRepository:
         row = (await self._s.execute(stmt)).scalar_one_or_none()
         return _to_professor(row) if row else None
 
-    async def listar(self, *, tenant_id: uuid.UUID) -> list[Professor]:
-        stmt = (
-            select(ProfessorORM)
-            .where(ProfessorORM.tenant_id == tenant_id)
-            .order_by(ProfessorORM.nome)
+    async def por_cpf(self, *, tenant_id: uuid.UUID, cpf: str) -> Professor | None:
+        # CPF vazio não identifica ninguém: devolver "o primeiro sem CPF" faria o cadastro
+        # recusar todo professor novo por falso duplicado.
+        if not cpf:
+            return None
+        stmt = select(ProfessorORM).where(
+            ProfessorORM.tenant_id == tenant_id, ProfessorORM.cpf == cpf
         )
-        rows = (await self._s.execute(stmt)).scalars().all()
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        return _to_professor(row) if row else None
+
+    async def listar(
+        self, *, tenant_id: uuid.UUID, apenas_eventuais: bool = False
+    ) -> list[Professor]:
+        stmt = select(ProfessorORM).where(ProfessorORM.tenant_id == tenant_id)
+        if apenas_eventuais:
+            # A lista de quem cobre falta (§I1). Sem telefone o eventual não é chamável,
+            # então nem entra na lista — evita a secretaria "convocar" quem não recebe.
+            stmt = stmt.where(
+                ProfessorORM.titular.is_(False), ProfessorORM.telefone != ""
+            )
+        rows = (await self._s.execute(stmt.order_by(ProfessorORM.nome))).scalars().all()
         return [_to_professor(r) for r in rows]
 
     async def atualizar(self, professor: Professor) -> Professor:
@@ -875,6 +906,14 @@ class SqlProfessorRepository:
             raise ValueError("Professor não encontrado para o tenant.")
         row.nome = professor.nome
         row.telefone = professor.telefone
+        row.cpf = professor.cpf
+        row.data_nascimento = professor.data_nascimento
+        row.matricula = professor.matricula
+        row.endereco = professor.endereco
+        row.telefone_2 = professor.telefone_2
+        row.email = professor.email
+        row.educacao_fisica = professor.educacao_fisica
+        row.titular = professor.titular
         row.senha_hash = professor.senha_hash
         await self._s.flush()
         return _to_professor(row)

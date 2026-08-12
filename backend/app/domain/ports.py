@@ -541,7 +541,7 @@ class SalaRepository(Protocol):
 
 @runtime_checkable
 class ProfessorRepository(Protocol):
-    """CRUD de professores (nome + telefone), escopado por tenant."""
+    """CRUD do cadastro funcional de professores, escopado por tenant."""
 
     async def criar(self, professor: Professor) -> Professor: ...
 
@@ -549,7 +549,15 @@ class ProfessorRepository(Protocol):
 
     async def por_telefone(self, *, tenant_id: UUID, telefone: str) -> Professor | None: ...
 
-    async def listar(self, *, tenant_id: UUID) -> list[Professor]: ...
+    async def por_cpf(self, *, tenant_id: UUID, cpf: str) -> Professor | None:
+        """CPF vazio devolve ``None`` — não identifica ninguém."""
+        ...
+
+    async def listar(
+        self, *, tenant_id: UUID, apenas_eventuais: bool = False
+    ) -> list[Professor]:
+        """``apenas_eventuais`` filtra os candidatos a cobrir falta (§I1)."""
+        ...
 
     async def atualizar(self, professor: Professor) -> Professor: ...
 

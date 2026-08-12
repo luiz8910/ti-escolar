@@ -21,11 +21,13 @@ from app.application.cadastro_use_cases import (
     CadastrarPai,
     CadastrarProfessor,
     CoberturaDeContatosDaSala,
+    DadosProfessor,
     CriarSala,
     DesvincularPaiDaSala,
     DesvincularResponsavelDoAluno,
     ListarAlunos,
     ListarPais,
+    ListarEventuaisDisponiveis,
     ListarProfessores,
     ListarSalas,
     ListarSeriesDoProfessor,
@@ -48,6 +50,7 @@ from app.application.importacao_use_cases import (
     ConfirmarImportacaoAlunos,
     PrevisualizarImportacaoAlunos,
 )
+from app.application.validacao import formatar_cpf
 from app.domain.entities import (
     Aluno,
     CoberturaContatosSala,
@@ -128,7 +131,32 @@ def _sala_saida(s: Sala) -> SalaSaida:
 
 def _professor_saida(p: Professor) -> ProfessorSaida:
     return ProfessorSaida(
-        id=p.id, nome=p.nome, telefone=p.telefone, tem_acesso=p.tem_acesso
+        id=p.id,
+        nome=p.nome,
+        telefone=p.telefone,
+        cpf=p.cpf,
+        cpf_formatado=formatar_cpf(p.cpf),
+        data_nascimento=p.data_nascimento,
+        matricula=p.matricula,
+        endereco=p.endereco,
+        telefone_2=p.telefone_2,
+        email=p.email,
+        educacao_fisica=p.educacao_fisica,
+        titular=p.titular,
+        tem_acesso=p.tem_acesso,
+    )
+
+
+def _dados_professor(payload: ProfessorEntrada | ProfessorAtualizar) -> DadosProfessor:
+    return DadosProfessor(
+        cpf=payload.cpf,
+        data_nascimento=payload.data_nascimento,
+        matricula=payload.matricula,
+        endereco=payload.endereco,
+        telefone_2=payload.telefone_2,
+        email=payload.email,
+        educacao_fisica=payload.educacao_fisica,
+        titular=payload.titular,
     )
 
 
@@ -677,6 +705,7 @@ async def cadastrar_professor(
             nome=payload.nome,
             telefone=payload.telefone,
             senha=payload.senha,
+            dados=_dados_professor(payload),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -691,6 +720,26 @@ async def listar_professores(
 ) -> list[ProfessorSaida]:
     _exige_acesso_tenant(usuario, tenant_id)
     encontrados = await ListarProfessores(professores=professores).executar(tenant_id=tenant_id)
+    return [_professor_saida(p) for p in encontrados]
+
+
+@router.get("/professores/tenant/{tenant_id}/eventuais", response_model=list[ProfessorSaida])
+async def listar_eventuais(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    professores: SqlProfessorRepository = Depends(get_professor_repo),
+) -> list[ProfessorSaida]:
+    """Candidatos a cobrir uma falta (§I1): eventuais **com telefone**.
+
+    Rota separada de ``?titular=false`` de propósito — o que a chamada de eventual precisa
+    não é "os não titulares", é "quem dá para chamar agora", e quem não tem telefone não
+    dá. A escolha de quem chamar segue humana; isto só substitui a lista redigitada a cada
+    aviso de falta.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    encontrados = await ListarEventuaisDisponiveis(professores=professores).executar(
+        tenant_id=tenant_id
+    )
     return [_professor_saida(p) for p in encontrados]
 
 
@@ -741,6 +790,7 @@ async def atualizar_professor(
             nome=payload.nome,
             telefone=payload.telefone,
             senha=payload.senha,
+            dados=_dados_professor(payload),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

@@ -436,14 +436,34 @@ class Grupo:
 class Professor:
     """Professor da escola, dentro de um tenant.
 
-    Modelo enxuto: **apenas nome e telefone** (WhatsApp). Um professor pode estar à
-    frente de **várias séries/turmas** (``Sala``), mas cada série tem **no máximo um**
-    professor responsável (o vínculo mora em ``Sala.professor_id``).
+    Um professor pode estar à frente de **várias séries/turmas** (``Sala``), mas cada
+    série tem **no máximo um** professor responsável (o vínculo mora em
+    ``Sala.professor_id``).
+
+    Nasceu enxuto — só nome e telefone — e ganhou o cadastro funcional em 11/ago/2026.
+    Dois campos merecem explicação:
+
+    - **``titular``** distingue o professor da turma do **eventual** (substituto). Não é
+      rótulo: é a lista de quem a secretaria chama quando alguém falta (§I1), que hoje é
+      digitada à mão a cada aviso de falta.
+    - **``telefone``** é o número que recebe recado da escola e o mural; **``telefone_2``
+      é contato de emergência** e não entra em disparo nenhum. Um professor com dois
+      números ativos no canal receberia a mesma mensagem duas vezes.
     """
 
     tenant_id: UUID
     nome: str
-    telefone: str  # E.164, ex.: +5511999990000
+    telefone: str  # E.164, ex.: +5511999990000 — o número que a escola usa
+    # Cadastro funcional. CPF em 11 dígitos sem pontuação; datas em ISO (AAAA-MM-DD).
+    cpf: str = ""
+    data_nascimento: str = ""
+    matricula: str = ""  # matrícula funcional na rede
+    endereco: str = ""
+    telefone_2: str = ""  # emergência — NÃO recebe disparo (ver docstring)
+    email: str = ""
+    # Habilitação e vínculo. `titular=False` significa **eventual**.
+    educacao_fisica: bool = False
+    titular: bool = True
     # Senha (hash PBKDF2) para o login do professor no mural (§A1). Vazio = sem acesso.
     senha_hash: str = ""
     id: UUID = field(default_factory=_new_id)
@@ -453,6 +473,11 @@ class Professor:
     def tem_acesso(self) -> bool:
         """Verdadeiro quando o professor tem senha definida (pode entrar no mural)."""
         return bool(self.senha_hash)
+
+    @property
+    def eh_eventual(self) -> bool:
+        """Candidato a cobrir falta de outro professor (§I1)."""
+        return not self.titular
 
 
 class StatusImpressao(str, enum.Enum):

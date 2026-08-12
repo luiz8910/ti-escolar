@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   atualizarProfessor,
   cadastrarProfessor,
+  DADOS_PROFESSOR_VAZIO,
+  DadosProfessor,
   definirProfessorDaSala,
   exigeEscolhaDeEscola,
   getSessao,
@@ -18,6 +20,8 @@ import {
 } from "@/lib/admin";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { CamposProfessor } from "@/components/admin/CamposProfessor";
+import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/form";
@@ -85,15 +89,21 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
   const [senha, setSenha] = useState("");
+  // Recolhido por padrão: o cadastro mínimo é nome + telefone, e é o que a escola tem no
+  // primeiro dia. Quem já tem a ficha na mão abre e preenche.
+  const [abrirDados, setAbrirDados] = useState(false);
+  const [dados, setDados] = useState<DadosProfessor>(DADOS_PROFESSOR_VAZIO);
 
   async function cadastrar(e: React.FormEvent) {
     e.preventDefault();
     if (!nome.trim() || !telefone.trim()) return;
     try {
-      await cadastrarProfessor(nome.trim(), telefone.trim(), senha);
+      await cadastrarProfessor(nome.trim(), telefone.trim(), senha, dados);
       setNome("");
       setTelefone("");
       setSenha("");
+      setDados(DADOS_PROFESSOR_VAZIO);
+      setAbrirDados(false);
       await onMudou();
       toast({ tone: "success", title: "Professor cadastrado." });
     } catch (err) {
@@ -130,10 +140,28 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
         <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
           Cadastrar
         </Button>
+
+        <div className="w-full">
+          <button
+            type="button"
+            onClick={() => setAbrirDados((v) => !v)}
+            className="text-[12.5px] font-semibold text-brand-600 hover:underline"
+          >
+            {abrirDados ? "− Ocultar" : "+ Preencher"} dados funcionais (CPF, matrícula,
+            eventual…)
+          </button>
+          {abrirDados && (
+            <div className="mt-3 border-t border-n-100 pt-3">
+              <CamposProfessor dados={dados} onChange={setDados} />
+            </div>
+          )}
+        </div>
       </form>
       <p className="mt-2 text-xs text-n-400">
-        A senha habilita o login do professor no mural (em <strong>/professor</strong>). Atribua
-        o professor às séries no card abaixo — um professor pode conduzir várias séries.
+        Só <strong>nome e WhatsApp</strong> são obrigatórios — o resto pode ser completado
+        depois. A senha habilita o login do professor no mural (em{" "}
+        <strong>/professor</strong>). Atribua o professor às séries no card abaixo — um
+        professor pode conduzir várias séries.
       </p>
     </Card>
   );
@@ -255,6 +283,8 @@ function ListaProfessores({
               <tr>
                 <Th>Nome</Th>
                 <Th>WhatsApp</Th>
+                <Th>CPF</Th>
+                <Th>Vínculo</Th>
                 <Th>Séries</Th>
                 <Th className="text-right">Ações</Th>
               </tr>
@@ -264,8 +294,23 @@ function ListaProfessores({
                 const series = seriesDe(p.id);
                 return (
                   <Tr key={p.id}>
-                    <Td className="font-medium">{p.nome}</Td>
+                    <Td className="font-medium">
+                      {p.nome}
+                      {p.educacao_fisica && (
+                        <span className="ml-1.5 text-[11px] font-semibold text-n-400">
+                          ed. física
+                        </span>
+                      )}
+                    </Td>
                     <Td className="font-mono text-xs text-n-600">{p.telefone}</Td>
+                    <Td className="font-mono text-xs text-n-600">
+                      {p.cpf_formatado || <span className="text-n-400">—</span>}
+                    </Td>
+                    <Td>
+                      <Badge tone={p.titular ? "brand" : "warning"}>
+                        {p.titular ? "Titular" : "Eventual"}
+                      </Badge>
+                    </Td>
                     <Td className="text-xs text-n-600">
                       {series.length === 0 ? (
                         <span className="text-n-400">—</span>
@@ -328,6 +373,16 @@ function EditarProfessor({
   const [nome, setNome] = useState(professor.nome);
   const [telefone, setTelefone] = useState(professor.telefone);
   const [senha, setSenha] = useState("");
+  const [dados, setDados] = useState<DadosProfessor>({
+    cpf: professor.cpf,
+    data_nascimento: professor.data_nascimento,
+    matricula: professor.matricula,
+    endereco: professor.endereco,
+    telefone_2: professor.telefone_2,
+    email: professor.email,
+    educacao_fisica: professor.educacao_fisica,
+    titular: professor.titular,
+  });
 
   async function salvar() {
     if (!nome.trim() || !telefone.trim()) return;
@@ -337,7 +392,8 @@ function EditarProfessor({
         professor.id,
         nome.trim(),
         telefone.trim(),
-        senha ? senha : undefined
+        senha ? senha : undefined,
+        dados
       );
       onClose();
       await onMudou();
@@ -376,6 +432,9 @@ function EditarProfessor({
           onChange={(e) => setSenha(e.target.value)}
           placeholder="Nova senha do mural (deixe em branco para manter)"
         />
+        <div className="border-t border-n-100 pt-3">
+          <CamposProfessor dados={dados} onChange={setDados} />
+        </div>
         <p className="text-xs text-n-400">
           {professor.tem_acesso
             ? "Este professor já tem acesso ao mural."

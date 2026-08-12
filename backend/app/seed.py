@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from app.application.admin_use_cases import CriarGrupo
 from app.application.cadastro_use_cases import (
+    DadosProfessor,
     AtribuirProfessorASala,
     AtualizarProfessor,
     CadastrarAluno,
@@ -357,6 +358,27 @@ async def _seed() -> None:
                 telefone="+5511977770001",
                 # Senha para o login do professor no mural (§A1) — trocar em produção.
                 senha=settings.demo_professor_senha,
+                dados=DadosProfessor(
+                    cpf="52998224725",
+                    data_nascimento="1985-03-07",
+                    matricula="20451",
+                    endereco="Rua das Acácias, 120 — Centro, Sorocaba/SP",
+                    email="carla.mendes@escola-demo.test",
+                    titular=True,
+                ),
+            )
+            # Um eventual, para a chamada de falta (§I1) ter de fato uma lista de
+            # candidatos em vez de uma tela vazia na demonstração.
+            await cadastrar_professor.executar(
+                tenant_id=DEMO_TENANT_ID,
+                nome="Prof. Rita Alencar (eventual)",
+                telefone="+5511977770002",
+                dados=DadosProfessor(
+                    cpf="16899535009",
+                    matricula="20882",
+                    titular=False,
+                    educacao_fisica=True,
+                ),
             )
             for sala in await salas_repo.listar(tenant_id=DEMO_TENANT_ID):
                 await atribuir.executar(

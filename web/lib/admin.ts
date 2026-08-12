@@ -1021,9 +1021,45 @@ export async function desvincularResponsavelDoAluno(
 export interface Professor {
   id: string;
   nome: string;
+  /** O número que a escola usa: mural, recados e chamada de eventual. */
   telefone: string;
+  cpf: string;
+  /** CPF já pontuado pelo back-end — a tela não formata nada. */
+  cpf_formatado: string;
+  data_nascimento: string;
+  matricula: string;
+  endereco: string;
+  /** Emergência. **Não** recebe disparo — a tela diz isso em texto. */
+  telefone_2: string;
+  email: string;
+  educacao_fisica: boolean;
+  /** `false` = eventual: entra na lista de quem cobre falta (§I1). */
+  titular: boolean;
   tem_acesso: boolean;
 }
+
+/** Campos do cadastro funcional, na mesma forma que a API recebe. */
+export interface DadosProfessor {
+  cpf: string;
+  data_nascimento: string;
+  matricula: string;
+  endereco: string;
+  telefone_2: string;
+  email: string;
+  educacao_fisica: boolean;
+  titular: boolean;
+}
+
+export const DADOS_PROFESSOR_VAZIO: DadosProfessor = {
+  cpf: "",
+  data_nascimento: "",
+  matricula: "",
+  endereco: "",
+  telefone_2: "",
+  email: "",
+  educacao_fisica: false,
+  titular: true,
+};
 
 export async function listarProfessores(): Promise<Professor[]> {
   const resp = await apiFetch(
@@ -1033,15 +1069,25 @@ export async function listarProfessores(): Promise<Professor[]> {
   return jsonOuErro(resp, "listar professores");
 }
 
+/** Eventuais com telefone — a lista de quem a secretaria pode chamar numa falta (§I1). */
+export async function listarEventuaisDisponiveis(): Promise<Professor[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/professores/tenant/${tenantEmFoco()}/eventuais`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar eventuais");
+}
+
 export async function cadastrarProfessor(
   nome: string,
   telefone: string,
-  senha = ""
+  senha = "",
+  dados: DadosProfessor = DADOS_PROFESSOR_VAZIO
 ): Promise<Professor> {
   const resp = await apiFetch(`${API_URL}/api/admin/professores`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, senha }),
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, telefone, senha, ...dados }),
   });
   return jsonOuErro(resp, "cadastrar professor");
 }
@@ -1051,7 +1097,8 @@ export async function atualizarProfessor(
   nome: string,
   telefone: string,
   // `undefined` mantém a senha atual; "" limpa o acesso; texto define nova senha.
-  senha?: string
+  senha?: string,
+  dados: DadosProfessor = DADOS_PROFESSOR_VAZIO
 ): Promise<Professor> {
   const resp = await apiFetch(`${API_URL}/api/admin/professores/${professorId}`, {
     method: "PUT",
@@ -1061,6 +1108,7 @@ export async function atualizarProfessor(
       nome,
       telefone,
       senha: senha ?? null,
+      ...dados,
     }),
   });
   return jsonOuErro(resp, "atualizar professor");
