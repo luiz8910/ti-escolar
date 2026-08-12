@@ -563,8 +563,26 @@ class ResponderAtendimento:
 
 
 class ResolverAtendimento:
-    def __init__(self, *, atendimentos: AtendimentoHumanoRepository) -> None:
+    """Fecha o caso — e, com ele, a **sessão de conversa** (§13).
+
+    Assunto resolvido não deve continuar carregando contexto para o próximo, que costuma
+    ser outro completamente: o pai volta em setembro para falar de uniforme e o modelo
+    ainda está lendo a reclamação de março. Se o responsável escrever de novo, a próxima
+    mensagem abre uma sessão nova; se ele voltar **no mesmo assunto**, o atendimento é
+    reaberto por ``RegistrarRetornoDoResponsavel``, que sabe disso.
+
+    ``conversas`` é opcional para o caso de uso seguir testável sem repositório de
+    conversa — encerrar é efeito colateral, não o objetivo.
+    """
+
+    def __init__(
+        self,
+        *,
+        atendimentos: AtendimentoHumanoRepository,
+        conversas: ConversaRepository | None = None,
+    ) -> None:
         self._atendimentos = atendimentos
+        self._conversas = conversas
 
     async def executar(
         self, *, tenant_id: UUID, atendimento_id: UUID, usuario: Usuario
@@ -577,7 +595,10 @@ class ResolverAtendimento:
         if not atendimento.atendente_id:
             atendimento.atendente_id = usuario.id
             atendimento.atendente_nome = usuario.nome
-        return await self._atendimentos.atualizar(atendimento)
+        resolvido = await self._atendimentos.atualizar(atendimento)
+        if self._conversas is not None:
+            await self._conversas.encerrar(conversa_id=atendimento.conversa_id)
+        return resolvido
 
 
 class ReabrirAtendimento:

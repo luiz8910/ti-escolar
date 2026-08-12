@@ -163,6 +163,7 @@ export interface AvisoLicenca {
   destinatarios: string[];
 }
 
+/** Uma **sessão** de conversa (§13), não o fio eterno do responsável. */
 export interface ConversaResumo {
   id: string;
   contato: string;
@@ -170,6 +171,8 @@ export interface ConversaResumo {
   total_mensagens: number;
   ultima_mensagem: string;
   ultima_em: string | null;
+  /** Sessão fechada por inatividade ou atendimento resolvido. `null` = em andamento. */
+  encerrada_em: string | null;
 }
 
 export interface MensagemConversa {
@@ -184,6 +187,7 @@ export interface ConversaDetalhe {
   id: string;
   contato: string;
   criado_em: string;
+  encerrada_em: string | null;
   mensagens: MensagemConversa[];
 }
 
@@ -2220,6 +2224,16 @@ export async function contarAtendimentosPendentes(): Promise<number> {
     { headers: authHeaders() },
   );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao contar pendentes`);
+  const dados = (await resp.json()) as { pendentes: number };
+  return dados.pendentes;
+}
+
+export async function contarDocumentosPendentes(): Promise<number> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/tenant/${tenantEmFoco()}/pendentes`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao contar documentos`);
   const dados = (await resp.json()) as { pendentes: number };
   return dados.pendentes;
 }

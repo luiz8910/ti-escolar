@@ -63,24 +63,70 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _to_conversa(row: ConversaORM) -> Conversa:
+    return Conversa(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        contato=row.contato,
+        criado_em=row.criado_em,
+        ultima_mensagem_em=row.ultima_mensagem_em or row.criado_em,
+        encerrada_em=row.encerrada_em,
+    )
+
+
 class SqlConversaRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, janela_horas: int = 24) -> None:
         self._s = session
+        self._janela_horas = janela_horas
 
     async def obter_ou_criar(self, *, tenant_id: uuid.UUID, contato: str) -> Conversa:
-        stmt = select(ConversaORM).where(
-            ConversaORM.tenant_id == tenant_id, ConversaORM.contato == contato
-        )
-        row = (await self._s.execute(stmt)).scalar_one_or_none()
-        if row is None:
-            row = ConversaORM(
-                id=uuid.uuid4(), tenant_id=tenant_id, contato=contato, criado_em=_now()
+        """A **sessão viva** do responsável — abrindo outra quando a anterior venceu.
+
+        A sessão vencida é encerrada aqui, e não por um job: é o momento em que se sabe
+        que ela acabou, e depender de agendador deixaria conversas mortas abertas até ele
+        rodar (o projeto ainda não tem scheduler).
+        """
+        agora = _now()
+        stmt = (
+            select(ConversaORM)
+            .where(
+                ConversaORM.tenant_id == tenant_id,
+                ConversaORM.contato == contato,
+                ConversaORM.encerrada_em.is_(None),
             )
-            self._s.add(row)
-            await self._s.flush()
-        return Conversa(
-            id=row.id, tenant_id=row.tenant_id, contato=row.contato, criado_em=row.criado_em
+            # Defensivo: se por qualquer motivo houver duas vivas, a mais recente é a certa.
+            .order_by(ConversaORM.criado_em.desc())
         )
+        row = (await self._s.execute(stmt)).scalars().first()
+
+        if row is not None:
+            viva = _to_conversa(row)
+            if not viva.vencida_em(agora, janela_horas=self._janela_horas):
+                return viva
+            # Passou da janela: fecha e abre outra. O histórico da antiga fica de pé.
+            row.encerrada_em = agora
+            await self._s.flush()
+
+        nova = ConversaORM(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            contato=contato,
+            criado_em=agora,
+            ultima_mensagem_em=agora,
+        )
+        self._s.add(nova)
+        await self._s.flush()
+        return _to_conversa(nova)
+
+    async def encerrar(self, *, conversa_id: uuid.UUID) -> None:
+        """Fecha a sessão explicitamente (atendimento resolvido, §6j).
+
+        Idempotente: encerrar duas vezes não reescreve a data — a primeira é a verdadeira.
+        """
+        row = await self._s.get(ConversaORM, conversa_id)
+        if row is not None and row.encerrada_em is None:
+            row.encerrada_em = _now()
+            await self._s.flush()
 
     async def adicionar_mensagem(
         self,
@@ -91,6 +137,11 @@ class SqlConversaRepository:
         fontes: list[str] | None = None,
         autor_nome: str = "",
     ) -> None:
+        # Renova a janela da sessão: sem isto, uma conversa ativa a tarde toda venceria às
+        # 24h da PRIMEIRA mensagem, no meio do assunto.
+        conversa = await self._s.get(ConversaORM, conversa_id)
+        if conversa is not None:
+            conversa.ultima_mensagem_em = _now()
         self._s.add(
             MensagemORM(
                 id=uuid.uuid4(),
@@ -174,12 +225,7 @@ class SqlConversaRepository:
             ultima = r.mensagens[-1] if r.mensagens else None
             resumos.append(
                 ResumoConversa(
-                    conversa=Conversa(
-                        id=r.id,
-                        tenant_id=r.tenant_id,
-                        contato=r.contato,
-                        criado_em=r.criado_em,
-                    ),
+                    conversa=_to_conversa(r),
                     total_mensagens=len(r.mensagens),
                     ultima_mensagem=ultima.texto if ultima else "",
                     ultima_em=ultima.criado_em if ultima else None,
@@ -193,9 +239,7 @@ class SqlConversaRepository:
         row = await self._s.get(ConversaORM, conversa_id)
         if row is None or row.tenant_id != tenant_id:
             return None
-        return Conversa(
-            id=row.id, tenant_id=row.tenant_id, contato=row.contato, criado_em=row.criado_em
-        )
+        return _to_conversa(row)
 
     async def mensagens(self, *, conversa_id: uuid.UUID) -> list[Mensagem]:
         stmt = (

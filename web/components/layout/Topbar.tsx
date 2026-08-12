@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { SeletorDeEscola } from "../admin/SeletorDeEscola";
-import { BellIcon, MenuIcon } from "../ui/icons";
+import { Pendencias, SininhoNotificacoes } from "../admin/Notificacoes";
+import { MenuIcon } from "../ui/icons";
 
 export interface TopbarUser {
   name: string;
@@ -21,6 +22,7 @@ export function Topbar({
   user,
   showTenant = true,
   showBell = true,
+  pendencias,
   onLogout,
   onMenu,
 }: {
@@ -29,6 +31,8 @@ export function Topbar({
   /** Mostra o seletor de escola (só faz sentido para o super admin). */
   showTenant?: boolean;
   showBell?: boolean;
+  /** Contadores da central de notificações — resolvidos uma vez, na AppShell. */
+  pendencias?: Pendencias;
   onLogout?: () => void;
   /** Abre o drawer da Sidebar no mobile. */
   onMenu?: () => void;
@@ -59,15 +63,7 @@ export function Topbar({
           </div>
         )}
 
-        {showBell && (
-          <button
-            aria-label="Notificações"
-            className="relative flex h-9 w-9 items-center justify-center rounded-[10px] border border-n-100 text-n-500 hover:bg-n-50"
-          >
-            <BellIcon size={18} />
-            <span className="absolute right-2 top-[7px] h-[7px] w-[7px] rounded-full border-[1.5px] border-white bg-accent" />
-          </button>
-        )}
+        {showBell && pendencias && <SininhoNotificacoes pendencias={pendencias} />}
 
         <div className="flex items-center gap-2.5 border-l border-n-100 pl-1.5">
           <div className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[13px] font-bold text-white">

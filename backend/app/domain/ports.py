@@ -275,7 +275,13 @@ class TenantRepository(Protocol):
 
 @runtime_checkable
 class ConversaRepository(Protocol):
-    async def obter_ou_criar(self, *, tenant_id: UUID, contato: str) -> Conversa: ...
+    async def obter_ou_criar(self, *, tenant_id: UUID, contato: str) -> Conversa:
+        """A **sessão viva** do responsável, abrindo outra quando a anterior venceu."""
+        ...
+
+    async def encerrar(self, *, conversa_id: UUID) -> None:
+        """Fecha a sessão. Idempotente — encerrar duas vezes não reescreve a data."""
+        ...
 
     async def adicionar_mensagem(
         self,

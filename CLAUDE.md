@@ -164,7 +164,8 @@ ti-escolar/
   `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo` →
   `0033_usuario_cargo_hierarquia` →
   `0034_contato_responsavel` → `0035_aluno_foto` →
-  `0036_turma_estruturada`.
+  `0036_turma_estruturada` →
+  `0037_conversa_sessao`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -1414,10 +1415,29 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 Três visões consultáveis no painel da escola (e pelo super admin, via `_exige_acesso_tenant`),
 sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escopado por `tenant_id`.
 
-- **Histórico de conversas** (`/historico/conversas`): lista as conversas do WhatsApp e abre o
+- **Histórico de conversas** (`/historico/conversas`): lista as **sessões** de conversa e abre o
   diálogo completo (mensagens **recebidas** dos responsáveis + **respostas da LLM**, com as fontes
   RAG citadas). Reusa `ListarConversasDaEscola`/`ObterConversaDaEscola`
   (`GET /api/admin/escolas/{tenant_id}/conversas[/{conversa_id}]`).
+  - **A conversa é uma sessão, não o fio eterno do responsável** (migration
+    `0037_conversa_sessao`). Havia uma `Conversa` por `(tenant, contato)`, para sempre,
+    garantida por um UNIQUE — que precisou sair, porque era ele que impedia a segunda
+    sessão. A sessão **viva** é a não encerrada cuja última mensagem está dentro de
+    `CONVERSA_JANELA_HORAS` (24, alinhado à janela da Meta — o relógio que o responsável
+    percebe); fora disso a próxima mensagem abre outra. `0` desliga o recorte, como
+    válvula.
+  - **O sintoma visível era o histórico ilegível; o caro era invisível:** o contexto
+    enviado à LLM crescia sem limite, carregando meses de assunto encerrado a cada
+    mensagem — encarecendo a chamada e piorando a resposta (o modelo responde sobre a
+    matrícula de março quando perguntam do uniforme de agosto). Como `historico()` já era
+    por conversa, o recorte da sessão resolve isso sozinho.
+  - **Resolver um atendimento (§6j) encerra a sessão.** Assunto fechado não deve carregar
+    contexto para o próximo. Se o responsável voltar no mesmo assunto,
+    `RegistrarRetornoDoResponsavel` reabre o atendimento.
+  - A janela é renovada **a cada mensagem**, não a partir da primeira: uma conversa que
+    dura a tarde inteira se partiria ao meio. A sessão vencida é encerrada **na hora em
+    que se descobre** (dentro de `obter_ou_criar`), e não por job — o projeto não tem
+    scheduler, e conversas mortas ficariam abertas até ele rodar.
 - **Histórico de mensagens em massa** (`/historico/disparos`): lista os broadcasts com **template**,
   total de destinatários, **status de entrega** agregado e data; o detalhe mostra a entrega **por
   responsável** (nome, telefone, status `sent`/`delivered`/`read`/`failed`, atualizado em).
@@ -1659,6 +1679,22 @@ latência —, material que não é para a secretaria.
   `docs/producao-whatsapp.md` §6.1.1.
 - **[Roadmap] Alerta ativo:** ninguém é notificado de um erro; é preciso abrir o painel. É o que
   mantém o item 8 do checklist em ⚠️.
+
+### 16a. Central de notificações do painel
+
+O sininho da `Topbar` **não era um sininho**: um `<button>` sem `onClick`, com a bolinha
+vermelha cravada no JSX — avisava sempre, inclusive com a fila zerada. Um alerta sempre
+aceso é um alerta que ninguém olha.
+
+- `web/components/admin/Notificacoes.tsx` consolida as fontes (`usePendencias`):
+  responsáveis esperando (§6j) e documentos a conferir (§6k), via
+  `GET .../atendimentos/tenant/{id}/pendentes` e `GET .../documentos/tenant/{id}/pendentes`.
+- **Uma requisição por ciclo para o painel inteiro**: o polling saiu da `Sidebar` e o badge
+  do menu passou a ler do mesmo hook, em vez de cada lugar que mostra número fazer o seu.
+- **Alerta em tela só na subida** da contagem, com a aba aberta — e nunca na primeira
+  leitura. Um toast que reaparece a cada polling vira ruído e a secretaria aprende a
+  ignorar, que é o oposto do pedido. Aba escondida não gera requisição; voltar para ela
+  reconfere na hora.
 
 ---
 

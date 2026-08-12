@@ -134,7 +134,7 @@ def get_receber_midia(
     return ReceberMidiaDoResponsavel(
         fonte=criar_fonte_midia(settings),
         recepcao=get_recepcao_documentos(session, settings),
-        conversas=SqlConversaRepository(session),
+        conversas=_conversas(session, settings),
         mesa=get_mesa_atendimento(session),
     )
 
@@ -196,7 +196,7 @@ def get_atender_conversa(
 
     documentos = RecuperarEEnviarDocumento(source=MockDocumentSource(), canal=canal)
     return AtenderConversa(
-        conversas=SqlConversaRepository(session),
+        conversas=_conversas(session, settings),
         embedder=embedder,
         store=store,
         llm=llm,
@@ -258,8 +258,17 @@ def get_notificar_licencas(
     )
 
 
-def get_conversa_repo(session: AsyncSession = Depends(get_session)) -> SqlConversaRepository:
-    return SqlConversaRepository(session)
+def _conversas(session: AsyncSession, settings: Settings) -> SqlConversaRepository:
+    """A janela da sessão vem da config: o repositório precisa dela para saber quando a
+    conversa venceu (§13)."""
+    return SqlConversaRepository(session, janela_horas=settings.conversa_janela_horas)
+
+
+def get_conversa_repo(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> SqlConversaRepository:
+    return _conversas(session, settings)
 
 
 def get_broadcast_repo(session: AsyncSession = Depends(get_session)) -> SqlBroadcastRepository:
@@ -408,7 +417,7 @@ def get_responder_atendimento(
     """Resposta da secretaria ao responsável, pelo número da própria escola (§6j)."""
     return ResponderAtendimento(
         atendimentos=SqlAtendimentoHumanoRepository(session),
-        conversas=SqlConversaRepository(session),
+        conversas=_conversas(session, settings),
         canal=criar_canal(settings),
         tenants=SqlTenantRepository(session),
         templates=SqlTemplateRepository(session),
