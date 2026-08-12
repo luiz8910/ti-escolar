@@ -10,10 +10,12 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import (
+    SugestaoBloqueio,
+    NumeroBloqueado,
     AtendimentoHumano,
     CategoriaDocumento,
     AvisoTemporizado,
@@ -32,6 +34,7 @@ from app.domain.entities import (
     StatusSolicitacaoInterna,
 )
 from app.infrastructure.db.models import (
+    NumeroBloqueadoORM,
     AtendimentoHumanoORM,
     AvisoTemporizadoORM,
     CotaImpressaoORM,
@@ -826,6 +829,40 @@ class SqlDocumentoRecebidoRepository:
             return None
         return _to_documento(row)
 
+    async def descartados_por_numero(
+        self, *, tenant_id: uuid.UUID, desde, minimo: int
+    ) -> list[SugestaoBloqueio]:
+        """Números com ao menos ``minimo`` descartes desde ``desde`` (§4.5).
+
+        Agrega no banco em vez de carregar os documentos: a janela é curta, mas em época de
+        matrícula o volume não é.
+        """
+        stmt = (
+            select(
+                DocumentoRecebidoORM.contato,
+                func.count().label("total"),
+                func.max(DocumentoRecebidoORM.contato_nome).label("nome"),
+                func.max(DocumentoRecebidoORM.criado_em).label("ultimo"),
+            )
+            .where(
+                DocumentoRecebidoORM.tenant_id == tenant_id,
+                DocumentoRecebidoORM.status == StatusDocumento.DESCARTADO.value,
+                DocumentoRecebidoORM.criado_em >= desde,
+            )
+            .group_by(DocumentoRecebidoORM.contato)
+            .having(func.count() >= minimo)
+            .order_by(func.count().desc())
+        )
+        return [
+            SugestaoBloqueio(
+                telefone=r.contato,
+                descartados=int(r.total),
+                contato_nome=r.nome or "",
+                ultimo_em=r.ultimo,
+            )
+            for r in (await self._s.execute(stmt)).all()
+        ]
+
     async def por_media_id(
         self, *, tenant_id: uuid.UUID, media_id: str
     ) -> DocumentoRecebido | None:
@@ -922,3 +959,70 @@ class SqlDocumentoRecebidoRepository:
         await self._s.delete(row)
         await self._s.flush()
         return True
+
+
+class SqlNumeroBloqueadoRepository:
+    """Números com envio de **mídia** recusado (§6k, anti-spam)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def bloquear(self, bloqueio: NumeroBloqueado) -> NumeroBloqueado:
+        # Idempotente: bloquear de novo atualiza o motivo em vez de estourar no UNIQUE —
+        # a secretaria pode clicar duas vezes, ou revisar o motivo depois.
+        stmt = select(NumeroBloqueadoORM).where(
+            NumeroBloqueadoORM.tenant_id == bloqueio.tenant_id,
+            NumeroBloqueadoORM.telefone == bloqueio.telefone,
+        )
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            row = NumeroBloqueadoORM(
+                id=bloqueio.id,
+                tenant_id=bloqueio.tenant_id,
+                telefone=bloqueio.telefone,
+                motivo=bloqueio.motivo,
+                bloqueado_por=bloqueio.bloqueado_por,
+                bloqueado_em=bloqueio.bloqueado_em,
+            )
+            self._s.add(row)
+        else:
+            row.motivo = bloqueio.motivo
+            row.bloqueado_por = bloqueio.bloqueado_por
+        await self._s.flush()
+        return _to_bloqueio(row)
+
+    async def desbloquear(self, *, tenant_id: uuid.UUID, telefone: str) -> bool:
+        resultado = await self._s.execute(
+            delete(NumeroBloqueadoORM).where(
+                NumeroBloqueadoORM.tenant_id == tenant_id,
+                NumeroBloqueadoORM.telefone == telefone,
+            )
+        )
+        await self._s.flush()
+        return bool(resultado.rowcount)
+
+    async def bloqueado(self, *, tenant_id: uuid.UUID, telefone: str) -> bool:
+        stmt = select(func.count()).select_from(NumeroBloqueadoORM).where(
+            NumeroBloqueadoORM.tenant_id == tenant_id,
+            NumeroBloqueadoORM.telefone == telefone,
+        )
+        return bool((await self._s.execute(stmt)).scalar_one())
+
+    async def listar(self, *, tenant_id: uuid.UUID) -> list[NumeroBloqueado]:
+        stmt = (
+            select(NumeroBloqueadoORM)
+            .where(NumeroBloqueadoORM.tenant_id == tenant_id)
+            .order_by(NumeroBloqueadoORM.bloqueado_em.desc())
+        )
+        return [_to_bloqueio(r) for r in (await self._s.execute(stmt)).scalars().all()]
+
+
+def _to_bloqueio(row: NumeroBloqueadoORM) -> NumeroBloqueado:
+    return NumeroBloqueado(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        telefone=row.telefone,
+        motivo=row.motivo,
+        bloqueado_por=row.bloqueado_por,
+        bloqueado_em=row.bloqueado_em,
+    )

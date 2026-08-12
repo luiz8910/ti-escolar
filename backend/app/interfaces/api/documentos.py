@@ -18,6 +18,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.application.documentos_use_cases import (
     BaixarDocumentoRecebido,
+    BloquearNumero,
+    DesbloquearNumero,
+    LerDocumentoPorIA,
+    ListarNumerosBloqueados,
+    SugerirBloqueios,
     ClassificarDocumento,
     ExpurgarDocumentosVencidos,
     ListarDocumentosRecebidos,
@@ -36,6 +41,7 @@ from app.infrastructure.db.repositories_admin import (
 )
 from app.infrastructure.db.repositories_comunicacao import (
     SqlDocumentoRecebidoRepository,
+    SqlNumeroBloqueadoRepository,
 )
 from app.interfaces.api.admin import (
     _auditar_usuario,
@@ -45,6 +51,8 @@ from app.interfaces.api.admin import (
 )
 from app.interfaces.deps import (
     get_aluno_repo,
+    get_bloqueio_repo,
+    get_ler_documento_ia,
     get_audit_repo,
     get_baixar_documento,
     get_documento_repo,
@@ -52,10 +60,14 @@ from app.interfaces.deps import (
 )
 from app.interfaces.dto import (
     DocumentoClassificacaoEntrada,
+    DocumentoLidoSaida,
     DocumentoRecebidoSaida,
     DocumentosPaginaSaida,
     DocumentosPendentesSaida,
     ExpurgoSaida,
+    NumeroBloqueadoEntrada,
+    NumeroBloqueadoSaida,
+    SugestaoBloqueioSaida,
     PaginaMeta,
 )
 
@@ -163,11 +175,20 @@ async def detalhar(
 async def baixar(
     documento_id: UUID,
     tenant_id: UUID,
+    inline: bool = False,
     usuario: Usuario = Depends(usuario_autenticado),
     uc: BaixarDocumentoRecebido = Depends(get_baixar_documento),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> Response:
-    """Os bytes do arquivo. Autenticado, escopado por tenant e **auditado**."""
+    """Os bytes do arquivo. Autenticado, escopado por tenant e **auditado**.
+
+    ``inline=true`` troca o ``Content-Disposition`` para exibição — é o preview pedido no
+    apontamento de 10/08 ("preview da imagem e não apenas baixar"). **Só isso muda**:
+    autenticação, escopo por tenant, ``no-store`` e auditoria continuam valendo, porque
+    visualizar *é* acessar o dado. O registro passa a distinguir `documento.visualizar` de
+    `documento.baixar` — sem essa distinção, a auditoria diria que a secretaria baixou
+    trinta atestados numa tarde em que ela só olhou a tela.
+    """
     _exige_acesso_tenant(usuario, tenant_id)
     arquivo = await uc.executar(tenant_id=tenant_id, documento_id=documento_id)
     if arquivo is None:
@@ -179,19 +200,163 @@ async def baixar(
     await _auditar_usuario(
         auditoria,
         usuario=usuario,
-        acao="documento.baixar",
+        acao="documento.visualizar" if inline else "documento.baixar",
         tenant_id=tenant_id,
-        descricao=f"Baixou o arquivo {arquivo.nome}",
+        descricao=("Visualizou" if inline else "Baixou") + f" o arquivo {arquivo.nome}",
         metadados={"documento_id": str(documento_id), "mime": arquivo.mime},
     )
+    disposicao = "inline" if inline else "attachment"
     return Response(
         content=arquivo.conteudo,
         media_type=arquivo.mime,
         headers={
-            "Content-Disposition": f'attachment; filename="{arquivo.nome}"',
+            "Content-Disposition": f'{disposicao}; filename="{arquivo.nome}"',
             # Dado sensível não fica em cache de proxy nem do navegador da secretaria.
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.post("/{documento_id}/ler", response_model=DocumentoLidoSaida)
+async def ler_por_ia(
+    documento_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: LerDocumentoPorIA = Depends(get_ler_documento_ia),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> DocumentoLidoSaida:
+    """Lê o documento por IA e devolve **sugestões** — nada é gravado (§4.3).
+
+    Sob demanda, a pedido da secretaria: em época de matrícula o volume é alto e a maioria
+    dos documentos ela classifica de olho. Auditado como acesso ao conteúdo, porque é
+    exatamente isso — o arquivo sai do storage e vai para um provedor externo.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    lido = await uc.executar(tenant_id=tenant_id, documento_id=documento_id)
+    if lido is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Documento não encontrado"
+        )
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="documento.ler_ia",
+        tenant_id=tenant_id,
+        descricao="Pediu a leitura do documento por IA",
+        metadados={"documento_id": str(documento_id), "erro": lido.erro},
+    )
+    return DocumentoLidoSaida(
+        categoria=lido.categoria.value if lido.categoria else "",
+        aluno_nome=lido.aluno_nome,
+        resumo=lido.resumo,
+        campos_ficha=lido.campos_ficha,
+        erro=lido.erro,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# §4.5 — anti-spam. A aplicação **sugere**; quem bloqueia é uma pessoa.
+# --------------------------------------------------------------------------- #
+@router.get("/tenant/{tenant_id}/sugestoes-bloqueio", response_model=list[SugestaoBloqueioSaida])
+async def sugestoes_bloqueio(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    repo: SqlDocumentoRecebidoRepository = Depends(get_documento_repo),
+    bloqueios: SqlNumeroBloqueadoRepository = Depends(get_bloqueio_repo),
+) -> list[SugestaoBloqueioSaida]:
+    _exige_acesso_tenant(usuario, tenant_id)
+    sugestoes = await SugerirBloqueios(documentos=repo, bloqueios=bloqueios).executar(
+        tenant_id=tenant_id
+    )
+    return [
+        SugestaoBloqueioSaida(
+            telefone=s.telefone,
+            descartados=s.descartados,
+            contato_nome=s.contato_nome,
+            ultimo_em=s.ultimo_em,
+        )
+        for s in sugestoes
+    ]
+
+
+@router.get("/tenant/{tenant_id}/bloqueados", response_model=list[NumeroBloqueadoSaida])
+async def listar_bloqueados(
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    bloqueios: SqlNumeroBloqueadoRepository = Depends(get_bloqueio_repo),
+) -> list[NumeroBloqueadoSaida]:
+    _exige_acesso_tenant(usuario, tenant_id)
+    return [
+        NumeroBloqueadoSaida(
+            telefone=b.telefone,
+            motivo=b.motivo,
+            bloqueado_por=b.bloqueado_por,
+            bloqueado_em=b.bloqueado_em,
+        )
+        for b in await ListarNumerosBloqueados(bloqueios=bloqueios).executar(
+            tenant_id=tenant_id
+        )
+    ]
+
+
+@router.post("/bloqueados", response_model=NumeroBloqueadoSaida, status_code=status.HTTP_201_CREATED)
+async def bloquear_numero(
+    payload: NumeroBloqueadoEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    bloqueios: SqlNumeroBloqueadoRepository = Depends(get_bloqueio_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> NumeroBloqueadoSaida:
+    """Recusa **mídia** deste número. O texto continua sendo atendido, e o remetente é
+    avisado — bloquear alguém por completo com base num contador é o erro que o produto
+    existe para evitar."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        bloqueio = await BloquearNumero(bloqueios=bloqueios).executar(
+            tenant_id=payload.tenant_id,
+            telefone=payload.telefone,
+            motivo=payload.motivo,
+            por=usuario.nome,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="documento.bloquear_numero",
+        tenant_id=payload.tenant_id,
+        descricao=f"Bloqueou envio de arquivos de {payload.telefone}",
+        metadados={"telefone": payload.telefone, "motivo": payload.motivo},
+    )
+    return NumeroBloqueadoSaida(
+        telefone=bloqueio.telefone,
+        motivo=bloqueio.motivo,
+        bloqueado_por=bloqueio.bloqueado_por,
+        bloqueado_em=bloqueio.bloqueado_em,
+    )
+
+
+@router.delete("/bloqueados/{telefone}", status_code=status.HTTP_204_NO_CONTENT)
+async def desbloquear_numero(
+    telefone: str,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    bloqueios: SqlNumeroBloqueadoRepository = Depends(get_bloqueio_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> None:
+    _exige_acesso_tenant(usuario, tenant_id)
+    if not await DesbloquearNumero(bloqueios=bloqueios).executar(
+        tenant_id=tenant_id, telefone=telefone
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Número não estava bloqueado"
+        )
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="documento.desbloquear_numero",
+        tenant_id=tenant_id,
+        descricao=f"Liberou envio de arquivos de {telefone}",
+        metadados={"telefone": telefone},
     )
 
 

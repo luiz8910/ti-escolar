@@ -629,17 +629,23 @@ async def listar_alunos(
     tenant_id: UUID,
     sala_id: UUID | None = None,
     apenas_ativos: bool | None = None,
+    q: str = Query("", description="Busca por nome ou matrícula."),
     pagina: int = Query(1, ge=1),
     por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
 ) -> AlunosPaginaSaida:
-    """``apenas_ativos``: omitido = todos; ``true`` = matriculados; ``false`` = ex-alunos."""
+    """``apenas_ativos``: omitido = todos; ``true`` = matriculados; ``false`` = ex-alunos.
+
+    ``q`` é o que alimenta a busca instantânea da tela de documentos, no lugar do
+    ``<select>`` com teto de 200 alunos — a partir do aluno 201 não havia como vincular.
+    """
     _exige_acesso_tenant(usuario, tenant_id)
     resultado = await ListarAlunos(alunos=alunos).executar(
         tenant_id=tenant_id,
         sala_id=sala_id,
         apenas_ativos=apenas_ativos,
+        q=q,
         pagina=pagina,
         por_pagina=por_pagina,
     )

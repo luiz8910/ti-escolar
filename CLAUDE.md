@@ -165,7 +165,7 @@ ti-escolar/
   `0033_usuario_cargo_hierarquia` →
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
-  `0037_conversa_sessao`.
+  `0037_conversa_sessao` → `0038_anti_spam_docs`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -861,6 +861,47 @@ arquivo passa a pertencer à escola, ligado à conversa que o originou.
   envelope de mídia do webhook, áudio ignorado, texto intacto).
 - **[Roadmap]** adaptador R2; **job agendado** do expurgo (hoje depende de alguém clicar);
   ligação automática com a `SolicitacaoMatricula` (§E1) e a `FichaMatricula` (§D3).
+
+#### 6k.1 Buscar o aluno, ver o arquivo, ler por IA (Fase 4 do plano de 10/08)
+
+Três apontamentos do teste manual, e o primeiro era um bug de dados disfarçado de UX.
+
+- **Busca de aluno no servidor.** A tela carregava **200 alunos** num `<select>`: a partir do
+  aluno 201 não havia como vincular documento nenhum, e o problema aparece justamente no
+  aluno que ninguém procurou ainda. `AlunoRepository.listar/contar` passaram a aceitar `q`
+  (nome ou matrícula, `ILIKE`), e `web/components/admin/BuscaAluno.tsx` busca com debounce,
+  teto de 20 resultados e mínimo de 2 letras — uma letra traria meia escola.
+- **Ver, não só baixar** (`?inline=true`): o `Content-Disposition` vira `inline` e o painel
+  monta um **blob URL** a partir do endpoint autenticado, revogado ao fechar. Nunca um `src`
+  com token na URL. Visualizar **é acessar o dado**, então é auditado à parte
+  (`documento.visualizar` × `documento.baixar`) — quem audita precisa distinguir quem olhou
+  na tela de quem levou o arquivo embora.
+- **Leitura por IA** (`LerDocumentoPorIA`, porta `LeitorDocumento` + `AnthropicLeitorDocumento`):
+  manda os **bytes** do arquivo ao modelo (bloco de imagem/documento, não OCR próprio) e
+  devolve finalidade, aluno mencionado, resumo e campos de ficha. É **sugestão**, no mesmo
+  fluxo prévia→confirmação da importação em massa (§6c-quater) e da ficha (§D3): a secretaria
+  aplica com um clique ou ignora. **Documento ilegível é resultado normal**, não erro — vem
+  em `erro` e a tela diz isso sem parecer falha. Os campos de ficha são só exibidos: preencher
+  a ficha a partir daqui gravaria dado sensível de menor sem ninguém olhar.
+
+#### 6k.2 Anti-spam: quarentena e bloqueio de mídia (§4.5)
+
+O inbound é público — quem descobre o número da escola manda o que quiser, e a §6k já barra
+MIME e tamanho. Falta**va** barrar *quem*.
+
+- **Quarentena de desconhecido:** arquivo vindo de um telefone **sem `Contato` cadastrado**
+  entra como `StatusDocumento.QUARENTENA` em vez de `recebido`. Não é recusa — a secretaria
+  vê, confirma e classifica; é só o que separa a fila de trabalho do que chegou de fora.
+- **`NumeroBloqueado`** (migration `0038_anti_spam_docs`, único por `(tenant_id, telefone)`):
+  recusa **o envio de arquivos**, não a pessoa. O número **segue sendo atendido por texto** —
+  silenciar alguém por completo com base num contador é exatamente o erro que este produto
+  existe para evitar, e o remetente pode ser o pai certo com o telefone errado no cadastro.
+- **A sugestão é da máquina; o bloqueio é humano** (decisão C): `SugerirBloqueios` aponta os
+  números com `DESCARTES_PARA_SUGERIR_BLOQUEIO` (3) descartes em `JANELA_DESCARTES_DIAS` (7).
+  Bloqueio automático não existe — ele erraria calado, e o custo do erro é uma escola que
+  para de receber os documentos de matrícula de uma família.
+- **Rotas** em `api/documentos.py`: `POST /{id}/ler`, `GET .../sugestoes-bloqueio`,
+  `GET .../bloqueados`, `POST /bloqueados`, `DELETE /bloqueados/{telefone}`.
 
 ## 7. Camada de LLM
 

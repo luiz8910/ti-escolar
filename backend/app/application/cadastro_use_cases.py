@@ -524,20 +524,26 @@ class ListarAlunos:
     async def executar(
         self, *, tenant_id: UUID, sala_id: UUID | None = None,
         apenas_ativos: bool | None = None,
+        q: str = "",
         pagina: int = 1,
         por_pagina: int = POR_PAGINA_PADRAO,
     ) -> Pagina[Aluno]:
-        """``apenas_ativos=None`` traz matriculados e ex-alunos; ``True``/``False`` filtra."""
+        """``apenas_ativos=None`` traz matriculados e ex-alunos; ``True``/``False`` filtra.
+
+        ``q`` busca por nome ou matrícula. É o que substitui o ``<select>`` com teto de 200
+        alunos na tela de documentos — a partir do aluno 201 não havia como vincular.
+        """
         pagina, por_pagina = normalizar_paginacao(pagina, por_pagina)
         itens = await self._alunos.listar(
             tenant_id=tenant_id,
             sala_id=sala_id,
             apenas_ativos=apenas_ativos,
+            q=q,
             pagina=pagina,
             por_pagina=por_pagina,
         )
         total = await self._alunos.contar(
-            tenant_id=tenant_id, sala_id=sala_id, apenas_ativos=apenas_ativos
+            tenant_id=tenant_id, sala_id=sala_id, apenas_ativos=apenas_ativos, q=q
         )
         return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
 

@@ -10,11 +10,13 @@ from app.domain.ports import (
     EmailSender,
     Embedder,
     FonteMidia,
+    LeitorDocumento,
     LLMProvider,
     MessageChannel,
 )
 from app.infrastructure.channel.demo_channel import DemoMessageChannel
 from app.infrastructure.llm.fake_provider import FakeEmbedder, FakeLLMProvider
+from app.infrastructure.llm.leitor_documento import LeitorDocumentoFake
 
 
 def criar_llm(settings: Settings) -> LLMProvider:
@@ -34,6 +36,23 @@ def criar_llm(settings: Settings) -> LLMProvider:
         )
     # "fake" (padrão) e fallback.
     return FakeLLMProvider()
+
+
+def criar_leitor_documento(settings: Settings) -> LeitorDocumento:
+    """Leitura de documento por IA (§4.3).
+
+    Só a Anthropic tem adaptador: o bloco de imagem/PDF é específico da API dela, e
+    escrever um segundo às cegas repetiria o erro do object storage — ir para produção sem
+    nunca ter lido um arquivo de verdade. Sem chave, cai no fake, que mantém o fluxo de
+    revisão demonstrável.
+    """
+    if settings.anthropic_api_key:
+        from app.infrastructure.llm.leitor_documento import AnthropicLeitorDocumento
+
+        return AnthropicLeitorDocumento(
+            api_key=settings.anthropic_api_key, model=settings.llm_model
+        )
+    return LeitorDocumentoFake()
 
 
 def criar_embedder(settings: Settings) -> Embedder:
