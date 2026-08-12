@@ -510,6 +510,31 @@ class Usuario:
 # --------------------------------------------------------------------------- #
 # Contatos (pais/responsáveis) e grupos de distribuição
 # --------------------------------------------------------------------------- #
+class TipoFiliacao(str, enum.Enum):
+    """Vínculo do responsável com o aluno.
+
+    ``RESPONSAVEL_LEGAL`` é o caso do **termo de guarda**: quem responde pelo aluno sem
+    ser mãe ou pai. Ele é um ``Contato`` como qualquer outro — recebe disparo, é
+    reconhecido no WhatsApp e aparece na ficha —, e não um booleano na ficha, que era
+    como estava modelado antes (``FichaMatricula.termo_guarda``) e deixava a pessoa
+    invisível para o canal.
+    """
+
+    MAE = "mae"
+    PAI = "pai"
+    RESPONSAVEL_LEGAL = "responsavel_legal"
+    OUTRO = "outro"
+
+    @property
+    def rotulo(self) -> str:
+        return {
+            TipoFiliacao.MAE: "Mãe",
+            TipoFiliacao.PAI: "Pai",
+            TipoFiliacao.RESPONSAVEL_LEGAL: "Responsável legal (termo de guarda)",
+            TipoFiliacao.OUTRO: "Outro",
+        }[self]
+
+
 @dataclass
 class Contato:
     """Pai/responsável com número de WhatsApp, dentro de um tenant.
@@ -517,14 +542,39 @@ class Contato:
     ``ativo=False`` marca um responsável **inativo** — normalmente porque todos os seus
     alunos já são ex-alunos (ver a progressão de série, §F1). Um responsável inativo
     permanece no cadastro (histórico), mas não deve receber novos avisos.
+
+    **``telefone`` é o número da conversa.** É por ele que o inbound roteia (o webhook
+    entrega o remetente, não o id do contato) e por ele que o disparo sai — daí ser único
+    por tenant. ``telefone_2`` e ``telefone_trabalho`` são contato de emergência e **não
+    entram em disparo nenhum**: dois números na mesma conversa quebrariam o roteamento,
+    que casa por telefone (decisão E do plano de 10/08).
+
+    ``tipo_filiacao`` é o vínculo declarado da pessoa. Fica no ``Contato``, e não na
+    associação com o aluno, porque é assim que a secretaria cadastra e enxerga — "a mãe",
+    "o responsável legal". O caso de alguém ser mãe de um aluno e guardiã de outro na
+    mesma escola existe, mas é raro o bastante para não justificar hoje um campo por
+    vínculo; quando aparecer, ele entra em ``aluno_responsaveis``.
     """
 
     tenant_id: UUID
     nome: str
-    telefone: str  # E.164, ex.: +5511999990000
+    telefone: str  # E.164 — o número da conversa; ver o docstring
     ativo: bool = True
+    # Cadastro do responsável. CPF em 11 dígitos sem pontuação; datas em ISO.
+    cpf: str = ""
+    tipo_filiacao: TipoFiliacao | None = None
+    data_nascimento: str = ""
+    telefone_2: str = ""  # emergência — NÃO recebe disparo
+    local_trabalho: str = ""
+    telefone_trabalho: str = ""  # emergência — NÃO recebe disparo
+    email: str = ""
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+
+    @property
+    def eh_responsavel_legal(self) -> bool:
+        """Entrou por termo de guarda (não é mãe nem pai)."""
+        return self.tipo_filiacao is TipoFiliacao.RESPONSAVEL_LEGAL
 
 
 @dataclass

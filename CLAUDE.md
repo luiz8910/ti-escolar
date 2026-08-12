@@ -162,7 +162,11 @@ ti-escolar/
   `0026_inbound_atendimento` → `0027_logs_aplicacao` → `0028_aluno_soft_delete` →
   `0029_atendimento_humano` → `0030_documentos_recebidos` →
   `0031_fonte_conhecimento_conteudo` → `0032_professor_cadastro_completo` →
-  `0033_usuario_cargo_hierarquia`.
+  `0033_usuario_cargo_hierarquia` →
+  `0034_contato_responsavel`.
+  ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
+  `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
+  ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
   **Cadeia linear obrigatória:** ao criar uma migration, encadeie no head atual
   (`down_revision` = último head) para evitar **multiple heads** no `alembic upgrade head`
   do deploy.
@@ -199,8 +203,28 @@ ti-escolar/
 - **Permissões** (`CriarUsuario`): só super admin cria super admin; admin de tenant só cria/lista
   dentro do próprio tenant. Acesso a grupos exige `_exige_acesso_tenant` (403 fora do tenant);
   a gestão de contas exige `_exige_gestao_de_usuarios` (403 para a secretaria).
-- **`Grupo`** (por tenant) agrega **`Contato`s** (N:N via `grupo_contatos`). `Contato` é único por
-  `(tenant_id, telefone)`. `EnviarBroadcastParaGrupo` resolve os membros do grupo em destinatários
+- **`Contato` (pai/responsável)** carrega o cadastro civil desde 12/ago/2026 (migration
+  `0034_contato_responsavel`): `cpf`, `tipo_filiacao`, `data_nascimento`, `telefone_2`,
+  `local_trabalho`, `telefone_trabalho`, `email`. Único por `(tenant_id, telefone)` **e**
+  por `(tenant_id, cpf)` quando informado (UNIQUE parcial, como em `professores`).
+  - **Só `telefone` roteia a conversa.** É a chave do inbound (o webhook entrega o
+    remetente, não o id do contato) e do outbound. `telefone_2` e `telefone_trabalho` são
+    contato de emergência e **não entram em disparo** — dois números na mesma conversa
+    quebrariam o roteamento (decisão E do plano de 10/08).
+  - **O termo de guarda deixou de ser um booleano.** Estava modelado como
+    `FichaMatricula.termo_guarda` + um nome solto em `responsavel_legal`, o que deixava
+    quem responde pela criança **invisível para o canal**: não recebia disparo, não era
+    reconhecido no WhatsApp, não contava na cobertura da turma. Agora é um `Contato` com
+    `tipo_filiacao = responsavel_legal`, ligado ao aluno por `aluno_responsaveis`. A tela
+    de Alunos tem o botão que cadastra e vincula num passo só.
+  - **`tipo_filiacao` fica no `Contato`, não na associação com o aluno** — é assim que a
+    secretaria cadastra e enxerga ("a mãe", "o responsável legal"). O caso de alguém ser
+    mãe de um aluno e guardiã de outro na mesma escola existe, mas é raro o bastante para
+    não justificar hoje um campo por vínculo; quando aparecer, ele entra em
+    `aluno_responsaveis`.
+  - **Mínimo continua sendo nome + telefone**: é o que a importação em massa (§6c-quater)
+    produz e o que a escola tem quando a mãe manda o número pelo WhatsApp.
+- **`Grupo`** (por tenant) agrega **`Contato`s** (N:N via `grupo_contatos`). `EnviarBroadcastParaGrupo` resolve os membros do grupo em destinatários
   e delega a `EnviarBroadcast` (template aprovado + cota + rate limit).
 - **Seed** (`app/seed.py`) cria: super admin, admin do tenant demo, e grupos ("Turma 5º A",
   "Pais do Fundamental I") com contatos. Credenciais default em `.env.example`

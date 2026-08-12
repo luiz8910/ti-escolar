@@ -315,9 +315,20 @@ class ContatoORM(Base):
         PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
     )
     nome: Mapped[str] = mapped_column(String(200))
+    # O número da CONVERSA: roteia o inbound e assina o outbound. Único por tenant.
     telefone: Mapped[str] = mapped_column(String(50))
     # Responsável inativo (todos os seus alunos já são ex-alunos, §F1). Mantido no cadastro.
     ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Cadastro do responsável. CPF em 11 dígitos sem pontuação; datas em ISO.
+    cpf: Mapped[str] = mapped_column(String(11), default="", server_default="")
+    # "mae" | "pai" | "responsavel_legal" (termo de guarda) | "outro".
+    tipo_filiacao: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    data_nascimento: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    # Emergência — NÃO recebem disparo. Ver o docstring de `Contato`.
+    telefone_2: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    local_trabalho: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    telefone_trabalho: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    email: Mapped[str] = mapped_column(String(200), default="", server_default="")
     criado_em: Mapped[datetime] = mapped_column()
 
     grupos: Mapped[list["GrupoORM"]] = relationship(
@@ -332,6 +343,16 @@ class ContatoORM(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "telefone", name="uq_contato_tenant_telefone"),
+        # UNIQUE parcial: CPF único por escola quando informado. O default é '' e um
+        # UNIQUE simples deixaria só um responsável sem CPF — mesma razão do índice de
+        # `professores.cpf` (0032) e de `meta_phone_number_id` (0024).
+        Index(
+            "uq_contato_tenant_cpf",
+            "tenant_id",
+            "cpf",
+            unique=True,
+            postgresql_where=text("cpf <> ''"),
+        ),
     )
 
 

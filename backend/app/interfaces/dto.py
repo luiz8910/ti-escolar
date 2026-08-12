@@ -376,18 +376,49 @@ class PaiEntrada(BaseModel):
     telefone: str = Field(..., examples=["+5511999990000"])
     # Salas às quais já vincular o responsável no cadastro (opcional).
     sala_ids: list[UUID] = []
+    # Cadastro do responsável — todos opcionais; o mínimo é nome + telefone.
+    cpf: str = ""
+    # "mae" | "pai" | "responsavel_legal" (termo de guarda) | "outro".
+    tipo_filiacao: str = ""
+    data_nascimento: str = ""  # "AAAA-MM-DD" (aceita "DD/MM/AAAA")
+    # Emergência: NÃO recebem disparo. Só `telefone` roteia a conversa (decisão E).
+    telefone_2: str = ""
+    local_trabalho: str = ""
+    telefone_trabalho: str = ""
+    email: str = ""
 
 
 class PaiAtualizar(BaseModel):
     tenant_id: UUID
     nome: str
     telefone: str = Field(..., examples=["+5511999990000"])
+    # Cadastro do responsável — todos opcionais; o mínimo é nome + telefone.
+    cpf: str = ""
+    # "mae" | "pai" | "responsavel_legal" (termo de guarda) | "outro".
+    tipo_filiacao: str = ""
+    data_nascimento: str = ""  # "AAAA-MM-DD" (aceita "DD/MM/AAAA")
+    # Emergência: NÃO recebem disparo. Só `telefone` roteia a conversa (decisão E).
+    telefone_2: str = ""
+    local_trabalho: str = ""
+    telefone_trabalho: str = ""
+    email: str = ""
 
 
 class PaiSaida(BaseModel):
     id: UUID
     nome: str
     telefone: str
+    cpf: str = ""
+    # CPF já pontuado — a tela não formata nada.
+    cpf_formatado: str = ""
+    tipo_filiacao: str = ""
+    tipo_filiacao_rotulo: str = ""
+    data_nascimento: str = ""
+    telefone_2: str = ""
+    local_trabalho: str = ""
+    telefone_trabalho: str = ""
+    email: str = ""
+    ativo: bool = True
 
 
 class SalaEntrada(BaseModel):

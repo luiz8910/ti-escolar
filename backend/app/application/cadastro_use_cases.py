@@ -23,7 +23,14 @@ from app.application.validacao import (
     normalizar_email,
     normalizar_telefone,
 )
-from app.domain.entities import Aluno, CoberturaContatosSala, Contato, Professor, Sala
+from app.domain.entities import (
+    Aluno,
+    CoberturaContatosSala,
+    Contato,
+    Professor,
+    Sala,
+    TipoFiliacao,
+)
 from app.domain.ports import (
     AlunoRepository,
     ContatoRepository,
@@ -37,11 +44,54 @@ from app.infrastructure.security import hash_senha
 # --------------------------------------------------------------------------- #
 # Pais / responsáveis (CRUD)
 # --------------------------------------------------------------------------- #
+@dataclass
+class DadosResponsavel:
+    """Cadastro civil e de contato do responsável. Todos opcionais.
+
+    O mínimo continua sendo **nome + telefone**: é o que a escola tem quando a mãe manda
+    o número pelo WhatsApp, e é o que a importação em massa (§6c-quater) produz. Exigir
+    CPF de saída travaria justamente o cadastro que o bot alimenta sozinho.
+    """
+
+    cpf: str = ""
+    tipo_filiacao: TipoFiliacao | None = None
+    data_nascimento: str = ""
+    telefone_2: str = ""
+    local_trabalho: str = ""
+    telefone_trabalho: str = ""
+    email: str = ""
+
+
+def _validar_dados_responsavel(dados: DadosResponsavel) -> DadosResponsavel:
+    return DadosResponsavel(
+        cpf=normalizar_cpf(dados.cpf),
+        tipo_filiacao=dados.tipo_filiacao,
+        data_nascimento=data_nao_futura(
+            normalizar_data(dados.data_nascimento, campo="Data de nascimento"),
+            campo="Data de nascimento",
+        ),
+        # Normalizados mesmo sem rotear nada: guardar "(15) 9 9999" e "+5515999990000"
+        # na mesma coluna torna inútil procurar por número.
+        telefone_2=_e164_ou_erro(dados.telefone_2, campo="Telefone 2"),
+        local_trabalho=dados.local_trabalho.strip(),
+        telefone_trabalho=_e164_ou_erro(
+            dados.telefone_trabalho, campo="Telefone do trabalho"
+        ),
+        email=normalizar_email(dados.email),
+    )
+
+
 class CadastrarPai:
     """Cadastra um pai/responsável e, opcionalmente, já o vincula a salas.
 
-    O telefone é único por tenant (E.164). Vincular a salas na criação atende ao
-    fluxo "cadastrar o pai e relacionar com uma sala" em uma única ação.
+    O **telefone** é único por tenant (E.164) porque é a chave da conversa: o webhook
+    entrega o remetente, não o id do contato. O **CPF** também é único quando informado —
+    a mesma pessoa cadastrada duas vezes vira dois destinatários do mesmo aviso.
+
+    ``tipo_filiacao = RESPONSAVEL_LEGAL`` é o **termo de guarda**: quem responde pelo
+    aluno sem ser mãe ou pai. Não há caso de uso separado para ele — é o mesmo cadastro,
+    e é isso que o torna um responsável de verdade aos olhos do canal (recebe disparo, é
+    reconhecido no WhatsApp, conta na cobertura da turma).
     """
 
     def __init__(self, *, contatos: ContatoRepository, salas: SalaRepository) -> None:
@@ -55,12 +105,21 @@ class CadastrarPai:
         nome: str,
         telefone: str,
         sala_ids: Sequence[UUID] = (),
+        dados: DadosResponsavel | None = None,
     ) -> Contato:
         if await self._contatos.por_telefone(tenant_id=tenant_id, telefone=telefone):
             raise ValueError("Já existe um responsável com este telefone neste tenant.")
 
+        validos = _validar_dados_responsavel(dados or DadosResponsavel())
+        if validos.cpf and await self._contatos.por_cpf(
+            tenant_id=tenant_id, cpf=validos.cpf
+        ):
+            raise ValueError("Já existe um responsável com este CPF neste tenant.")
+
         contato = await self._contatos.criar(
-            Contato(tenant_id=tenant_id, nome=nome, telefone=telefone)
+            Contato(
+                tenant_id=tenant_id, nome=nome, telefone=telefone, **asdict(validos)
+            )
         )
         for sala_id in sala_ids:
             await self._salas.vincular_pai(
@@ -89,7 +148,13 @@ class AtualizarPai:
         self._contatos = contatos
 
     async def executar(
-        self, *, tenant_id: UUID, contato_id: UUID, nome: str, telefone: str
+        self,
+        *,
+        tenant_id: UUID,
+        contato_id: UUID,
+        nome: str,
+        telefone: str,
+        dados: DadosResponsavel | None = None,
     ) -> Contato:
         atual = await self._contatos.obter(tenant_id=tenant_id, contato_id=contato_id)
         if atual is None:
@@ -103,6 +168,17 @@ class AtualizarPai:
 
         atual.nome = nome
         atual.telefone = telefone
+        # `dados=None` preserva o cadastro: quem edita só o nome não pode perder o CPF.
+        if dados is not None:
+            validos = _validar_dados_responsavel(dados)
+            if validos.cpf and validos.cpf != atual.cpf:
+                duplicado = await self._contatos.por_cpf(
+                    tenant_id=tenant_id, cpf=validos.cpf
+                )
+                if duplicado is not None and duplicado.id != contato_id:
+                    raise ValueError("Já existe um responsável com este CPF neste tenant.")
+            for campo, valor in asdict(validos).items():
+                setattr(atual, campo, valor)
         return await self._contatos.atualizar(atual)
 
 

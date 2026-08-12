@@ -24,6 +24,7 @@ from app.application.cadastro_use_cases import (
     AtualizarProfessor,
     CadastrarAluno,
     CadastrarPai,
+    DadosResponsavel,
     CadastrarProfessor,
     CriarSala,
 )
@@ -42,6 +43,7 @@ from app.domain.entities import (
     CategoriaSolicitacao,
     Papel,
     TipoConhecimento,
+    TipoFiliacao,
     Turno,
     Usuario,
 )
@@ -93,14 +95,18 @@ _GRUPOS_DEMO = {
 }
 
 # Salas (turmas) de demonstração e seus pais/responsáveis (nome, telefone E.164).
+# (nome, telefone, tipo de filiação). O último é um **responsável legal** — termo de
+# guarda —, para o caso não ficar só na documentação: é ele que prova que quem responde
+# pela criança sem ser mãe/pai recebe aviso como qualquer outro responsável.
 _SALAS_DEMO = {
     "4ª série B": [
-        ("Beatriz Almeida", "+5511988880001"),
-        ("Rafael Nogueira", "+5511988880002"),
+        ("Beatriz Almeida", "+5511988880001", TipoFiliacao.MAE),
+        ("Rafael Nogueira", "+5511988880002", TipoFiliacao.PAI),
     ],
     "5ª série A": [
-        ("Cláudia Fonseca", "+5511988880003"),
-        ("Eduardo Tavares", "+5511988880004"),
+        ("Cláudia Fonseca", "+5511988880003", TipoFiliacao.MAE),
+        ("Eduardo Tavares", "+5511988880004", TipoFiliacao.PAI),
+        ("Joana Ribeiro (avó)", "+5511988880005", TipoFiliacao.RESPONSAVEL_LEGAL),
     ],
 }
 
@@ -325,7 +331,7 @@ async def _seed() -> None:
             cadastrar_pai = CadastrarPai(contatos=contatos_repo, salas=salas_repo)
             for nome_sala, responsaveis in _SALAS_DEMO.items():
                 sala = await criar_sala.executar(tenant_id=DEMO_TENANT_ID, nome=nome_sala)
-                for nome, telefone in responsaveis:
+                for nome, telefone, filiacao in responsaveis:
                     existente = await contatos_repo.por_telefone(
                         tenant_id=DEMO_TENANT_ID, telefone=telefone
                     )
@@ -335,6 +341,7 @@ async def _seed() -> None:
                             nome=nome,
                             telefone=telefone,
                             sala_ids=[sala.id],
+                            dados=DadosResponsavel(tipo_filiacao=filiacao),
                         )
                     else:
                         await salas_repo.vincular_pai(
