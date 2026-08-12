@@ -789,6 +789,34 @@ export interface Grade {
   blocos?: BlocoGrade[];
 }
 
+/**
+ * Disciplinas do ensino fundamental, para escolher no lugar de digitar.
+ *
+ * São os componentes curriculares da BNCC (áreas de Linguagens, Matemática, Ciências da
+ * Natureza e Ciências Humanas) mais os que quase toda escola tem na prática — Ensino
+ * Religioso, Projeto de Vida, Informática.
+ *
+ * **É sugestão, não trava.** O campo continua aceitando texto livre: escola tem
+ * "Robótica", "Xadrez", "Reforço", e uma lista fechada exigiria um deploy nosso para cada
+ * uma. Por isso é um combo (`datalist`) e não um `select` — quem reconhece a disciplina
+ * escolhe em um clique, quem não a encontra escreve.
+ */
+export const DISCIPLINAS_FUNDAMENTAL = [
+  "Língua Portuguesa",
+  "Matemática",
+  "Ciências",
+  "História",
+  "Geografia",
+  "Arte",
+  "Educação Física",
+  "Língua Inglesa",
+  "Ensino Religioso",
+  "Informática",
+  "Projeto de Vida",
+  "Leitura",
+  "Reforço",
+];
+
 export const DIAS_SEMANA = [
   { valor: 1, curto: "Seg" },
   { valor: 2, curto: "Ter" },

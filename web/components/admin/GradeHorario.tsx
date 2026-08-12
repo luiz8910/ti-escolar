@@ -19,7 +19,13 @@
  */
 
 import { useState } from "react";
-import { BlocoGrade, DIAS_SEMANA, FormatoGrade, Grade } from "@/lib/admin";
+import {
+  BlocoGrade,
+  DIAS_SEMANA,
+  DISCIPLINAS_FUNDAMENTAL,
+  FormatoGrade,
+  Grade,
+} from "@/lib/admin";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/form";
 import { cn } from "@/components/ui/cn";
@@ -182,6 +188,14 @@ function GradeAulas({
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Um `datalist` só para a grade inteira: repeti-lo por bloco duplicaria a lista no
+          DOM a cada aula adicionada. */}
+      <datalist id="disciplinas-fundamental">
+        {DISCIPLINAS_FUNDAMENTAL.map((d) => (
+          <option key={d} value={d} />
+        ))}
+      </datalist>
+
       {blocos.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {blocos.map((bloco, i) => (
@@ -221,9 +235,13 @@ function GradeAulas({
                 <option value="aula">Aula</option>
                 <option value="intervalo">Intervalo</option>
               </Select>
+              {/* Combo, não `select`: as disciplinas do fundamental resolvem o caso
+                  comum em um clique, mas escola tem "Robótica", "Xadrez", "Reforço" — e
+                  uma lista fechada exigiria um deploy nosso para cada uma. */}
               <Input
                 className="min-w-[120px] flex-1"
-                aria-label="Rótulo"
+                aria-label={bloco.tipo === "intervalo" ? "Rótulo" : "Disciplina"}
+                list={bloco.tipo === "intervalo" ? undefined : "disciplinas-fundamental"}
                 placeholder={bloco.tipo === "intervalo" ? "Recreio" : "Disciplina"}
                 value={bloco.rotulo}
                 onChange={(e) => alterar(i, "rotulo", e.target.value)}

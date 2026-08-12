@@ -44,14 +44,21 @@ export function Modal({
       aria-modal="true"
     >
       <div className="absolute inset-0 bg-n-900/30" onClick={onClose} />
+      {/*
+        O painel é uma coluna com teto de altura, e só o **miolo** rola. Sem isso, um
+        formulário alto (o de turma passa de três blocos) crescia para fora da tela — e
+        como o modal trava o scroll do `body`, não havia como chegar no que ficou embaixo,
+        nem nos botões de salvar. Cabeçalho e rodapé ficam fixos justamente para o "Salvar"
+        continuar visível enquanto se rola o formulário.
+      */}
       <div
         className={cn(
-          "relative w-full max-w-md rounded-lg bg-white p-[22px] shadow-lg",
+          "relative flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col rounded-lg bg-white p-[22px] shadow-lg",
           className,
         )}
       >
         {title && (
-          <div className="mb-1.5 flex items-start justify-between">
+          <div className="mb-1.5 flex flex-none items-start justify-between">
             <h4 className="text-base font-bold text-n-900">{title}</h4>
             <button
               onClick={onClose}
@@ -62,8 +69,14 @@ export function Modal({
             </button>
           </div>
         )}
-        <div className="text-[13px] leading-relaxed text-n-500">{children}</div>
-        {footer && <div className="mt-[18px] flex justify-end gap-2.5">{footer}</div>}
+        {/* `-mx-*`/`px-*`: a área rolável vai de borda a borda para a barra de rolagem não
+            nascer no meio do padding, mas o conteúdo mantém o respiro do painel. */}
+        <div className="-mx-[22px] min-h-0 flex-1 overflow-y-auto px-[22px] text-[13px] leading-relaxed text-n-500">
+          {children}
+        </div>
+        {footer && (
+          <div className="mt-[18px] flex flex-none justify-end gap-2.5">{footer}</div>
+        )}
       </div>
     </div>
   );
