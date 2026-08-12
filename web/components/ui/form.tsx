@@ -77,13 +77,23 @@ Textarea.displayName = "Textarea";
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   invalid?: boolean;
 }
+/**
+ * O `className` vai para o **invólucro**, não para o `<select>`.
+ *
+ * O chevron é posicionado em relação a esse invólucro, então é ele quem precisa ter a
+ * largura — e o `<select>` a preenche. Enquanto a classe caía no `<select>`, todo
+ * `w-*` passado por quem chama era **letra morta**: o `cn` só concatena (não resolve
+ * conflito de Tailwind) e o `w-full` do `CONTROL` é emitido depois no CSS, ganhando.
+ * O resultado era um controle do tamanho do conteúdo, ignorando o `w-20`/`w-48`/`flex-1`
+ * que a tela pediu.
+ */
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
   ({ className, invalid, children, ...rest }, ref) => (
-    <div className="relative">
+    <div className={cn("relative", className)}>
       <select
         ref={ref}
         aria-invalid={invalid || undefined}
-        className={cn(CONTROL, "appearance-none pr-9 text-n-700", className)}
+        className={cn(CONTROL, "appearance-none pr-9 text-n-700")}
         {...rest}
       >
         {children}
