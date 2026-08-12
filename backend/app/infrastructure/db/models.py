@@ -389,6 +389,10 @@ class ProfessorORM(Base):
     titular: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # Senha (hash PBKDF2) para o login do professor no mural (§A1); vazio = sem acesso.
     senha_hash: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Vínculo vivo com a escola: desligado, o número deixa de ser reconhecido no inbound.
+    ativo: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", index=True
+    )
     criado_em: Mapped[datetime] = mapped_column()
 
     __table_args__ = (
@@ -428,6 +432,19 @@ class SolicitacaoImpressaoORM(Base):
     observacao: Mapped[str] = mapped_column(Text, default="", server_default="")
     status: Mapped[str] = mapped_column(
         String(20), default="pendente", server_default="pendente", index=True
+    )
+    # Por onde entrou: "portal" (formulário) ou "whatsapp" (arquivo enviado ao número).
+    origem: Mapped[str] = mapped_column(
+        String(20), default="portal", server_default="portal"
+    )
+    # Bytes do arquivo, quando ele veio pelo WhatsApp. Ponteiro para o ArquivoStorage —
+    # nunca o conteúdo, como em `documentos_recebidos`.
+    chave_storage: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    mime: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    tamanho: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # `media_id` da Meta: deduplica a reentrega do webhook.
+    media_id: Mapped[str] = mapped_column(
+        String(120), default="", server_default="", index=True
     )
     criado_em: Mapped[datetime] = mapped_column()
     atualizado_em: Mapped[datetime] = mapped_column()

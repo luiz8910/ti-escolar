@@ -502,6 +502,18 @@ class SolicitacaoImpressaoRepository(Protocol):
 
     async def atualizar(self, solicitacao: SolicitacaoImpressao) -> SolicitacaoImpressao: ...
 
+    async def por_media_id(
+        self, *, tenant_id: UUID, media_id: str
+    ) -> SolicitacaoImpressao | None:
+        """Pedido já criado a partir de uma mídia da Meta (dedupe de reentrega)."""
+        ...
+
+    async def consumo_do_professor(
+        self, *, tenant_id: UUID, professor_id: UUID, competencia: str
+    ) -> int:
+        """Cópias consumidas na competência ``YYYY-MM``, ignorando as canceladas."""
+        ...
+
     async def remover(self, *, tenant_id: UUID, solicitacao_id: UUID) -> bool: ...
 
 

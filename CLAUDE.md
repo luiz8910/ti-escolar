@@ -139,7 +139,8 @@ ti-escolar/
   `Documento`, `Conhecimento` (FAQ/aviso/procedimento), `MessageTemplate`, `Broadcast`/Campanha,
   `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`,
   `Sala` (turma) + associação `sala_contatos`, `Professor` (vinculado à série por
-  `Sala.professor_id`), `FonteConhecimento` (documento da escola),
+  `Sala.professor_id`; `ativo` marca o vínculo vivo — desligado, o número deixa de ser
+  reconhecido no inbound), `FonteConhecimento` (documento da escola),
   `PromptTenant` (system prompt da escola), `ResumoEscola` (visão agregada do super admin),
   `SolicitacaoInterna` (canal professor→escola), `MensagemMediada` (canal pai↔professor),
   `CotaImpressao` (franquia mensal de impressão), `AvisoFalta` (falta de professor +
@@ -165,7 +166,7 @@ ti-escolar/
   `0033_usuario_cargo_hierarquia` →
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
-  `0037_conversa_sessao`.
+  `0037_conversa_sessao` → `0038_impressao_whatsapp`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -394,6 +395,11 @@ ti-escolar/
     `ListarEventuaisDisponiveis` (`GET /professores/tenant/{id}/eventuais`) devolve os
     eventuais **com telefone** — quem não tem número não é chamável, e listá-lo faria a
     secretaria "convocar" quem não recebe. A escolha de quem chamar segue humana.
+  - **`ativo` é o vínculo vivo com a escola** (migration `0038_impressao_whatsapp`).
+    Desligado, o professor sai das chamadas de eventual e **o número dele deixa de ser
+    reconhecido no inbound** — deixa de mandar arquivo direto para a fila de impressão
+    (§6g/B1). Não é o mesmo que remover: o cadastro sustenta o histórico da fila e o
+    relatório mensal de cópias.
   - **`telefone` é o número da escola** (mural, recados, chamada de eventual);
     **`telefone_2` é emergência e não recebe disparo nenhum** — dois números ativos no
     canal entregariam a mesma mensagem duas vezes. A tela diz isso em texto.
@@ -576,6 +582,37 @@ LLM novo:** reusam o RAG existente (que já chama o `LLMProvider`).
   (admin: `/api/admin/impressao`) e submissão pelo próprio professor em
   `/api/professor/impressao`. Migration `0014_solicitacoes_impressao`. Painel
   `web/app/admin/impressao/`.
+  - **O caminho principal virou o WhatsApp** (12/ago/2026, migration
+    `0038_impressao_whatsapp`). O portal exige abrir o navegador, lembrar a senha e
+    preencher um formulário para mandar a mesma lista de chamada que já está no celular.
+    Agora o professor manda o arquivo **para o número da escola** e ele cai na fila.
+  - **Quem decide é o cadastro:** `ProcessarInboundMeta` consulta
+    `ProfessorRepository.por_telefone` e, achando um professor **ativo**, desvia a
+    mensagem — mídia vira `SolicitacaoImpressao`, texto recebe orientação. **Nada disso
+    passa pela LLM**: o assistente é dos responsáveis, e mandar quem dá aula para ele o
+    faria ouvir sobre matrícula e horário de secretaria, cobrando inferência por isso.
+    O contador `ResultadoInboundMeta.impressoes` fica à parte de `respondidas`
+    justamente para esse fato aparecer no painel de logs (§16).
+  - **`Professor.ativo` nasceu aqui** e não é enfeite: sem ele, "cadastrado" e "trabalha
+    aqui" são a mesma coisa, e quem saiu seguiria mandando material direto para a
+    impressora. Apagar o cadastro não substitui — a fila e o relatório mensal dependem
+    dele para o histórico.
+  - **Os bytes ficam com a escola** (`chave_storage` → `ArquivoStorage`, §6k): fila sem
+    arquivo não imprime. Saem por `GET /impressao/{id}/arquivo`, autenticado e escopado
+    por tenant, **nunca por URL pública**. `media_id` deduplica a reentrega do webhook —
+    sem ele a Meta faria a secretaria imprimir duas vezes e debitaria a franquia em dobro.
+  - **Cópias, cor e frente-e-verso saem da legenda por heurística** (`interpretar_legenda`),
+    não por LLM — mesma escolha de `sugerir_categoria` (§6k). Sem número explícito o
+    pedido nasce com **1 cópia e a confirmação diz isso**, em vez de inventar tiragem; e
+    número acima de `COPIAS_MAXIMAS_INFERIDAS` (500) é descartado, porque "Planejamento
+    2026" na legenda não é pedido de 2.026 folhas. A fila marca `origem=whatsapp` para a
+    secretaria saber que aquele número foi lido, não preenchido.
+  - **Estourar a franquia avisa, não recusa** (`ConsultarSaldoImpressao` +
+    `SaldoImpressao`): um bot barrando a impressão trava a aula, e quem decide é a
+    secretaria. O saldo é **derivado** das solicitações do mês, nunca um contador
+    guardado — um contador divergiria da fila no primeiro cancelamento. É apurado
+    **depois** de gravar, senão a resposta mostraria o saldo anterior a quem está no
+    limite. Cobertura: `tests/test_impressao_whatsapp.py`.
 - **A1 · Mural do professor (`Recado` + `LeituraRecado`):** a secretaria publica recados; o
   professor tem **login próprio** e **confirma a leitura** ("ticado"). A secretaria vê quem leu /
   quem não leu e **re-notifica por WhatsApp** os não-lidos (`ReNotificarRecadoNaoLido` via

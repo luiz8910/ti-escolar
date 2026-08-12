@@ -112,6 +112,22 @@ export function CamposProfessor({
           />
           <span>Professor de educação física</span>
         </label>
+        <label className="flex items-start gap-2.5 text-[13px] text-n-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={dados.ativo}
+            onChange={(e) => set("ativo", e.target.checked)}
+          />
+          <span>
+            <b>Em exercício na escola</b>
+            <span className="block text-[11.5px] text-n-500">
+              Desmarque quando o professor sair. Ele some do mural, das chamadas de
+              eventual e o WhatsApp dele deixa de mandar arquivo para a fila de impressão —
+              mas o histórico dele continua na escola.
+            </span>
+          </span>
+        </label>
       </div>
     </div>
   );

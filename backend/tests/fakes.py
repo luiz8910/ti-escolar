@@ -25,6 +25,7 @@ from app.domain.entities import (
     ResultadoBusca,
     Sala,
     SolicitacaoImpressao,
+    StatusImpressao,
     TrechoConhecimento,
     TurnoConversa,
 )
@@ -578,6 +579,28 @@ class FakeSolicitacaoImpressaoRepo:
         self.solicitacoes[solicitacao.id] = solicitacao
         return solicitacao
 
+    async def por_media_id(self, *, tenant_id, media_id):
+        if not media_id:
+            return None
+        return next(
+            (
+                s
+                for s in self.solicitacoes.values()
+                if s.tenant_id == tenant_id and s.media_id == media_id
+            ),
+            None,
+        )
+
+    async def consumo_do_professor(self, *, tenant_id, professor_id, competencia):
+        return sum(
+            s.copias
+            for s in self.solicitacoes.values()
+            if s.tenant_id == tenant_id
+            and s.professor_id == professor_id
+            and s.status != StatusImpressao.CANCELADA
+            and s.criado_em.strftime("%Y-%m") == competencia
+        )
+
     async def remover(self, *, tenant_id, solicitacao_id):
         s = self.solicitacoes.get(solicitacao_id)
         if s is None or s.tenant_id != tenant_id:
@@ -623,7 +646,7 @@ class FakeProfessorRepo:
     async def listar(self, *, tenant_id, apenas_eventuais=False):
         itens = [p for p in self.professores.values() if p.tenant_id == tenant_id]
         if apenas_eventuais:
-            itens = [p for p in itens if not p.titular and p.telefone]
+            itens = [p for p in itens if not p.titular and p.telefone and p.ativo]
         return sorted(itens, key=lambda p: p.nome)
 
     async def atualizar(self, professor):

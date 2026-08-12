@@ -29,11 +29,13 @@ import logging
 from dataclasses import dataclass
 
 from app.application.documentos_use_cases import ReceberMidiaDoResponsavel
+from app.application.impressao_use_cases import ReceberImpressaoDoProfessor
 from app.application.use_cases import Atendedor
 from app.domain.entities import EstadoAtendimento
 from app.domain.ports import (
     ControleTaxa,
     MessageChannel,
+    ProfessorRepository,
     RegistroAtendimento,
     TenantRepository,
 )
@@ -67,6 +69,10 @@ class ResultadoInboundMeta:
     # arquivo que a Graph API recusou entregar também passa por aqui, e o responsável
     # recebe o pedido de reenvio.
     documentos: int = 0
+    # Mensagens de um professor cadastrado e ativo: não vão para o assistente, vão para a
+    # fila de impressão (§B1). Contadas à parte porque não consomem LLM nenhuma — vê-las
+    # somadas a `respondidas` esconderia justamente esse fato no painel de logs (§16).
+    impressoes: int = 0
 
 
 def normalizar_origem(bruto: str) -> str:
@@ -94,6 +100,8 @@ class ProcessarInboundMeta:
         canal: MessageChannel,
         atendimentos: RegistroAtendimento | None = None,
         midias: ReceberMidiaDoResponsavel | None = None,
+        professores: ProfessorRepository | None = None,
+        impressao: ReceberImpressaoDoProfessor | None = None,
         controle_taxa: ControleTaxa | None = None,
         limite_por_remetente: int = 0,
         janela_taxa_segundos: int = 60,
@@ -104,6 +112,10 @@ class ProcessarInboundMeta:
         self._atendimentos = atendimentos
         # Opcional: sem ele, imagem e documento voltam a ser ignorados (§6k).
         self._midias = midias
+        # Opcionais em par: sem os dois, o número do professor é tratado como o de
+        # qualquer responsável e cai no assistente.
+        self._professores = professores
+        self._impressao = impressao
         self._controle_taxa = controle_taxa
         self._limite_por_remetente = limite_por_remetente
         self._janela_taxa_segundos = janela_taxa_segundos
@@ -171,7 +183,15 @@ class ProcessarInboundMeta:
         texto = ((mensagem.get("text") or {}).get("body") or "").strip()
 
         tipo = str(mensagem.get("type") or "")
-        eh_midia = tipo in TIPOS_MIDIA and self._midias is not None
+        # Quem escreve daqui é da escola, não uma família, quando o número está no cadastro
+        # de professores. Professor não pede suporte por este canal — manda material para
+        # imprimir (§B1) —, e é isso que decide quem trata a mídia. A busca vem antes da
+        # reserva de propósito: é um SELECT por índice, e sem ela não dá para saber se a
+        # imagem tem tratamento (a fila de impressão e os documentos recebidos são pontas
+        # opcionais e independentes).
+        professor = await self._professor_ativo(escola.id, origem) if origem else None
+        tratador_de_midia = self._impressao if professor is not None else self._midias
+        eh_midia = tipo in TIPOS_MIDIA and tratador_de_midia is not None
 
         if not origem or (not eh_midia and (tipo != "text" or not texto)):
             # Áudio, localização, contato, sticker: ainda sem tratamento. Áudio exigiria
@@ -232,7 +252,21 @@ class ProcessarInboundMeta:
 
         resultado.recebidas += 1
         try:
-            if eh_midia:
+            # Mandar o professor ao assistente dos responsáveis o faria ouvir sobre
+            # matrícula e horário de secretaria — e ainda cobraria LLM por isso.
+            if professor is not None:
+                texto_resposta = (
+                    await self._receber_impressao(mensagem, escola, professor, origem, tipo)
+                    if eh_midia
+                    else await self._impressao.orientar(
+                        tenant_id=escola.id,
+                        professor=professor,
+                        contato=origem,
+                        texto=texto,
+                    )
+                )
+                resultado.impressoes += 1
+            elif eh_midia:
                 texto_resposta = await self._receber_midia(mensagem, escola, origem, tipo)
                 resultado.documentos += 1
             else:
@@ -269,6 +303,34 @@ class ProcessarInboundMeta:
 
         if reservado:
             await self._atendimentos.concluir(chave=wamid, resumo=texto_resposta[:500])
+
+    async def _professor_ativo(self, tenant_id, origem: str):
+        """O remetente é um professor **em exercício** nesta escola?
+
+        Só o vínculo ativo conta: quem saiu continua no cadastro (a fila de impressão e o
+        relatório mensal dependem dele para o histórico) e não pode seguir mandando
+        material direto para a impressora da secretaria.
+        """
+        if self._professores is None or self._impressao is None:
+            return None
+        professor = await self._professores.por_telefone(
+            tenant_id=tenant_id, telefone=origem
+        )
+        return professor if professor is not None and professor.ativo else None
+
+    async def _receber_impressao(
+        self, mensagem: dict, escola, professor, origem: str, tipo: str
+    ) -> str:
+        """Arquivo de um professor: baixa, guarda e põe na fila da secretaria (§B1)."""
+        corpo = mensagem.get(tipo) or {}
+        return await self._impressao.executar(
+            tenant_id=escola.id,
+            professor=professor,
+            contato=origem,
+            media_id=str(corpo.get("id") or ""),
+            legenda=str(corpo.get("caption") or "").strip(),
+            nome_arquivo=str(corpo.get("filename") or "").strip(),
+        )
 
     async def _receber_midia(self, mensagem: dict, escola, origem: str, tipo: str) -> str:
         """Arquivo enviado pelo responsável (§6k): baixa, guarda e confirma o recebimento."""

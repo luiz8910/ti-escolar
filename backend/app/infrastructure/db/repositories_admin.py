@@ -617,6 +617,7 @@ def _to_professor(row: ProfessorORM) -> Professor:
         educacao_fisica=row.educacao_fisica,
         titular=row.titular,
         senha_hash=row.senha_hash,
+        ativo=row.ativo,
         criado_em=row.criado_em,
     )
 
@@ -949,6 +950,7 @@ class SqlProfessorRepository:
                 educacao_fisica=professor.educacao_fisica,
                 titular=professor.titular,
                 senha_hash=professor.senha_hash,
+                ativo=professor.ativo,
                 criado_em=professor.criado_em,
             )
         )
@@ -991,7 +993,10 @@ class SqlProfessorRepository:
             # A lista de quem cobre falta (§I1). Sem telefone o eventual não é chamável,
             # então nem entra na lista — evita a secretaria "convocar" quem não recebe.
             stmt = stmt.where(
-                ProfessorORM.titular.is_(False), ProfessorORM.telefone != ""
+                ProfessorORM.titular.is_(False),
+                ProfessorORM.telefone != "",
+                # Desligado da escola não é convocável para cobrir falta.
+                ProfessorORM.ativo.is_(True),
             )
         rows = (await self._s.execute(stmt.order_by(ProfessorORM.nome))).scalars().all()
         return [_to_professor(r) for r in rows]
@@ -1011,6 +1016,7 @@ class SqlProfessorRepository:
         row.educacao_fisica = professor.educacao_fisica
         row.titular = professor.titular
         row.senha_hash = professor.senha_hash
+        row.ativo = professor.ativo
         await self._s.flush()
         return _to_professor(row)
 

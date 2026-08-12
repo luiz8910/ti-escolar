@@ -227,6 +227,7 @@ def _professor_saida(p: Professor) -> ProfessorSaida:
         email=p.email,
         educacao_fisica=p.educacao_fisica,
         titular=p.titular,
+        ativo=p.ativo,
         tem_acesso=p.tem_acesso,
     )
 
@@ -241,6 +242,7 @@ def _dados_professor(payload: ProfessorEntrada | ProfessorAtualizar) -> DadosPro
         email=payload.email,
         educacao_fisica=payload.educacao_fisica,
         titular=payload.titular,
+        ativo=payload.ativo,
     )
 
 
