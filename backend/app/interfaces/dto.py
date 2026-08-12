@@ -1489,6 +1489,39 @@ class DocumentosPendentesSaida(BaseModel):
 
     pendentes: int
 
+class DocumentoLidoSaida(BaseModel):
+    """O que a leitura por IA sugeriu (§4.3). **Sugestão** — nada foi gravado."""
+
+    categoria: str = ""
+    aluno_nome: str = ""
+    resumo: str = ""
+    campos_ficha: dict = {}
+    # Preenchido quando o modelo não conseguiu ler. Documento ilegível é resultado
+    # normal, não falha do sistema — a tela precisa dizer isso sem parecer erro.
+    erro: str = ""
+
+
+class NumeroBloqueadoEntrada(BaseModel):
+    tenant_id: UUID
+    telefone: str = Field(..., examples=["+5515999990000"])
+    motivo: str = ""
+
+
+class NumeroBloqueadoSaida(BaseModel):
+    telefone: str
+    motivo: str = ""
+    bloqueado_por: str = ""
+    bloqueado_em: datetime
+
+
+class SugestaoBloqueioSaida(BaseModel):
+    """Número que cruzou o limiar de descartes (decisão C). O bloqueio é sempre humano."""
+
+    telefone: str
+    descartados: int
+    contato_nome: str = ""
+    ultimo_em: datetime | None = None
+
 
 class ExpurgoSaida(BaseModel):
     removidos: int

@@ -301,3 +301,77 @@ async def test_mover_para_serie_inexistente_falha():
         await RemoverSala(salas=salas, alunos=alunos).executar(
             tenant_id=TENANT, sala_id=sala.id, mover_para=uuid.uuid4()
         )
+
+
+# --------------------------------------------------------------------------- #
+# Busca instantânea de aluno (§4.1 do plano de 10/08)
+#
+# A tela de documentos usava um <select> com teto de 200 alunos: a partir do aluno 201
+# não havia como vincular um documento — um bug de dados disfarçado de UX.
+# --------------------------------------------------------------------------- #
+async def _com_alunos(nomes_e_matriculas):
+    alunos, _, salas = _repos()
+    sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
+    for nome, matricula in nomes_e_matriculas:
+        await CadastrarAluno(alunos=alunos, salas=salas).executar(
+            tenant_id=TENANT, nome=nome, sala_id=sala.id, matricula=matricula
+        )
+    return alunos, sala
+
+
+async def test_busca_por_parte_do_nome():
+    alunos, _ = await _com_alunos(
+        [("Ana Clara Souza", "001"), ("Bruno Lima", "002"), ("Carla Souza", "003")]
+    )
+
+    pagina = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, q="souza")
+
+    assert sorted(a.nome for a in pagina.itens) == ["Ana Clara Souza", "Carla Souza"]
+
+
+async def test_busca_ignora_maiusculas():
+    alunos, _ = await _com_alunos([("Ana Clara Souza", "001")])
+    pagina = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, q="ANA")
+    assert len(pagina.itens) == 1
+
+
+async def test_busca_por_matricula():
+    alunos, _ = await _com_alunos([("Ana", "2026-042"), ("Bruno", "2026-043")])
+    pagina = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, q="042")
+    assert [a.nome for a in pagina.itens] == ["Ana"]
+
+
+async def test_busca_vazia_traz_todos():
+    """Campo em branco não filtra: é a listagem normal."""
+    alunos, _ = await _com_alunos([("Ana", "001"), ("Bruno", "002")])
+    pagina = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, q="   ")
+    assert pagina.total == 2
+
+
+async def test_busca_sem_resultado_devolve_pagina_vazia():
+    alunos, _ = await _com_alunos([("Ana", "001")])
+    pagina = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, q="zzz")
+    assert pagina.itens == []
+    assert pagina.total == 0
+
+
+async def test_busca_combina_com_o_filtro_de_serie():
+    alunos, _, salas = _repos()
+    a = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
+    b = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="5ª série A")
+    cadastrar = CadastrarAluno(alunos=alunos, salas=salas)
+    await cadastrar.executar(tenant_id=TENANT, nome="Ana da 4ª", sala_id=a.id)
+    await cadastrar.executar(tenant_id=TENANT, nome="Ana da 5ª", sala_id=b.id)
+
+    pagina = await ListarAlunos(alunos=alunos).executar(
+        tenant_id=TENANT, q="ana", sala_id=a.id
+    )
+
+    assert [x.nome for x in pagina.itens] == ["Ana da 4ª"]
+
+
+async def test_o_total_respeita_a_busca():
+    """Sem isso a paginação anunciaria 300 alunos para uma busca com 2 resultados."""
+    alunos, _ = await _com_alunos([("Ana", "001"), ("Bruno", "002"), ("Carla", "003")])
+    pagina = await ListarAlunos(alunos=alunos).executar(tenant_id=TENANT, q="an")
+    assert pagina.total == 1

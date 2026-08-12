@@ -2272,6 +2272,72 @@ class StatusDocumento(str, enum.Enum):
     PROCESSADO = "processado"
     # Ilegível, duplicado ou fora de propósito. Mantém o registro de que chegou.
     DESCARTADO = "descartado"
+    # Veio de um número **sem cadastro** na escola. Fica fora da fila de trabalho, mas o
+    # arquivo é guardado: pode ser um pai que trocou de número, e descartá-lo de saída
+    # perderia o documento de quem mais precisa dele. A secretaria decide o que é.
+    QUARENTENA = "quarentena"
+
+
+@dataclass
+class DocumentoLido:
+    """O que a leitura por IA extraiu de um documento (§4.3). Tudo **sugestão**.
+
+    ``campos_ficha`` só vem preenchido quando o documento é uma ficha de matrícula — aí
+    ele alimenta o mesmo fluxo de revisão do §D3, em vez de a secretaria redigitar a ficha
+    inteira a partir da foto.
+    """
+
+    categoria: CategoriaDocumento | None = None
+    aluno_nome: str = ""
+    resumo: str = ""
+    campos_ficha: dict = field(default_factory=dict)
+    # Erro amigável quando o modelo não conseguiu ler. Não é exceção: documento ilegível é
+    # resultado normal, e a tela precisa dizer isso sem parecer falha do sistema.
+    erro: str = ""
+
+    @property
+    def vazio(self) -> bool:
+        return not (self.categoria or self.aluno_nome or self.resumo or self.campos_ficha)
+
+
+@dataclass
+class NumeroBloqueado:
+    """Número cuja **mídia** é recusada no inbound (§6k, anti-spam).
+
+    Bloqueia o arquivo, **não a pessoa**: o número segue sendo atendido em texto, e o
+    remetente é avisado. O inbound é público — quem descobre o número da escola manda o
+    que quiser —, mas silenciar alguém por completo com base num contador é o erro que o
+    produto existe para evitar.
+    """
+
+    tenant_id: UUID
+    telefone: str  # E.164
+    motivo: str = ""
+    bloqueado_por: str = ""  # nome de quem bloqueou (auditoria já guarda o resto)
+    id: UUID = field(default_factory=_new_id)
+    bloqueado_em: datetime = field(default_factory=_now)
+
+
+@dataclass
+class SugestaoBloqueio:
+    """Número que cruzou o limiar de descartes e **merece uma olhada** (decisão C).
+
+    A sugestão é o produto final: o bloqueio automático é perigoso aqui — um pai que manda
+    três fotos tremidas do mesmo atestado é indistinguível de spam para um contador, e
+    bloqueá-lo em silêncio é exatamente a falha que o produto existe para evitar.
+    """
+
+    telefone: str
+    descartados: int
+    contato_nome: str = ""
+    ultimo_em: datetime | None = None
+
+
+# Limiar da sugestão de bloqueio (decisão C do plano de 10/08): três documentos
+# descartados do mesmo número em sete dias. Números redondos e explicáveis à secretaria —
+# não há dado para calibrar melhor, e fingir precisão seria pior.
+DESCARTES_PARA_SUGERIR_BLOQUEIO = 3
+JANELA_DESCARTES_DIAS = 7
 
 
 # Só o que a secretaria consegue de fato usar. Áudio fica de fora: sem transcrição, é um

@@ -166,16 +166,18 @@ ti-escolar/
   `0033_usuario_cargo_hierarquia` →
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
-  `0037_conversa_sessao` → `0038_impressao_whatsapp` → `0040_templates_catalogo`.
-  ⚠️ **O `0039` não existe** — o buraco era para a migration de anti-spam de documentos
-  (`0038_anti_spam_documentos`), que foi escrita mas **nunca chegou à `main`**: o PR #55
-  foi mergeado numa branch de feature que já tinha ido para a `main` por squash, e o
-  trabalho ficou órfão em `feat/documentos-busca-preview-ocr`. O número é rótulo: quem
-  define o grafo é o
-  `down_revision`. `0038` e `0040` foram escritas em paralelo, ambas apontando para o
-  `0037`, e a segunda a mergear (`0040`) **re-apontou** para a primeira. O CI passou a
-  recusar mais de um head, então o esquecimento falha o build em vez de quebrar o deploy —
-  que ali significa o container não subir, porque o `alembic upgrade head` roda no `CMD`.
+  `0037_conversa_sessao` → `0038_impressao_whatsapp` → `0040_templates_catalogo` →
+  `0041_anti_spam_documentos`.
+  ⚠️ **O `0039` não existe, e o `0041` já se chamou `0038`.** Três migrations foram
+  escritas em paralelo apontando para a `0037`; a ordem de merge decidiu o resto. A do
+  anti-spam quase se perdeu: o PR #55 foi mergeado numa branch de feature que **já tinha
+  ido para a `main` por squash**, e o trabalho ficou órfão em
+  `feat/documentos-busca-preview-ocr` por um dia, com o GitHub exibindo o PR como
+  mergeado. **Merge verde não é prova de que o código está na `main`** — confira o
+  `baseRefName` quando o PR sair de uma branch que não é a `main`.
+  O número é rótulo: quem define o grafo é o `down_revision`. O CI passou a recusar mais
+  de um head, então o esquecimento falha o build em vez de quebrar o deploy — que ali
+  significa **o container não subir**, porque o `alembic upgrade head` roda no `CMD`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -987,6 +989,47 @@ arquivo passa a pertencer à escola, ligado à conversa que o originou.
   envelope de mídia do webhook, áudio ignorado, texto intacto).
 - **[Roadmap]** adaptador R2; **job agendado** do expurgo (hoje depende de alguém clicar);
   ligação automática com a `SolicitacaoMatricula` (§E1) e a `FichaMatricula` (§D3).
+
+#### 6k.1 Buscar o aluno, ver o arquivo, ler por IA (Fase 4 do plano de 10/08)
+
+Três apontamentos do teste manual, e o primeiro era um bug de dados disfarçado de UX.
+
+- **Busca de aluno no servidor.** A tela carregava **200 alunos** num `<select>`: a partir do
+  aluno 201 não havia como vincular documento nenhum, e o problema aparece justamente no
+  aluno que ninguém procurou ainda. `AlunoRepository.listar/contar` passaram a aceitar `q`
+  (nome ou matrícula, `ILIKE`), e `web/components/admin/BuscaAluno.tsx` busca com debounce,
+  teto de 20 resultados e mínimo de 2 letras — uma letra traria meia escola.
+- **Ver, não só baixar** (`?inline=true`): o `Content-Disposition` vira `inline` e o painel
+  monta um **blob URL** a partir do endpoint autenticado, revogado ao fechar. Nunca um `src`
+  com token na URL. Visualizar **é acessar o dado**, então é auditado à parte
+  (`documento.visualizar` × `documento.baixar`) — quem audita precisa distinguir quem olhou
+  na tela de quem levou o arquivo embora.
+- **Leitura por IA** (`LerDocumentoPorIA`, porta `LeitorDocumento` + `AnthropicLeitorDocumento`):
+  manda os **bytes** do arquivo ao modelo (bloco de imagem/documento, não OCR próprio) e
+  devolve finalidade, aluno mencionado, resumo e campos de ficha. É **sugestão**, no mesmo
+  fluxo prévia→confirmação da importação em massa (§6c-quater) e da ficha (§D3): a secretaria
+  aplica com um clique ou ignora. **Documento ilegível é resultado normal**, não erro — vem
+  em `erro` e a tela diz isso sem parecer falha. Os campos de ficha são só exibidos: preencher
+  a ficha a partir daqui gravaria dado sensível de menor sem ninguém olhar.
+
+#### 6k.2 Anti-spam: quarentena e bloqueio de mídia (§4.5)
+
+O inbound é público — quem descobre o número da escola manda o que quiser, e a §6k já barra
+MIME e tamanho. Falta**va** barrar *quem*.
+
+- **Quarentena de desconhecido:** arquivo vindo de um telefone **sem `Contato` cadastrado**
+  entra como `StatusDocumento.QUARENTENA` em vez de `recebido`. Não é recusa — a secretaria
+  vê, confirma e classifica; é só o que separa a fila de trabalho do que chegou de fora.
+- **`NumeroBloqueado`** (migration `0041_anti_spam_documentos`, único por `(tenant_id, telefone)`):
+  recusa **o envio de arquivos**, não a pessoa. O número **segue sendo atendido por texto** —
+  silenciar alguém por completo com base num contador é exatamente o erro que este produto
+  existe para evitar, e o remetente pode ser o pai certo com o telefone errado no cadastro.
+- **A sugestão é da máquina; o bloqueio é humano** (decisão C): `SugerirBloqueios` aponta os
+  números com `DESCARTES_PARA_SUGERIR_BLOQUEIO` (3) descartes em `JANELA_DESCARTES_DIAS` (7).
+  Bloqueio automático não existe — ele erraria calado, e o custo do erro é uma escola que
+  para de receber os documentos de matrícula de uma família.
+- **Rotas** em `api/documentos.py`: `POST /{id}/ler`, `GET .../sugestoes-bloqueio`,
+  `GET .../bloqueados`, `POST /bloqueados`, `DELETE /bloqueados/{telefone}`.
 
 ## 7. Camada de LLM
 

@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1038,6 +1038,23 @@ class SqlProfessorRepository:
         return True
 
 
+def _filtrar_busca_aluno(stmt, q: str):
+    """Busca por nome ou matrícula, sem diferenciar maiúsculas nem acento.
+
+    ``unaccent`` exigiria a extensão instalada no Neon; ``ILIKE`` puro basta aqui, e a
+    secretaria digita o nome como está no cadastro. O ``%`` no começo impede índice — é
+    aceitável porque a busca é escopada por tenant e o resultado tem teto de 20 na rota:
+    o custo é uma varredura dos alunos de **uma** escola.
+    """
+    termo = (q or "").strip()
+    if not termo:
+        return stmt
+    padrao = f"%{termo}%"
+    return stmt.where(
+        or_(AlunoORM.nome.ilike(padrao), AlunoORM.matricula.ilike(padrao))
+    )
+
+
 def _to_aluno(row: AlunoORM) -> Aluno:
     return Aluno(
         id=row.id,
@@ -1094,6 +1111,7 @@ class SqlAlunoRepository:
     async def listar(
         self, *, tenant_id: uuid.UUID, sala_id: uuid.UUID | None = None,
         apenas_ativos: bool | None = None,
+        q: str = "",
         pagina: int | None = None,
         por_pagina: int | None = None,
     ) -> list[Aluno]:
@@ -1109,6 +1127,7 @@ class SqlAlunoRepository:
             stmt = stmt.where(AlunoORM.sala_id == sala_id)
         if apenas_ativos is not None:
             stmt = stmt.where(AlunoORM.ativo.is_(apenas_ativos))
+        stmt = _filtrar_busca_aluno(stmt, q)
         if pagina is not None and por_pagina is not None:
             stmt = stmt.offset(max(0, (pagina - 1) * por_pagina)).limit(por_pagina)
         rows = (await self._s.execute(stmt)).scalars().all()
@@ -1120,12 +1139,14 @@ class SqlAlunoRepository:
         tenant_id: uuid.UUID,
         sala_id: uuid.UUID | None = None,
         apenas_ativos: bool | None = None,
+        q: str = "",
     ) -> int:
         stmt = select(func.count()).select_from(AlunoORM).where(AlunoORM.tenant_id == tenant_id)
         if sala_id is not None:
             stmt = stmt.where(AlunoORM.sala_id == sala_id)
         if apenas_ativos is not None:
             stmt = stmt.where(AlunoORM.ativo.is_(apenas_ativos))
+        stmt = _filtrar_busca_aluno(stmt, q)
         return int((await self._s.execute(stmt)).scalar_one())
 
     async def atualizar(self, aluno: Aluno) -> Aluno:

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app.domain.entities import (
     Aluno,
+    NumeroBloqueado,
     AvisoTemporizado,
     Broadcast,
     Contato,
@@ -830,22 +831,35 @@ class FakeAlunoRepo:
         return a if a and a.tenant_id == tenant_id else None
 
     async def listar(
-        self, *, tenant_id, sala_id=None, apenas_ativos=None, pagina=None, por_pagina=None
+        self,
+        *,
+        tenant_id,
+        sala_id=None,
+        apenas_ativos=None,
+        q="",
+        pagina=None,
+        por_pagina=None,
     ):
         return _fatiar(
-            self._filtrar(tenant_id, sala_id, apenas_ativos), pagina, por_pagina
+            self._filtrar(tenant_id, sala_id, apenas_ativos, q), pagina, por_pagina
         )
 
-    async def contar(self, *, tenant_id, sala_id=None, apenas_ativos=None):
-        return len(self._filtrar(tenant_id, sala_id, apenas_ativos))
+    async def contar(self, *, tenant_id, sala_id=None, apenas_ativos=None, q=""):
+        return len(self._filtrar(tenant_id, sala_id, apenas_ativos, q))
 
-    def _filtrar(self, tenant_id, sala_id, apenas_ativos):
+    def _filtrar(self, tenant_id, sala_id, apenas_ativos, q=""):
+        termo = (q or "").strip().casefold()
         return [
             a
             for a in self.alunos.values()
             if a.tenant_id == tenant_id
             and (sala_id is None or a.sala_id == sala_id)
             and (apenas_ativos is None or a.ativo is apenas_ativos)
+            and (
+                not termo
+                or termo in a.nome.casefold()
+                or termo in (a.matricula or "").casefold()
+            )
         ]
 
     async def atualizar(self, aluno):
@@ -1163,6 +1177,28 @@ class FakeDocumentoRecebidoRepo:
         self.itens[documento.id] = documento
         return documento
 
+    async def descartados_por_numero(self, *, tenant_id, desde, minimo):
+        from app.domain.entities import StatusDocumento, SugestaoBloqueio
+
+        por_numero: dict[str, list] = {}
+        for d in self.itens.values():
+            if (
+                d.tenant_id == tenant_id
+                and d.status is StatusDocumento.DESCARTADO
+                and d.criado_em >= desde
+            ):
+                por_numero.setdefault(d.contato, []).append(d)
+        return [
+            SugestaoBloqueio(
+                telefone=tel,
+                descartados=len(ds),
+                contato_nome=next((d.contato_nome for d in ds if d.contato_nome), ""),
+                ultimo_em=max(d.criado_em for d in ds),
+            )
+            for tel, ds in por_numero.items()
+            if len(ds) >= minimo
+        ]
+
     async def obter(self, *, tenant_id, documento_id):
         d = self.itens.get(documento_id)
         return d if d and d.tenant_id == tenant_id else None
@@ -1240,3 +1276,23 @@ class FakeFonteMidia:
     async def baixar(self, media_id: str):
         self.baixados.append(media_id)
         return self.arquivos.get(media_id)
+
+
+class FakeNumeroBloqueadoRepo:
+    """Números com envio de mídia recusado (§4.5)."""
+
+    def __init__(self) -> None:
+        self.bloqueios: dict[tuple, "NumeroBloqueado"] = {}
+
+    async def bloquear(self, bloqueio):
+        self.bloqueios[(bloqueio.tenant_id, bloqueio.telefone)] = bloqueio
+        return bloqueio
+
+    async def desbloquear(self, *, tenant_id, telefone):
+        return self.bloqueios.pop((tenant_id, telefone), None) is not None
+
+    async def bloqueado(self, *, tenant_id, telefone):
+        return (tenant_id, telefone) in self.bloqueios
+
+    async def listar(self, *, tenant_id):
+        return [b for (t, _), b in self.bloqueios.items() if t == tenant_id]
