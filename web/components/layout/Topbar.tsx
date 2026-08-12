@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { BellIcon, ChevronDownIcon, MenuIcon } from "../ui/icons";
+import { SeletorDeEscola } from "../admin/SeletorDeEscola";
+import { BellIcon, MenuIcon } from "../ui/icons";
 
 export interface TopbarUser {
   name: string;
@@ -18,7 +19,6 @@ function initials(name: string) {
 export function Topbar({
   title,
   user,
-  tenantName,
   showTenant = true,
   showBell = true,
   onLogout,
@@ -26,7 +26,7 @@ export function Topbar({
 }: {
   title: ReactNode;
   user: TopbarUser;
-  tenantName?: string;
+  /** Mostra o seletor de escola (só faz sentido para o super admin). */
   showTenant?: boolean;
   showBell?: boolean;
   onLogout?: () => void;
@@ -50,14 +50,13 @@ export function Topbar({
       </div>
 
       <div className="flex flex-none items-center gap-2 sm:gap-3.5">
-        {showTenant && tenantName && (
-          <button className="hidden items-center gap-2 rounded-[10px] border border-n-100 bg-n-50 px-3 py-[7px] md:flex">
-            <span className="h-[7px] w-[7px] rounded-full bg-brand-600" />
-            <span className="max-w-[160px] truncate text-[12.5px] font-semibold text-n-700">
-              {tenantName}
-            </span>
-            <ChevronDownIcon size={13} className="text-n-400" />
-          </button>
+        {/* Só o super admin escolhe escola; para o admin de tenant o seletor não
+            renderiza (ele é amarrado à sua escola). `showTenant` já vinha ligado só para
+            super admin — antes exibia um botão decorativo, sem ação nenhuma. */}
+        {showTenant && (
+          <div className="hidden md:block">
+            <SeletorDeEscola />
+          </div>
         )}
 
         {showBell && (

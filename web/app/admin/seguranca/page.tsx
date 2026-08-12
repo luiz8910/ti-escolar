@@ -103,9 +103,9 @@ export default function SegurancaPage() {
 
   return (
     <AppShell
+      exigeEscola={false}
       title="Segurança"
       user={{ name: usuario.nome, role: "Super Admin" }}
-      tenantName="Plataforma"
       isSuperAdmin
       onLogout={sair}
     >

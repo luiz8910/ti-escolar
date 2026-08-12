@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select
@@ -639,6 +640,22 @@ class SqlContatoRepository:
         )
         row = (await self._s.execute(stmt)).scalar_one_or_none()
         return _to_contato(row) if row else None
+
+    async def por_telefones(
+        self, *, tenant_id: uuid.UUID, telefones: Sequence[str]
+    ) -> dict[str, Contato]:
+        """Contatos de vários telefones de uma vez, indexados pelo telefone.
+
+        Nomear uma página de atendimentos card a card seria um SELECT por card.
+        """
+        alvo = {t for t in telefones if t}
+        if not alvo:
+            return {}
+        stmt = select(ContatoORM).where(
+            ContatoORM.tenant_id == tenant_id, ContatoORM.telefone.in_(alvo)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return {r.telefone: _to_contato(r) for r in rows}
 
     async def contar(self, *, tenant_id: uuid.UUID) -> int:
         return int(

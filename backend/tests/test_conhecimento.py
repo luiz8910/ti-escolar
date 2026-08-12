@@ -12,9 +12,12 @@ import uuid
 import pytest
 
 from app.application.conhecimento_use_cases import (
+    AtualizarFonteConhecimento,
+    DefinirAtivoFonteConhecimento,
     DefinirPromptTenant,
     IngerirDocumento,
     ListarFontesConhecimento,
+    ObterFonteConhecimento,
     ObterPromptTenant,
     RemoverFonteConhecimento,
     fragmentar,
@@ -136,3 +139,148 @@ async def test_prompt_do_tenant_entra_no_sistema_do_responder():
 
     await responder.executar(tenant_id=TENANT, pergunta="qualquer coisa")
     assert "REGRA-DA-ESCOLA-XYZ" in llm.ultimo_sistema
+
+
+# --------------------- edição e interruptor de indexação ------------------- #
+def _gestao() -> tuple[
+    IngerirDocumento,
+    AtualizarFonteConhecimento,
+    DefinirAtivoFonteConhecimento,
+    FakeVectorStore,
+    FakeFonteConhecimentoRepo,
+]:
+    store = FakeVectorStore()
+    fontes = FakeFonteConhecimentoRepo()
+    embedder = fake_embedder()
+    return (
+        IngerirDocumento(embedder=embedder, store=store, fontes=fontes),
+        AtualizarFonteConhecimento(fontes=fontes, embedder=embedder, store=store),
+        DefinirAtivoFonteConhecimento(fontes=fontes, embedder=embedder, store=store),
+        store,
+        fontes,
+    )
+
+
+def _trechos(store: FakeVectorStore, fonte_id: uuid.UUID) -> list[str]:
+    return [t.conteudo for t, _ in store._itens if t.fonte_id == fonte_id]
+
+
+async def test_ingestao_guarda_o_texto_original():
+    """Sem isso o documento só existia fragmentado: dava para apagar, nunca para reler."""
+    uc, _, _, _, fontes = _gestao()
+    fonte = await uc.executar(
+        tenant_id=TENANT, nome="Uniforme", conteudo="O uniforme é obrigatório."
+    )
+    guardada = await ObterFonteConhecimento(fontes=fontes).executar(
+        tenant_id=TENANT, fonte_id=fonte.id
+    )
+    assert guardada is not None
+    assert guardada.conteudo == "O uniforme é obrigatório."
+    assert guardada.ativo is True
+
+
+async def test_editar_reindexa_e_nao_deixa_trecho_antigo_no_rag():
+    """O trecho órfão é o risco real: o bot responderia a regra revogada."""
+    ingerir, atualizar, _, store, _ = _gestao()
+    fonte = await ingerir.executar(
+        tenant_id=TENANT, nome="Portão", conteudo="O portão fecha às 7h30."
+    )
+
+    editada = await atualizar.executar(
+        tenant_id=TENANT,
+        fonte_id=fonte.id,
+        nome="Portão",
+        conteudo="O portão fecha às 8h00.",
+        tipo=TipoConhecimento.PROCEDIMENTO,
+    )
+
+    # Mesmo id: quem edita está corrigindo *aquele* documento.
+    assert editada.id == fonte.id
+    indexado = " ".join(_trechos(store, fonte.id))
+    assert "8h00" in indexado
+    assert "7h30" not in indexado
+
+
+async def test_desativar_tira_do_rag_sem_apagar_o_texto():
+    ingerir, _, definir_ativo, store, _ = _gestao()
+    fonte = await ingerir.executar(
+        tenant_id=TENANT, nome="Recesso", conteudo="Recesso de julho: dias 1 a 15."
+    )
+    assert _trechos(store, fonte.id)
+
+    desativada = await definir_ativo.executar(
+        tenant_id=TENANT, fonte_id=fonte.id, ativo=False
+    )
+
+    assert desativada.ativo is False
+    assert _trechos(store, fonte.id) == []
+    # O texto continua guardado — desativar não é apagar.
+    assert "Recesso de julho" in desativada.conteudo
+    # E o número de fragmentos descreve o documento, não o interruptor.
+    assert desativada.total_trechos == fonte.total_trechos
+
+
+async def test_reativar_devolve_o_documento_ao_rag():
+    ingerir, _, definir_ativo, store, _ = _gestao()
+    fonte = await ingerir.executar(
+        tenant_id=TENANT, nome="Recesso", conteudo="Recesso de julho: dias 1 a 15."
+    )
+    await definir_ativo.executar(tenant_id=TENANT, fonte_id=fonte.id, ativo=False)
+
+    await definir_ativo.executar(tenant_id=TENANT, fonte_id=fonte.id, ativo=True)
+
+    assert "Recesso de julho" in " ".join(_trechos(store, fonte.id))
+
+
+async def test_editar_documento_desativado_nao_o_reindexa():
+    """Salvar uma correção não pode ressuscitar no RAG o que a escola tirou do ar."""
+    ingerir, atualizar, definir_ativo, store, _ = _gestao()
+    fonte = await ingerir.executar(
+        tenant_id=TENANT, nome="Antigo", conteudo="Regra revogada."
+    )
+    await definir_ativo.executar(tenant_id=TENANT, fonte_id=fonte.id, ativo=False)
+
+    await atualizar.executar(
+        tenant_id=TENANT,
+        fonte_id=fonte.id,
+        nome="Antigo",
+        conteudo="Regra revogada, com correção de grafia.",
+        tipo=TipoConhecimento.PROCEDIMENTO,
+        ativo=False,
+    )
+
+    assert _trechos(store, fonte.id) == []
+
+
+async def test_edicao_e_desativacao_nao_atravessam_tenant():
+    ingerir, atualizar, definir_ativo, _, _ = _gestao()
+    fonte = await ingerir.executar(
+        tenant_id=TENANT, nome="Interno", conteudo="Conteúdo da escola A."
+    )
+
+    with pytest.raises(ValueError):
+        await atualizar.executar(
+            tenant_id=OUTRO_TENANT,
+            fonte_id=fonte.id,
+            nome="Sequestrado",
+            conteudo="Conteúdo trocado.",
+            tipo=TipoConhecimento.PROCEDIMENTO,
+        )
+    with pytest.raises(ValueError):
+        await definir_ativo.executar(
+            tenant_id=OUTRO_TENANT, fonte_id=fonte.id, ativo=False
+        )
+
+
+async def test_editar_com_texto_vazio_e_recusado():
+    ingerir, atualizar, _, _, _ = _gestao()
+    fonte = await ingerir.executar(tenant_id=TENANT, nome="Algo", conteudo="Conteúdo.")
+
+    with pytest.raises(ValueError):
+        await atualizar.executar(
+            tenant_id=TENANT,
+            fonte_id=fonte.id,
+            nome="Algo",
+            conteudo="   \n\n  ",
+            tipo=TipoConhecimento.PROCEDIMENTO,
+        )

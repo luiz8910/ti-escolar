@@ -125,13 +125,14 @@ def _meta(pagina) -> PaginaMeta:
     )
 
 
-def _usuario_saida(u: Usuario) -> UsuarioSaida:
+def _usuario_saida(u: Usuario, *, tenant_nome: str = "") -> UsuarioSaida:
     return UsuarioSaida(
         id=u.id,
         nome=u.nome,
         email=u.email,
         papel=u.papel.value,
         tenant_id=u.tenant_id,
+        tenant_nome=tenant_nome,
         ativo=u.ativo,
         criado_em=u.criado_em,
     )
@@ -235,6 +236,7 @@ async def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
 
     # Admin de escola bloqueada/cancelada não acessa o painel (o super admin segue entrando).
+    escola = None
     if not usuario.eh_super_admin and usuario.tenant_id is not None:
         escola = await tenants.obter(usuario.tenant_id)
         if escola is not None and escola.acesso_suspenso:
@@ -259,7 +261,11 @@ async def login(
         segredo=settings.jwt_secret,
         expira_em_segundos=expira_em,
     )
-    return TokenSaida(access_token=token, expira_em=expira_em, usuario=_usuario_saida(usuario))
+    return TokenSaida(
+        access_token=token,
+        expira_em=expira_em,
+        usuario=_usuario_saida(usuario, tenant_nome=escola.nome if escola else ""),
+    )
 
 
 @router.post("/usuarios", response_model=UsuarioSaida, status_code=status.HTTP_201_CREATED)

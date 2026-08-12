@@ -81,6 +81,13 @@ class FakeFonteConhecimentoRepo:
     async def listar(self, *, tenant_id):
         return [f for f in self.fontes.values() if f.tenant_id == tenant_id]
 
+    async def atualizar(self, fonte):
+        atual = self.fontes.get(fonte.id)
+        if atual is None or atual.tenant_id != fonte.tenant_id:
+            raise ValueError("Documento não encontrado para o tenant.")
+        self.fontes[fonte.id] = fonte
+        return fonte
+
     async def remover(self, *, tenant_id, fonte_id):
         f = self.fontes.get(fonte_id)
         if f is None or f.tenant_id != tenant_id:
@@ -418,6 +425,14 @@ class FakeContatoRepo:
             ),
             None,
         )
+
+    async def por_telefones(self, *, tenant_id, telefones):
+        alvo = {t for t in telefones if t}
+        return {
+            c.telefone: c
+            for c in self.contatos.values()
+            if c.tenant_id == tenant_id and c.telefone in alvo
+        }
 
     async def listar(self, *, tenant_id, pagina=None, por_pagina=None):
         itens = [c for c in self.contatos.values() if c.tenant_id == tenant_id]

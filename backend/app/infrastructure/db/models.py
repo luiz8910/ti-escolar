@@ -127,7 +127,13 @@ class FonteConhecimentoORM(Base):
     nome: Mapped[str] = mapped_column(String(300))
     tipo: Mapped[str] = mapped_column(String(30))
     total_trechos: Mapped[int] = mapped_column(Integer, default=0)
+    # Texto como foi enviado. Sem ele o documento só existia fragmentado no vector store:
+    # dava para apagar, nunca para reler ou corrigir.
+    conteudo: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Indexado no vector store? Desativar tira do RAG sem destruir o texto.
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     criado_em: Mapped[datetime] = mapped_column()
+    atualizado_em: Mapped[datetime] = mapped_column(nullable=True)
 
 
 class ConhecimentoORM(Base):

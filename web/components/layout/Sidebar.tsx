@@ -37,7 +37,9 @@ const INTERVALO_PENDENTES_MS = 20_000;
 
 const PRINCIPAL: NavItem[] = [
   { href: "/admin", label: "Grupos & disparos", icon: GridIcon },
-  { href: "/admin/salas", label: "Salas e pais", icon: UsersIcon },
+  // "Turmas" é o vocabulário da escola; "sala" lá é o espaço físico. A rota antiga
+  // (/admin/salas) segue de pé, redirecionando — a secretaria guarda link em favorito.
+  { href: "/admin/turmas", label: "Turmas", icon: UsersIcon },
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
   { href: "/admin/progressao", label: "Progressão de série", icon: CapIcon },
   { href: "/admin/professores", label: "Professores", icon: TeacherIcon },

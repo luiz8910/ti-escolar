@@ -9,6 +9,7 @@ import {
   Escola,
   FichaFinanceira,
   getSessao,
+  setEscolaEmFoco,
   listarBroadcasts,
   listarConversas,
   logout,
@@ -68,6 +69,9 @@ export default function EscolaDetalhePage() {
     ]);
     setEscola(e);
     setFicha(f);
+    // Entrar no detalhe de uma escola é dizer "quero operar nesta": as telas de escola do
+    // super admin passam a apontar para cá, em vez de exigir um segundo clique no seletor.
+    setEscolaEmFoco({ tenantId: e.id, nome: e.nome });
     // Painel-resumo da escola: a primeira página já dá o panorama; o histórico completo
     // (com paginação) fica nas telas de HISTÓRICO.
     setConversas(cs.itens);
@@ -100,9 +104,9 @@ export default function EscolaDetalhePage() {
 
   return (
     <AppShell
+      exigeEscola={false}
       title={escola ? escola.nome : "Escola"}
       user={{ name: usuario.nome, role: "Super Admin" }}
-      tenantName="Plataforma"
       isSuperAdmin
       onLogout={sair}
     >

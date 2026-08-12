@@ -190,9 +190,9 @@ export default function LogsPage() {
 
   return (
     <AppShell
+      exigeEscola={false}
       title="Logs"
       user={{ name: usuario.nome, role: "Super Admin" }}
-      tenantName="Plataforma"
       isSuperAdmin
       onLogout={sair}
     >

@@ -3,7 +3,7 @@
 // A autenticação do back-end é por JWT: o POST /login devolve um token; guardamos o
 // token (não a senha) e o reenviamos em cada chamada via Authorization: Bearer.
 
-import { API_URL, DEMO_TENANT_ID } from "./api";
+import { API_URL } from "./api";
 
 // Template aprovado criado pelo seed (usado nos disparos do painel).
 export const DEMO_TEMPLATE_ID = "00000000-0000-0000-0000-0000000000a1";
@@ -16,6 +16,8 @@ export interface Usuario {
   email: string;
   papel: "super_admin" | "tenant_admin";
   tenant_id: string | null;
+  /** Nome da escola — só o login preenche; as listagens de usuário deixam vazio. */
+  tenant_nome?: string;
   /** Funcionária desligada continua no cadastro (histórico), mas sem acesso ao painel. */
   ativo?: boolean;
   criado_em?: string | null;
@@ -229,6 +231,9 @@ function setSessao(s: Sessao) {
 
 export function logout() {
   window.localStorage.removeItem(STORAGE_KEY);
+  // A escola em foco morre com a sessão: senão o próximo super admin a entrar neste
+  // navegador herdaria a escola escolhida por outra pessoa, sem perceber.
+  limparEscolaEmFoco();
 }
 
 // Erro lançado quando a sessão não vale mais (token expirado no cliente ou
@@ -272,10 +277,67 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   return resp;
 }
 
-// O tenant em foco: super admin opera sobre o tenant demo; admin usa o seu.
+// --------------------------- escola em foco -------------------------------- //
+// O admin de escola é amarrado ao seu tenant e não escolhe nada. O super admin tem
+// `tenant_id = NULL` e, desde que o seletor de escola saiu do painel, não tinha como
+// dizer sobre qual escola estava operando: `tenantEmFoco()` devolvia o tenant de
+// DEMONSTRAÇÃO, e toda tela de escola (instruções, base de conhecimento, alunos, turmas,
+// atendimentos, documentos) agia silenciosamente sobre a escola errada.
+//
+// Agora a escola em foco é uma escolha explícita, guardada ao lado da sessão. Sem
+// escolha, `tenantEmFoco()` **lança** em vez de chutar — errar de escola em silêncio é
+// pior que uma tela pedindo para escolher.
+const FOCO_KEY = "tiescolar.escolaEmFoco";
+
+export interface EscolaEmFoco {
+  tenantId: string;
+  nome: string;
+}
+
+export class EscolaNaoSelecionadaError extends Error {
+  constructor() {
+    super("Selecione a escola em que deseja operar.");
+    this.name = "EscolaNaoSelecionadaError";
+  }
+}
+
+export function getEscolaEmFoco(): EscolaEmFoco | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(FOCO_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as EscolaEmFoco;
+  } catch {
+    return null;
+  }
+}
+
+export function setEscolaEmFoco(escola: EscolaEmFoco) {
+  window.localStorage.setItem(FOCO_KEY, JSON.stringify(escola));
+}
+
+export function limparEscolaEmFoco() {
+  if (typeof window !== "undefined") window.localStorage.removeItem(FOCO_KEY);
+}
+
+/**
+ * A escola sobre a qual as chamadas de tenant operam.
+ *
+ * - admin de escola: o próprio `tenant_id`, sempre — o foco guardado é ignorado;
+ * - super admin: a escola escolhida. Sem escolha, lança `EscolaNaoSelecionadaError`.
+ */
 export function tenantEmFoco(): string {
   const s = getSessao();
-  return s?.usuario.tenant_id ?? DEMO_TENANT_ID;
+  if (s?.usuario.tenant_id) return s.usuario.tenant_id;
+  const foco = getEscolaEmFoco();
+  if (foco?.tenantId) return foco.tenantId;
+  throw new EscolaNaoSelecionadaError();
+}
+
+/** Precisa escolher uma escola antes de usar as telas de escola? */
+export function exigeEscolhaDeEscola(): boolean {
+  const s = getSessao();
+  return Boolean(s) && !s?.usuario.tenant_id && !getEscolaEmFoco();
 }
 
 // --------------------------- chamadas ------------------------------------- //
@@ -1099,7 +1161,12 @@ export interface FonteConhecimento {
   nome: string;
   tipo: string;
   total_trechos: number;
+  /** Indexado no RAG? Desativar tira do bot sem apagar o texto. */
+  ativo: boolean;
+  /** Só vem preenchido no detalhe (`obterConhecimento`), não na listagem. */
+  conteudo: string;
   criado_em: string;
+  atualizado_em: string | null;
 }
 
 export async function listarConhecimento(): Promise<FonteConhecimento[]> {
@@ -1122,6 +1189,43 @@ export async function adicionarConhecimento(
   return jsonOuErro(resp, "enviar documento");
 }
 
+export async function obterConhecimento(fonteId: string): Promise<FonteConhecimento> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/conhecimento/${fonteId}?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "carregar documento");
+}
+
+export async function atualizarConhecimento(
+  fonteId: string,
+  nome: string,
+  conteudo: string,
+  tipo: string,
+  ativo: boolean
+): Promise<FonteConhecimento> {
+  const resp = await apiFetch(`${API_URL}/api/admin/conhecimento/${fonteId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, conteudo, tipo, ativo }),
+  });
+  return jsonOuErro(resp, "salvar documento");
+}
+
+/** Tira do RAG (ou devolve) sem apagar o texto — a via do admin da escola. */
+export async function definirAtivoConhecimento(
+  fonteId: string,
+  ativo: boolean
+): Promise<FonteConhecimento> {
+  const resp = await apiFetch(`${API_URL}/api/admin/conhecimento/${fonteId}/ativo`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), ativo }),
+  });
+  return jsonOuErro(resp, "alterar a indexação do documento");
+}
+
+/** Apagar é irreversível e **exige super admin** — o back-end recusa os demais com 403. */
 export async function removerConhecimento(fonteId: string): Promise<void> {
   const resp = await apiFetch(
     `${API_URL}/api/admin/conhecimento/${fonteId}?tenant_id=${tenantEmFoco()}`,

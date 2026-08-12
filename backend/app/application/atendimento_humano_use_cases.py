@@ -22,6 +22,7 @@ a resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do out
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -297,11 +298,46 @@ class RegistrarRetornoDoResponsavel:
         return await self._atendimentos.atualizar(atendimento)
 
 
+class _NomeadorDeContatos:
+    """Preenche ``contato_nome`` **na leitura**, a partir do cadastro atual.
+
+    O campo persistido é um retrato do momento em que o atendimento nasceu — e o caso
+    comum é justamente o responsável ainda não estar cadastrado quando escreve. Sem esta
+    releitura, o card fica com o telefone cru para sempre, mesmo depois de a secretaria
+    cadastrar a pessoa. Resolver aqui também cobre a troca de nome (casamento, correção
+    de grafia) sem precisar reescrever histórico.
+
+    Em lote: uma consulta por página, não uma por card.
+    """
+
+    def __init__(self, contatos: ContatoRepository | None) -> None:
+        self._contatos = contatos
+
+    async def nomear(
+        self, tenant_id: UUID, atendimentos: Sequence[AtendimentoHumano]
+    ) -> None:
+        if self._contatos is None or not atendimentos:
+            return
+        encontrados = await self._contatos.por_telefones(
+            tenant_id=tenant_id, telefones=[a.contato for a in atendimentos]
+        )
+        for atendimento in atendimentos:
+            contato = encontrados.get(atendimento.contato)
+            if contato is not None and contato.nome:
+                atendimento.contato_nome = contato.nome
+
+
 class ListarAtendimentos:
     """Fila da secretaria, mais antigos primeiro (maior tempo de espera no topo)."""
 
-    def __init__(self, *, atendimentos: AtendimentoHumanoRepository) -> None:
+    def __init__(
+        self,
+        *,
+        atendimentos: AtendimentoHumanoRepository,
+        contatos: ContatoRepository | None = None,
+    ) -> None:
         self._atendimentos = atendimentos
+        self._nomeador = _NomeadorDeContatos(contatos)
 
     async def executar(
         self,
@@ -325,6 +361,7 @@ class ListarAtendimentos:
             pagina=pagina,
             por_pagina=por_pagina,
         )
+        await self._nomeador.nomear(tenant_id, itens)
         return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
 
 
@@ -341,15 +378,24 @@ class ContarAtendimentosPendentes:
 
 
 class ObterAtendimento:
-    def __init__(self, *, atendimentos: AtendimentoHumanoRepository) -> None:
+    def __init__(
+        self,
+        *,
+        atendimentos: AtendimentoHumanoRepository,
+        contatos: ContatoRepository | None = None,
+    ) -> None:
         self._atendimentos = atendimentos
+        self._nomeador = _NomeadorDeContatos(contatos)
 
     async def executar(
         self, *, tenant_id: UUID, atendimento_id: UUID
     ) -> AtendimentoHumano | None:
-        return await self._atendimentos.obter(
+        atendimento = await self._atendimentos.obter(
             tenant_id=tenant_id, atendimento_id=atendimento_id
         )
+        if atendimento is not None:
+            await self._nomeador.nomear(tenant_id, [atendimento])
+        return atendimento
 
 
 async def _carregar(

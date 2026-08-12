@@ -16,9 +16,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.application.conhecimento_use_cases import (
+    AtualizarFonteConhecimento,
+    DefinirAtivoFonteConhecimento,
     DefinirPromptTenant,
     IngerirDocumento,
     ListarFontesConhecimento,
+    ObterFonteConhecimento,
     ObterPromptTenant,
     RemoverFonteConhecimento,
 )
@@ -28,15 +31,23 @@ from app.infrastructure.db.repositories_conhecimento import (
     SqlFonteConhecimentoRepository,
     SqlPromptTenantRepository,
 )
-from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
+from app.interfaces.api.admin import (
+    _exige_acesso_tenant,
+    _exige_super_admin,
+    usuario_autenticado,
+)
 from app.interfaces.deps import (
+    get_atualizar_fonte_conhecimento,
+    get_definir_ativo_fonte_conhecimento,
     get_fonte_conhecimento_repo,
     get_ingerir_documento,
     get_prompt_tenant_repo,
     get_session,
 )
 from app.interfaces.dto import (
+    DocumentoConhecimentoAtualizacao,
     DocumentoConhecimentoEntrada,
+    FonteConhecimentoAtivoEntrada,
     FonteConhecimentoSaida,
     PromptTenantEntrada,
     PromptTenantSaida,
@@ -45,13 +56,20 @@ from app.interfaces.dto import (
 router = APIRouter(prefix="/api/admin", tags=["conhecimento"])
 
 
-def _fonte_saida(f: FonteConhecimento) -> FonteConhecimentoSaida:
+def _fonte_saida(
+    f: FonteConhecimento, *, incluir_conteudo: bool = False
+) -> FonteConhecimentoSaida:
+    """``incluir_conteudo`` só no detalhe: a listagem não mostra o texto, e trafegar o
+    conteúdo de todos os documentos a cada abertura da tela seria pagar por nada."""
     return FonteConhecimentoSaida(
         id=f.id,
         nome=f.nome,
         tipo=f.tipo.value,
         total_trechos=f.total_trechos,
+        ativo=f.ativo,
+        conteudo=f.conteudo if incluir_conteudo else "",
         criado_em=f.criado_em,
+        atualizado_em=f.atualizado_em,
     )
 
 
@@ -105,6 +123,68 @@ async def listar_conhecimento(
     ]
 
 
+@router.get("/conhecimento/{fonte_id}", response_model=FonteConhecimentoSaida)
+async def obter_conhecimento(
+    fonte_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    fontes: SqlFonteConhecimentoRepository = Depends(get_fonte_conhecimento_repo),
+) -> FonteConhecimentoSaida:
+    """O documento **com o texto original** — é o que a tela de leitura/edição abre."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    fonte = await ObterFonteConhecimento(fontes=fontes).executar(
+        tenant_id=tenant_id, fonte_id=fonte_id
+    )
+    if fonte is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Documento não encontrado"
+        )
+    return _fonte_saida(fonte, incluir_conteudo=True)
+
+
+@router.put("/conhecimento/{fonte_id}", response_model=FonteConhecimentoSaida)
+async def atualizar_conhecimento(
+    fonte_id: UUID,
+    payload: DocumentoConhecimentoAtualizacao,
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: AtualizarFonteConhecimento = Depends(get_atualizar_fonte_conhecimento),
+) -> FonteConhecimentoSaida:
+    """Corrige o texto e reindexa. Fica com o admin da escola: editar um procedimento é
+    rotina da secretaria, e não destrói nada."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        fonte = await uc.executar(
+            tenant_id=payload.tenant_id,
+            fonte_id=fonte_id,
+            nome=payload.nome,
+            conteudo=payload.conteudo,
+            tipo=_parse_tipo(payload.tipo),
+            ativo=payload.ativo,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _fonte_saida(fonte, incluir_conteudo=True)
+
+
+@router.put("/conhecimento/{fonte_id}/ativo", response_model=FonteConhecimentoSaida)
+async def definir_ativo_conhecimento(
+    fonte_id: UUID,
+    payload: FonteConhecimentoAtivoEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: DefinirAtivoFonteConhecimento = Depends(get_definir_ativo_fonte_conhecimento),
+) -> FonteConhecimentoSaida:
+    """Tira do RAG (ou devolve) sem apagar o texto — a via da escola, já que a remoção
+    passou a exigir super admin."""
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        fonte = await uc.executar(
+            tenant_id=payload.tenant_id, fonte_id=fonte_id, ativo=payload.ativo
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _fonte_saida(fonte)
+
+
 @router.delete("/conhecimento/{fonte_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remover_conhecimento(
     fonte_id: UUID,
@@ -113,6 +193,10 @@ async def remover_conhecimento(
     fontes: SqlFonteConhecimentoRepository = Depends(get_fonte_conhecimento_repo),
     session=Depends(get_session),
 ) -> None:
+    """**Só super admin.** Apagar destrói o texto original e é irreversível; a escola tem
+    o interruptor ``/ativo`` para o que ela precisa no dia a dia. O escopo por tenant
+    continua sendo exigido — o super admin também não apaga documento de escola errada."""
+    _exige_super_admin(usuario)
     _exige_acesso_tenant(usuario, tenant_id)
     remover = RemoverFonteConhecimento(fontes=fontes, store=PgVectorStore(session))
     if not await remover.executar(tenant_id=tenant_id, fonte_id=fonte_id):
