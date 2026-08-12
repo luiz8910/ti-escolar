@@ -12,14 +12,13 @@ from app.application.cadastro_use_cases import (
     CadastrarPai,
     CriarSala,
     DadosResponsavel,
-    DesvincularPaiDaSala,
+    DadosTurma,
     ListarPais,
     RelatorioPaisDaSala,
     RemoverPai,
     RemoverSala,
-    VincularPaiASala,
 )
-from app.domain.entities import TipoFiliacao
+from app.domain.entities import Aluno, TipoFiliacao, Turno
 from tests.fakes import FakeAlunoRepo, FakeContatoRepo, FakeSalaRepo
 
 TENANT = uuid.uuid4()
@@ -34,15 +33,18 @@ def _repos() -> tuple[FakeContatoRepo, FakeSalaRepo]:
 
 
 # --------------------------- pais (CRUD) ----------------------------------- #
-async def test_cadastrar_pai_e_relacionar_com_sala():
+async def test_responsavel_entra_na_turma_pelo_aluno():
     contatos, salas = _repos()
+    alunos = FakeAlunoRepo()
+    salas.alunos = alunos
     sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
 
-    pai = await CadastrarPai(contatos=contatos, salas=salas).executar(
-        tenant_id=TENANT,
-        nome="Maria Souza",
-        telefone="+5511999990001",
-        sala_ids=[sala.id],
+    pai = await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Maria Souza", telefone="+5511999990001"
+    )
+    # O responsável entra na turma pelo **aluno**, não por um vínculo próprio.
+    await alunos.criar(
+        Aluno(tenant_id=TENANT, nome="Filho", sala_id=sala.id, responsaveis=[pai])
     )
 
     assert pai.nome == "Maria Souza"
@@ -54,7 +56,7 @@ async def test_cadastrar_pai_e_relacionar_com_sala():
 
 async def test_telefone_duplicado_no_tenant_falha():
     contatos, salas = _repos()
-    cadastrar = CadastrarPai(contatos=contatos, salas=salas)
+    cadastrar = CadastrarPai(contatos=contatos)
     await cadastrar.executar(tenant_id=TENANT, nome="Maria", telefone="+5511999990001")
     with pytest.raises(ValueError, match="telefone"):
         await cadastrar.executar(tenant_id=TENANT, nome="Outra", telefone="+5511999990001")
@@ -62,7 +64,7 @@ async def test_telefone_duplicado_no_tenant_falha():
 
 async def test_mesmo_telefone_em_tenants_diferentes_e_permitido():
     contatos, salas = _repos()
-    cadastrar = CadastrarPai(contatos=contatos, salas=salas)
+    cadastrar = CadastrarPai(contatos=contatos)
     await cadastrar.executar(tenant_id=TENANT, nome="Maria", telefone="+5511999990001")
     # Não deve levantar: o telefone é único só dentro do tenant.
     await cadastrar.executar(tenant_id=OUTRO_TENANT, nome="Maria", telefone="+5511999990001")
@@ -70,7 +72,7 @@ async def test_mesmo_telefone_em_tenants_diferentes_e_permitido():
 
 async def test_atualizar_pai_mantendo_unicidade_de_telefone():
     contatos, salas = _repos()
-    cadastrar = CadastrarPai(contatos=contatos, salas=salas)
+    cadastrar = CadastrarPai(contatos=contatos)
     p1 = await cadastrar.executar(tenant_id=TENANT, nome="Maria", telefone="+5511999990001")
     await cadastrar.executar(tenant_id=TENANT, nome="João", telefone="+5511999990002")
 
@@ -90,7 +92,7 @@ async def test_atualizar_pai_mantendo_unicidade_de_telefone():
 
 async def test_remover_pai():
     contatos, salas = _repos()
-    pai = await CadastrarPai(contatos=contatos, salas=salas).executar(
+    pai = await CadastrarPai(contatos=contatos).executar(
         tenant_id=TENANT, nome="Maria", telefone="+5511999990001"
     )
     assert await RemoverPai(contatos=contatos).executar(tenant_id=TENANT, contato_id=pai.id)
@@ -99,44 +101,103 @@ async def test_remover_pai():
     assert not await RemoverPai(contatos=contatos).executar(tenant_id=TENANT, contato_id=pai.id)
 
 
-# --------------------------- salas (CRUD + vínculo) ------------------------ #
-async def test_crud_e_vinculo_de_sala():
-    contatos, salas = _repos()
+# --------------------------- turmas (CRUD) --------------------------------- #
+async def test_crud_de_turma():
+    _, salas = _repos()
     sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
     sala = await AtualizarSala(salas=salas).executar(
         tenant_id=TENANT, sala_id=sala.id, nome="4ª série B - Manhã", descricao="turma da manhã"
     )
     assert sala.nome == "4ª série B - Manhã"
-
-    pai = await CadastrarPai(contatos=contatos, salas=salas).executar(
-        tenant_id=TENANT, nome="Ana", telefone="+5511999990003"
-    )
-    await VincularPaiASala(salas=salas).executar(
-        tenant_id=TENANT, sala_id=sala.id, contato_id=pai.id
-    )
-    assert len(await RelatorioPaisDaSala(salas=salas).executar(tenant_id=TENANT, sala_id=sala.id)) == 1
-
-    await DesvincularPaiDaSala(salas=salas).executar(
-        tenant_id=TENANT, sala_id=sala.id, contato_id=pai.id
-    )
-    assert await RelatorioPaisDaSala(salas=salas).executar(tenant_id=TENANT, sala_id=sala.id) == []
+    assert sala.descricao == "turma da manhã"
 
     assert await RemoverSala(salas=salas, alunos=FakeAlunoRepo()).executar(
         tenant_id=TENANT, sala_id=sala.id
     )
 
 
-async def test_vincular_pai_de_outro_tenant_falha():
+# --------------------------------------------------------------------------- #
+# O relatório da turma é DERIVADO dos alunos ativos
+#
+# Antes havia um vínculo manual (`sala_contatos`), e com ele o estado inconsistente que o
+# apontamento de 10/08 mandou tirar da tela: um responsável ligado a uma turma sem nenhum
+# filho lá — que a cobertura de contatos contava como se tivesse.
+# --------------------------------------------------------------------------- #
+def _repos_com_alunos():
     contatos, salas = _repos()
+    alunos = FakeAlunoRepo()
+    salas.alunos = alunos
+    return contatos, salas, alunos
+
+
+async def test_relatorio_vem_dos_responsaveis_dos_alunos_da_turma():
+    contatos, salas, alunos = _repos_com_alunos()
     sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
-    # Pai cadastrado em outro tenant não pode ser vinculado a uma sala deste tenant.
-    pai_outro = await CadastrarPai(contatos=contatos, salas=salas).executar(
-        tenant_id=OUTRO_TENANT, nome="Intruso", telefone="+5511999990007"
+    mae = await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Ana", telefone="+5511999990003"
     )
-    with pytest.raises(ValueError):
-        await VincularPaiASala(salas=salas).executar(
-            tenant_id=TENANT, sala_id=sala.id, contato_id=pai_outro.id
+    await alunos.criar(
+        Aluno(tenant_id=TENANT, nome="Filho", sala_id=sala.id, responsaveis=[mae])
+    )
+
+    relatorio = await RelatorioPaisDaSala(salas=salas).executar(
+        tenant_id=TENANT, sala_id=sala.id
+    )
+
+    assert [c.id for c in relatorio] == [mae.id]
+
+
+async def test_responsavel_sem_aluno_na_turma_nao_aparece():
+    """É o estado que o vínculo manual permitia — e o motivo de ele ter saído."""
+    contatos, salas, _ = _repos_com_alunos()
+    sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
+    await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Sem filho aqui", telefone="+5511999990004"
+    )
+
+    assert await RelatorioPaisDaSala(salas=salas).executar(
+        tenant_id=TENANT, sala_id=sala.id
+    ) == []
+
+
+async def test_ex_aluno_nao_mantem_o_responsavel_na_turma():
+    """A família de quem já saiu não deve continuar recebendo o aviso da turma."""
+    contatos, salas, alunos = _repos_com_alunos()
+    sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
+    mae = await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Ana", telefone="+5511999990003"
+    )
+    await alunos.criar(
+        Aluno(
+            tenant_id=TENANT,
+            nome="Ex-aluno",
+            sala_id=sala.id,
+            responsaveis=[mae],
+            ativo=False,
         )
+    )
+
+    assert await RelatorioPaisDaSala(salas=salas).executar(
+        tenant_id=TENANT, sala_id=sala.id
+    ) == []
+
+
+async def test_irmaos_na_mesma_turma_nao_duplicam_o_responsavel():
+    contatos, salas, alunos = _repos_com_alunos()
+    sala = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="4ª série B")
+    mae = await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Ana", telefone="+5511999990003"
+    )
+    for nome in ("Gêmeo 1", "Gêmeo 2"):
+        await alunos.criar(
+            Aluno(tenant_id=TENANT, nome=nome, sala_id=sala.id, responsaveis=[mae])
+        )
+
+    relatorio = await RelatorioPaisDaSala(salas=salas).executar(
+        tenant_id=TENANT, sala_id=sala.id
+    )
+
+    assert len(relatorio) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -148,7 +209,7 @@ CPF_OUTRO = "16899535009"
 
 async def _cadastrar_resp(contatos, salas, **kwargs):
     dados = DadosResponsavel(**kwargs.pop("dados", {}))
-    return await CadastrarPai(contatos=contatos, salas=salas).executar(
+    return await CadastrarPai(contatos=contatos).executar(
         tenant_id=kwargs.pop("tenant_id", TENANT),
         nome=kwargs.pop("nome", "Maria Souza"),
         telefone=kwargs.pop("telefone", "+5515999990001"),
@@ -304,3 +365,115 @@ async def test_cpf_igual_em_outra_escola_e_permitido():
     )
 
     assert outro.cpf == CPF_OK
+
+
+# --------------------------------------------------------------------------- #
+# Turma estruturada (ano · etapa · turma · sala · período)
+#
+# O nome era texto livre, e "4ª B", "4ª série B" e "4a serie B" conviviam como turmas
+# diferentes — com alunos espalhados entre elas.
+# --------------------------------------------------------------------------- #
+async def _criar_turma(salas, **kwargs):
+    return await CriarSala(salas=salas).executar(
+        tenant_id=kwargs.pop("tenant_id", TENANT),
+        dados=DadosTurma(**kwargs),
+    )
+
+
+async def test_nome_da_turma_e_derivado_de_etapa_e_letra():
+    _, salas = _repos()
+    turma = await _criar_turma(
+        salas, ano_letivo=2026, etapa="4ª série", turma="b", numero_sala="12",
+        periodo=Turno.MANHA,
+    )
+    assert turma.nome == "4ª série B"  # a letra é normalizada em maiúscula
+    assert turma.periodo is Turno.MANHA
+    assert turma.numero_sala == "12"
+
+
+async def test_turma_repetida_no_mesmo_ano_e_recusada():
+    _, salas = _repos()
+    await _criar_turma(salas, ano_letivo=2026, etapa="4ª série", turma="B")
+    with pytest.raises(ValueError, match="Já existe a turma"):
+        await _criar_turma(salas, ano_letivo=2026, etapa="4ª série", turma="b")
+
+
+async def test_mesma_turma_em_outro_ano_letivo_e_permitida():
+    """É a virada de ano: a 4ª B de 2026 e a de 2027 são turmas diferentes."""
+    _, salas = _repos()
+    await _criar_turma(salas, ano_letivo=2026, etapa="4ª série", turma="B")
+    nova = await _criar_turma(salas, ano_letivo=2027, etapa="4ª série", turma="B")
+    assert nova.ano_letivo == 2027
+
+
+async def test_turma_sem_estrutura_mantem_o_nome_livre():
+    """Retrocompatibilidade: o seed e a importação criam turma só com nome."""
+    _, salas = _repos()
+    turma = await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="Turma especial")
+    assert turma.nome == "Turma especial"
+    assert turma.etapa == ""
+
+
+async def test_turma_sem_nome_nem_estrutura_e_recusada():
+    _, salas = _repos()
+    with pytest.raises(ValueError, match="nome"):
+        await CriarSala(salas=salas).executar(tenant_id=TENANT, nome="  ")
+
+
+async def test_atualizar_turma_renomeia_pela_estrutura():
+    _, salas = _repos()
+    turma = await _criar_turma(salas, ano_letivo=2026, etapa="4ª série", turma="B")
+
+    atualizada = await AtualizarSala(salas=salas).executar(
+        tenant_id=TENANT,
+        sala_id=turma.id,
+        dados=DadosTurma(ano_letivo=2026, etapa="5ª série", turma="A", periodo=Turno.TARDE),
+    )
+
+    assert atualizada.nome == "5ª série A"
+    assert atualizada.periodo is Turno.TARDE
+
+
+async def test_atualizar_nao_acusa_a_propria_turma_como_duplicada():
+    _, salas = _repos()
+    turma = await _criar_turma(salas, ano_letivo=2026, etapa="4ª série", turma="B")
+
+    atualizada = await AtualizarSala(salas=salas).executar(
+        tenant_id=TENANT,
+        sala_id=turma.id,
+        descricao="turma da manhã",
+        dados=DadosTurma(ano_letivo=2026, etapa="4ª série", turma="B"),
+    )
+
+    assert atualizada.descricao == "turma da manhã"
+
+
+async def test_grade_invalida_impede_salvar_a_turma():
+    """A validação da grade acontece no cadastro, não só na tela."""
+    _, salas = _repos()
+    with pytest.raises(ValueError, match="depois"):
+        await _criar_turma(
+            salas,
+            ano_letivo=2026,
+            etapa="4ª série",
+            turma="B",
+            grade_horario={"formato": "turno", "inicio": "11:30", "fim": "07:30"},
+        )
+
+
+async def test_grade_e_guardada_normalizada():
+    _, salas = _repos()
+    turma = await _criar_turma(
+        salas,
+        ano_letivo=2026,
+        etapa="4ª série",
+        turma="B",
+        grade_horario={
+            "formato": "aulas",
+            "blocos": [
+                {"dia": 2, "inicio": "09:00", "fim": "09:50"},
+                {"dia": 1, "inicio": "07:30", "fim": "08:20"},
+            ],
+        },
+    )
+    assert [b["dia"] for b in turma.grade_horario["blocos"]] == [1, 2]

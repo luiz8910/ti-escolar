@@ -25,8 +25,8 @@ from app.application.cadastro_use_cases import (
     CoberturaDeContatosDaSala,
     DadosProfessor,
     DadosResponsavel,
+    DadosTurma,
     CriarSala,
-    DesvincularPaiDaSala,
     DesvincularResponsavelDoAluno,
     ListarAlunos,
     ListarPais,
@@ -46,7 +46,6 @@ from app.application.cadastro_use_cases import (
     RemoverProfessorDaSala,
     RemoverSala,
     ResumoCoberturaDasSalas,
-    VincularPaiASala,
     VincularResponsavelAoAluno,
 )
 from app.application.importacao_use_cases import (
@@ -58,6 +57,7 @@ from app.application.foto_aluno_use_cases import (
     ObterFotoDoAluno,
     RemoverFotoDoAluno,
 )
+from app.application.grade_horario import minutos_de_aula
 from app.application.validacao import formatar_cpf
 from app.domain.entities import (
     Aluno,
@@ -70,6 +70,7 @@ from app.domain.entities import (
     ResultadoImportacaoAlunos,
     Sala,
     TipoFiliacao,
+    Turno,
     Usuario,
 )
 from app.domain.ports import LLMProvider, MessageChannel
@@ -143,6 +144,30 @@ def _pai_saida(c: Contato) -> PaiSaida:
     )
 
 
+def _dados_turma(payload: SalaEntrada | SalaAtualizar) -> DadosTurma:
+    return DadosTurma(
+        ano_letivo=payload.ano_letivo,
+        etapa=payload.etapa,
+        turma=payload.turma,
+        numero_sala=payload.numero_sala,
+        periodo=_enum_turno(payload.periodo),
+        grade_horario=payload.grade_horario,
+    )
+
+
+def _enum_turno(valor: str) -> Turno | None:
+    if not valor:
+        return None
+    try:
+        return Turno(valor)
+    except ValueError as e:
+        aceitos = ", ".join(t.value for t in Turno)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Período inválido: {valor}. Use um de: {aceitos}.",
+        ) from e
+
+
 def _dados_responsavel(payload: PaiEntrada | PaiAtualizar) -> DadosResponsavel:
     return DadosResponsavel(
         cpf=payload.cpf,
@@ -174,6 +199,13 @@ def _sala_saida(s: Sala) -> SalaSaida:
         id=s.id,
         nome=s.nome,
         descricao=s.descricao,
+        ano_letivo=s.ano_letivo,
+        etapa=s.etapa,
+        turma=s.turma,
+        numero_sala=s.numero_sala,
+        periodo=s.periodo.value if s.periodo else "",
+        grade_horario=s.grade_horario,
+        minutos_de_aula=minutos_de_aula(s.grade_horario),
         total_pais=len(s.pais),
         pais=[_pai_saida(c) for c in s.pais],
         professor_id=s.professor_id,
@@ -316,11 +348,10 @@ async def cadastrar_pai(
 ) -> PaiSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
     try:
-        contato = await CadastrarPai(contatos=contatos, salas=salas).executar(
+        contato = await CadastrarPai(contatos=contatos).executar(
             tenant_id=payload.tenant_id,
             nome=payload.nome,
             telefone=payload.telefone,
-            sala_ids=payload.sala_ids,
             dados=_dados_responsavel(payload),
         )
     except ValueError as e:
@@ -391,9 +422,17 @@ async def criar_sala(
     salas: SqlSalaRepository = Depends(get_sala_repo),
 ) -> SalaSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
-    sala = await CriarSala(salas=salas).executar(
-        tenant_id=payload.tenant_id, nome=payload.nome, descricao=payload.descricao
-    )
+    try:
+        sala = await CriarSala(salas=salas).executar(
+            tenant_id=payload.tenant_id,
+            nome=payload.nome,
+            descricao=payload.descricao,
+            dados=_dados_turma(payload),
+        )
+    except ValueError as e:
+        # Turma repetida no ano, grade inconsistente, nome ausente: erro do cliente.
+        # A rota não tinha `try` porque `CriarSala` nunca validou nada — passou a validar.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return _sala_saida(sala)
 
 
@@ -430,15 +469,20 @@ async def atualizar_sala(
     salas: SqlSalaRepository = Depends(get_sala_repo),
 ) -> SalaSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
+    # Turma inexistente é 404; o resto (duplicada, grade inválida) é 400. Antes tudo caía
+    # em 404, e a tela dizia "não encontrada" para uma grade com horários sobrepostos.
+    if await salas.obter(tenant_id=payload.tenant_id, sala_id=sala_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma não encontrada")
     try:
         sala = await AtualizarSala(salas=salas).executar(
             tenant_id=payload.tenant_id,
             sala_id=sala_id,
             nome=payload.nome,
             descricao=payload.descricao,
+            dados=_dados_turma(payload),
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return _sala_saida(sala)
 
 
@@ -465,41 +509,12 @@ async def remover_sala(
 
 
 # --------------------------------------------------------------------------- #
-# Vínculo pai ↔ sala e relatório de pais por sala
+# Relatório de pais da turma
+#
+# `POST /salas/{id}/pais` e `DELETE /salas/{id}/pais/{contato_id}` deixaram de existir: o
+# vínculo pai↔turma é **derivado dos alunos ativos** e não se mantém à mão. Quem muda a
+# lista é o vínculo aluno↔responsável, na tela de Alunos.
 # --------------------------------------------------------------------------- #
-@router.post("/salas/{sala_id}/pais", status_code=status.HTTP_204_NO_CONTENT)
-async def vincular_pai(
-    sala_id: UUID,
-    payload: VinculoPaiEntrada,
-    usuario: Usuario = Depends(usuario_autenticado),
-    salas: SqlSalaRepository = Depends(get_sala_repo),
-) -> None:
-    _exige_acesso_tenant(usuario, payload.tenant_id)
-    try:
-        await VincularPaiASala(salas=salas).executar(
-            tenant_id=payload.tenant_id, sala_id=sala_id, contato_id=payload.contato_id
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-
-@router.delete("/salas/{sala_id}/pais/{contato_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def desvincular_pai(
-    sala_id: UUID,
-    contato_id: UUID,
-    tenant_id: UUID,
-    usuario: Usuario = Depends(usuario_autenticado),
-    salas: SqlSalaRepository = Depends(get_sala_repo),
-) -> None:
-    _exige_acesso_tenant(usuario, tenant_id)
-    try:
-        await DesvincularPaiDaSala(salas=salas).executar(
-            tenant_id=tenant_id, sala_id=sala_id, contato_id=contato_id
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-
 @router.get("/salas/{sala_id}/pais", response_model=list[PaiSaida])
 async def relatorio_pais_da_sala(
     sala_id: UUID,

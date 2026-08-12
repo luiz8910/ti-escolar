@@ -23,6 +23,7 @@ from app.application.validacao import (
     normalizar_email,
     normalizar_telefone,
 )
+from app.application.grade_horario import validar_grade
 from app.domain.entities import (
     Aluno,
     CoberturaContatosSala,
@@ -30,6 +31,7 @@ from app.domain.entities import (
     Professor,
     Sala,
     TipoFiliacao,
+    Turno,
 )
 from app.domain.ports import (
     AlunoRepository,
@@ -82,7 +84,11 @@ def _validar_dados_responsavel(dados: DadosResponsavel) -> DadosResponsavel:
 
 
 class CadastrarPai:
-    """Cadastra um pai/responsável e, opcionalmente, já o vincula a salas.
+    """Cadastra um pai/responsável.
+
+    Não vincula a turma: a turma de um responsável é **derivada dos alunos** dele. Havia
+    um ``sala_ids`` aqui, do tempo do vínculo manual — ele saiu junto com a tabela
+    ``sala_contatos``. Quem liga o responsável à turma é o vínculo com o **aluno**.
 
     O **telefone** é único por tenant (E.164) porque é a chave da conversa: o webhook
     entrega o remetente, não o id do contato. O **CPF** também é único quando informado —
@@ -94,9 +100,8 @@ class CadastrarPai:
     reconhecido no WhatsApp, conta na cobertura da turma).
     """
 
-    def __init__(self, *, contatos: ContatoRepository, salas: SalaRepository) -> None:
+    def __init__(self, *, contatos: ContatoRepository) -> None:
         self._contatos = contatos
-        self._salas = salas
 
     async def executar(
         self,
@@ -104,7 +109,6 @@ class CadastrarPai:
         tenant_id: UUID,
         nome: str,
         telefone: str,
-        sala_ids: Sequence[UUID] = (),
         dados: DadosResponsavel | None = None,
     ) -> Contato:
         if await self._contatos.por_telefone(tenant_id=tenant_id, telefone=telefone):
@@ -116,16 +120,11 @@ class CadastrarPai:
         ):
             raise ValueError("Já existe um responsável com este CPF neste tenant.")
 
-        contato = await self._contatos.criar(
+        return await self._contatos.criar(
             Contato(
                 tenant_id=tenant_id, nome=nome, telefone=telefone, **asdict(validos)
             )
         )
-        for sala_id in sala_ids:
-            await self._salas.vincular_pai(
-                tenant_id=tenant_id, sala_id=sala_id, contato_id=contato.id
-            )
-        return contato
 
 
 class ListarPais:
@@ -193,12 +192,80 @@ class RemoverPai:
 # --------------------------------------------------------------------------- #
 # Salas / turmas (CRUD)
 # --------------------------------------------------------------------------- #
+@dataclass
+class DadosTurma:
+    """Identificação estruturada e grade da turma.
+
+    Todos opcionais: `CriarSala(nome=...)` continua funcionando — é o caminho do seed, da
+    importação em massa e da criação rápida de série destino ao excluir uma turma.
+    """
+
+    ano_letivo: int = 0
+    etapa: str = ""
+    turma: str = ""
+    numero_sala: str = ""
+    periodo: Turno | None = None
+    grade_horario: dict | None = None
+
+
+def _aplicar_dados_turma(sala: Sala, dados: DadosTurma | None, *, nome: str = "") -> Sala:
+    """Preenche a turma e **deriva o `nome`**, que é o que as telas exibem.
+
+    Quando não vem etapa/turma, o `nome` informado é mantido — é o caminho antigo, ainda
+    usado pelo seed e pela importação.
+    """
+    if dados is not None:
+        sala.ano_letivo = dados.ano_letivo
+        sala.etapa = dados.etapa.strip()
+        sala.turma = dados.turma.strip().upper()
+        sala.numero_sala = dados.numero_sala.strip()
+        sala.periodo = dados.periodo
+        sala.grade_horario = validar_grade(dados.grade_horario)
+    sala.nome = (nome.strip() or sala.nome).strip()
+    derivado = sala.nome_derivado
+    if derivado:
+        sala.nome = derivado
+    if not sala.nome:
+        raise ValueError("A turma precisa de um nome (ou de etapa e turma).")
+    return sala
+
+
+async def _exige_turma_unica(
+    salas: SalaRepository, sala: Sala, *, ignorar: UUID | None = None
+) -> None:
+    """Recusa duas turmas com a mesma identificação no mesmo ano.
+
+    Antes o nome era texto livre e "4ª B", "4ª série B" e "4a serie B" conviviam como
+    turmas diferentes — com alunos espalhados entre elas.
+    """
+    if not sala.etapa or not sala.turma:
+        return
+    for existente in await salas.listar(tenant_id=sala.tenant_id):
+        if existente.id == ignorar:
+            continue
+        if existente.chave_unica == sala.chave_unica:
+            raise ValueError(
+                f"Já existe a turma {sala.nome_derivado} no ano letivo {sala.ano_letivo}."
+            )
+
+
 class CriarSala:
     def __init__(self, *, salas: SalaRepository) -> None:
         self._salas = salas
 
-    async def executar(self, *, tenant_id: UUID, nome: str, descricao: str = "") -> Sala:
-        return await self._salas.criar(Sala(tenant_id=tenant_id, nome=nome, descricao=descricao))
+    async def executar(
+        self,
+        *,
+        tenant_id: UUID,
+        nome: str = "",
+        descricao: str = "",
+        dados: DadosTurma | None = None,
+    ) -> Sala:
+        sala = _aplicar_dados_turma(
+            Sala(tenant_id=tenant_id, nome=nome, descricao=descricao), dados, nome=nome
+        )
+        await _exige_turma_unica(self._salas, sala)
+        return await self._salas.criar(sala)
 
 
 class ListarSalas:
@@ -225,11 +292,21 @@ class AtualizarSala:
         self._salas = salas
 
     async def executar(
-        self, *, tenant_id: UUID, sala_id: UUID, nome: str, descricao: str = ""
+        self,
+        *,
+        tenant_id: UUID,
+        sala_id: UUID,
+        nome: str = "",
+        descricao: str = "",
+        dados: DadosTurma | None = None,
     ) -> Sala:
-        return await self._salas.atualizar(
-            tenant_id=tenant_id, sala_id=sala_id, nome=nome, descricao=descricao
-        )
+        atual = await self._salas.obter(tenant_id=tenant_id, sala_id=sala_id)
+        if atual is None:
+            raise ValueError("Sala não encontrada para o tenant.")
+        atual.descricao = descricao
+        _aplicar_dados_turma(atual, dados, nome=nome)
+        await _exige_turma_unica(self._salas, atual, ignorar=sala_id)
+        return await self._salas.atualizar(atual)
 
 
 class RemoverSala:
@@ -274,30 +351,16 @@ class RemoverSala:
 
 
 # --------------------------------------------------------------------------- #
-# Vínculo pai ↔ sala e relatório
+# Relatório de pais da turma
 # --------------------------------------------------------------------------- #
-class VincularPaiASala:
-    def __init__(self, *, salas: SalaRepository) -> None:
-        self._salas = salas
-
-    async def executar(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None:
-        await self._salas.vincular_pai(
-            tenant_id=tenant_id, sala_id=sala_id, contato_id=contato_id
-        )
-
-
-class DesvincularPaiDaSala:
-    def __init__(self, *, salas: SalaRepository) -> None:
-        self._salas = salas
-
-    async def executar(self, *, tenant_id: UUID, sala_id: UUID, contato_id: UUID) -> None:
-        await self._salas.desvincular_pai(
-            tenant_id=tenant_id, sala_id=sala_id, contato_id=contato_id
-        )
-
-
 class RelatorioPaisDaSala:
-    """Lista (relatório) dos pais/responsáveis vinculados a uma sala específica."""
+    """Relatório dos responsáveis de uma turma.
+
+    A lista é **derivada dos alunos ativos** da turma: um responsável está aqui porque tem
+    filho matriculado nela. Não há mais vínculo manual — ``VincularPaiASala`` e
+    ``DesvincularPaiDaSala`` foram removidos junto com a tabela ``sala_contatos``, e com
+    eles o estado inconsistente de um pai ligado a uma turma sem nenhum filho lá.
+    """
 
     def __init__(self, *, salas: SalaRepository) -> None:
         self._salas = salas
