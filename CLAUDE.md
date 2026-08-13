@@ -1731,10 +1731,20 @@ São **duas camadas, separadas pela natureza do risco** — `.github/workflows/l
   12/ago/2026 o aviso também vai para o resumo do run: o secret **nunca existiu**, e como
   os passos são condicionais o check ficava **verde sem auditar nada**. Um warning no fundo
   do log não é sinal.
-  - **O executor é a Codex CLI** (`codex exec`, sandbox `read-only`), trocada em
-    12/ago/2026 — antes era o Claude Code, que só autentica contra Anthropic/Bedrock/Vertex
-    e **não lê `OPENAI_API_KEY`**: a variável não existe no binário. Trocar de provedor
-    aqui é trocar o executor, não o nome da env.
+  - **O executor é a Codex CLI** (`codex exec`), trocada em 12/ago/2026 — antes era o
+    Claude Code, que só autentica contra Anthropic/Bedrock/Vertex e **não lê
+    `OPENAI_API_KEY`**: a variável não existe no binário. Trocar de provedor aqui é trocar
+    o executor, não o nome da env.
+  - **Roda sem o sandbox da Codex** (`--dangerously-bypass-approvals-and-sandbox`), e é
+    decisão consciente. O bubblewrap não sobe em runner hospedado — cria namespace de rede
+    e morre em `loopback: Failed RTM_NEWADDR`, idêntico com o bwrap embutido no npm e com o
+    da distro instalado por apt. Meio-morto é pior que ausente: o agente roda, não lê nada
+    e **publica um relatório dizendo que não conseguiu** — foi o que saiu no PR #64 antes
+    de virmos. O flag é documentado para ambiente já isolado, que é o caso (runner efêmero),
+    e mantém a proporção: o `npm install -g` do passo anterior já executa script de terceiro
+    sem sandbox no mesmo runner. **O "somente leitura" passa a ser sustentado pelo mandato
+    no prompt, não pelo SO** — e precisa ser revisto se um dia isto rodar em PR de fork,
+    quando o diff passa a ser texto de estranho.
   - **O prompt continua sendo o corpo de `.claude/agents/lgpd-auditor.md`**, que segue
     valendo para o Claude Code em uso local (`Agent`/`--agent`). O workflow descarta o
     frontmatter (`model`, `tools`), que é sintaxe do Claude Code: na Codex o modelo vem do

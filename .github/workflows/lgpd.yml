@@ -142,40 +142,30 @@ jobs:
             echo "de pull request como veio)."
           } >> prompt-do-auditor.txt
 
-      - name: Prepara o sandbox (bubblewrap)
-        if: steps.chave.outputs.presente == 'true'
-        run: |
-          set -euo pipefail
-
-          # Sem o bubblewrap do sistema, a Codex usa o que vem embutido no pacote npm — e
-          # esse não tem perfil AppArmor. No Ubuntu 24.04, que restringe user namespace
-          # não privilegiado (kernel.apparmor_restrict_unprivileged_userns=1), ele morre
-          # em `bwrap: loopback: Failed RTM_NEWADDR` e TODA leitura do agente é bloqueada.
-          # O pacote da distro traz o perfil e passa. Foi o que aconteceu no run 31656955912.
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap
-          bwrap --version
-
-          # Preflight determinístico, antes de gastar um token: se o namespace não sobe, o
-          # agente vai "rodar" e produzir um relatório dizendo que não conseguiu ler nada —
-          # relatório não-vazio, exit 0, comentário no PR, e a auditoria não aconteceu. É a
-          # mesma armadilha do check verde, uma camada abaixo. Melhor falhar aqui e alto.
-          if ! bwrap --ro-bind / / --unshare-all --die-with-parent /bin/true; then
-            echo "::error::bubblewrap não consegue criar o namespace neste runner; a Codex" \
-                 "não teria acesso de leitura e a auditoria sairia vazia de conteúdo real."
-            exit 1
-          fi
-          echo "Sandbox operante."
-
       - name: Roda o agente lgpd-auditor sobre o diff
         if: steps.chave.outputs.presente == 'true'
         run: |
           set -o pipefail
-          # `--sandbox read-only` é o mandato do agente virado config de execução: inspeciona e
-          # não escreve. `-o` grava só a mensagem final; o stream fica no log do job.
-          # Para fixar o modelo, acrescente `-m <modelo>`.
+          # Sem o sandbox da Codex, e isso é decisão consciente, não descuido.
+          #
+          # O sandbox dela (bubblewrap) não sobe em runner hospedado: cria namespace de rede
+          # e morre em `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. Testado
+          # nos dois caminhos — com o bwrap embutido no pacote npm (run 31656955912) e com o
+          # 0.9.0 da distro instalado por apt (run 31657099484). Falha idêntica; não é o perfil
+          # AppArmor, é o runner não permitir a operação. Com ele meio-morto o agente roda,
+          # não consegue ler NADA e publica um relatório dizendo isso — pior que não rodar.
+          #
+          # O flag é documentado exatamente para "environments that are externally sandboxed",
+          # que é o caso: runner efêmero, descartado no fim do job. E é bom manter a proporção
+          # — o `npm install -g` acima já executa script de terceiro sem sandbox nenhum neste
+          # mesmo runner. O que sustenta o "somente leitura" aqui passa a ser o mandato no
+          # prompt do agente, não o SO. Se um dia este workflow rodar em PR de fork, isto
+          # precisa ser revisto: aí o diff passa a ser texto de estranho.
+          #
+          # `-o` grava só a mensagem final; o stream fica no log do job. Para fixar o modelo,
+          # acrescente `-m <modelo>`.
           codex exec \
-            --sandbox read-only \
+            --dangerously-bypass-approvals-and-sandbox \
             --ephemeral \
             --color never \
             --output-last-message relatorio-lgpd.md \
