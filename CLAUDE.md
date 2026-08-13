@@ -1186,10 +1186,23 @@ dado o aval. A falha era do tipo pior: silenciosa, e no caminho do dinheiro.
   status. Sem isso a aprovação na conta A marcaria aprovado o template da conta B — a mesma
   mentira que o modelo por conta veio corrigir. **Categoria é exceção**: vale para o texto
   em qualquer conta, então é aplicada mesmo quando o evento não diz de onde veio.
-- **`META_WABA_ID` deixou de ser configuração** e virou **semente**: a migration a lê uma
-  única vez para criar a linha da conta que já existia, apontar todas as escolas para ela e
-  mover os status. Sem a env, a linha nasce inativa e sem id — estado visível no painel, em
-  vez de aprovações sumindo sem aviso.
+- **Não existe `META_WABA_ID`.** A conta é **cadastro, não configuração**: amarrá-la ao
+  ambiente reintroduziria a premissa de conta única que esta seção existe para desfazer, e
+  criaria uma ordem de deploy frágil (a env precisaria estar no lugar *antes* da migration
+  rodar). A migration cria a conta **sem id**, com todas as escolas e todos os status
+  existentes — nenhuma aprovação é perdida. O id chega por um dos dois caminhos, ambos
+  visíveis:
+  - **o painel** (Administração → Contas WhatsApp), que é o caminho que sempre existe; ou
+  - **o próprio webhook** (`AdotarContaDoWebhook`), porque o `entry[].id` de todo evento
+    carrega a conta. **A documentação da Meta não afirma isso em texto** — os exemplos
+    mostram o número, a referência não descreve o campo —, então a adoção **não acredita
+    na leitura do payload**: ela pergunta à Meta (`CatalogoTemplates.descrever` →
+    `GET /{id}?fields=id,name`) e só grava se a resposta confirmar que aquele id é uma
+    conta que enxergamos. Três condições, todas necessárias: id desconhecido, **exatamente
+    uma** conta sem id (com duas, escolher seria chute) e confirmação da Meta. Falhando
+    qualquer uma, nada acontece — o custo é um campo digitado, contra gravar um id
+    inválido que faria toda submissão falhar. A escrita vai para o log em `warning`, por
+    ser uma mudança de cadastro que ninguém pediu.
 
 ### 9b. Confirmação de recebimento (não-entrega reativa)
 
@@ -1241,7 +1254,7 @@ foi **removida do código em 27/jul/2026** quando a verificação foi aprovada �
   `app/infrastructure/security.py · validar_assinatura_meta`) quando
   `META_VALIDATE_SIGNATURE=true`. Assinatura ausente/ inválida → **403 seco**, sem processar e
   sem revelar a causa. Ver §9e.2 para o porquê disso ser bloqueante.
-- **Config** (`.env`): `META_PHONE_NUMBER_ID` (fallback), `META_WABA_ID`, `META_ACCESS_TOKEN`
+- **Config** (`.env`): `META_PHONE_NUMBER_ID` (fallback), `META_ACCESS_TOKEN`
   (token de **usuário do sistema** — o da tela de Configuração da API expira em 24h),
   `META_WEBHOOK_VERIFY_TOKEN`, `META_DAILY_TIER_LIMIT`, `META_APP_SECRET` e
   `META_VALIDATE_SIGNATURE`. A fábrica `criar_canal` (`app/infrastructure/factories.py`)

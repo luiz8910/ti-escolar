@@ -311,7 +311,7 @@ um aviso que a escola precisa saber que **não** chegou. Ver CLAUDE.md §9e.2.
 MESSAGE_CHANNEL=meta
 
 META_PHONE_NUMBER_ID=          # fallback; cada escola tem o seu
-META_WABA_ID=
+# Não há META_WABA_ID: a conta (WABA) é cadastro, no painel — ver §7.3
 META_ACCESS_TOKEN=             # token do usuário do sistema (§4)
 META_WEBHOOK_VERIFY_TOKEN=     # valor forte, NÃO "changeme"
 META_DAILY_TIER_LIMIT=1000     # tier inicial de negócio verificado
@@ -473,9 +473,38 @@ fora de sequência, falta de exemplo e categoria `authentication`.
 
 ---
 
+### 7.3 A conta (WABA) é cadastro, não variável de ambiente
+
+O id da conta mora no banco e é editável em **Administração → Contas WhatsApp**. Não existe
+`META_WABA_ID` — uma env não comporta a segunda conta, e o teto de números do portfólio
+(§2) garante que ela vai existir.
+
+São dois caminhos para preencher o id, e o segundo costuma dispensar o primeiro:
+
+1. **Digitar na tela.** O id está no WhatsApp Manager, em Configurações da conta
+   (hoje: `2116419572321695`).
+2. **Deixar o webhook reconhecer.** Todo evento traz a conta no `entry[].id`; ao receber
+   um id desconhecido, havendo **exatamente uma** conta sem id cadastrada, a aplicação
+   confirma esse id contra a Graph API (`GET /{id}?fields=id,name`) e só então o grava —
+   junto com o nome que a Meta usa. A confirmação existe porque a documentação da Meta
+   **não afirma** que `entry[].id` é a WABA: os exemplos mostram o número, a referência
+   não descreve o campo. Quem decide é a resposta da Meta, não a nossa leitura do payload.
+
+Enquanto o id estiver vazio, criar template falha com a causa por extenso ("A conta do
+WhatsApp Business (WABA) desta escola está sem o id da Meta"), e o painel de segurança
+sinaliza as escolas afetadas.
+
+---
+
 ## 8. Limites, tiers e qualidade
 
-- O limite é de **destinatários únicos por 24h**, **por número**: 1K → 10K → 100K → ilimitado.
+> ⚠️ **Corrigido em 13/ago/2026:** o limite deixou de ser por número. A doc da Meta diz que
+> "messaging limits are calculated and set at the business portfolio level and are shared by
+> all business phone numbers within a portfolio" (mudança de out/2025) — ou seja, uma escola
+> em campanha consome a capacidade das outras. O que segue por número é a **qualidade**.
+> Ver §2 e o CLAUDE.md §9e.3.
+
+- O limite é de **destinatários únicos por 24h**, medido **no portfólio**: 1K → 10K → 100K → ilimitado.
 - Empresa **verificada** (nosso caso) começa em **1.000/24h**; a escala é automática conforme a
   **qualidade** do número.
 - Qualidade cai com bloqueios e denúncias dos pais — por isso opt-in, conteúdo útil e frequência
@@ -517,10 +546,11 @@ fora de sequência, falta de exemplo e categoria `authentication`.
 - [x] Verificação da empresa aprovada
 - [x] **App publicado ("Ao vivo")** — sem isso o webhook não recebe dado de produção nenhum (§1.1)
 - [x] WABA de produção criada (id `2116419572321695`)
-- [ ] **WABA cadastrada no painel** (Administração → Contas WhatsApp) e escolhida em cada
-      escola — sem isso o disparo por template é recusado, porque não há onde conferir a
-      aprovação. A migration `0042` já cria a linha a partir de `META_WABA_ID`; **confira o
-      id na tela** se a env não estava preenchida no deploy
+- [ ] **Id da WABA preenchido no painel** (Administração → Contas WhatsApp) e conta
+      escolhida em cada escola — sem isso o disparo por template é recusado, porque não há
+      onde conferir a aprovação. **Não há env para isso**: a migration `0042` cria a conta
+      sem id, e ele é digitado na tela ou reconhecido sozinho no primeiro evento do webhook
+      (conferido contra a Graph API antes de ser gravado)
 - [x] Número registrado, **verificado e inscrito** (chip nosso) — `phone_number_id`
       `1231892910008454`; PIN de 6 dígitos guardado fora do repositório (§2, passo 5)
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)

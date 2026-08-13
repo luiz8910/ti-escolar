@@ -21,6 +21,7 @@ from app.application.templates_use_cases import (
     SemContaWhatsApp,
     SincronizarTemplates,
 )
+from app.application.waba_use_cases import AdotarContaDoWebhook
 from app.application.validacao_template import (
     TemplateInvalido,
     nome_com_prefixo,
@@ -732,3 +733,70 @@ async def test_sincronizacao_percorre_todas_as_contas():
     assert resultado.atualizados == 1
     assert repo.templates[0].aprovado_em(WABA_PADRAO_ID) is True
     assert repo.templates[0].aprovado_em(SEGUNDA_WABA_ID) is True
+
+
+# --------------------------------------------------------------------------- #
+# Reconhecimento da conta pelo webhook (o fim do META_WABA_ID)
+# --------------------------------------------------------------------------- #
+def _adotar(wabas, catalogo=None) -> AdotarContaDoWebhook:
+    return AdotarContaDoWebhook(wabas=wabas, catalogo=catalogo or FakeCatalogoTemplates())
+
+
+def _evento_de_conta(waba_id: str) -> dict:
+    return {"entry": [{"id": waba_id, "changes": [{"field": "messages", "value": {}}]}]}
+
+
+@pytest.mark.asyncio
+async def test_conta_sem_id_adota_o_do_webhook_confirmado_na_meta():
+    """O que substitui a variável de ambiente: o id chega e é conferido antes de gravar."""
+    repo = FakeWabaRepo([Waba(meta_waba_id="", nome="WABA principal")])
+    catalogo = FakeCatalogoTemplates()
+    catalogo.contas_conhecidas = {"2116419572321695": "TI-Escolar"}
+
+    adotada = await _adotar(repo, catalogo).executar(
+        payload=_evento_de_conta("2116419572321695")
+    )
+
+    assert adotada is not None
+    assert adotada.meta_waba_id == "2116419572321695"
+    # O nome vem da Meta: é como a conta aparece no WhatsApp Manager, onde alguém confere.
+    assert adotada.nome == "TI-Escolar"
+
+
+@pytest.mark.asyncio
+async def test_id_nao_confirmado_pela_meta_nao_e_gravado():
+    """A documentação não afirma que `entry[].id` é a WABA — então quem decide é a Meta."""
+    repo = FakeWabaRepo([Waba(meta_waba_id="", nome="WABA principal")])
+    catalogo = FakeCatalogoTemplates()
+    catalogo.contas_conhecidas = {}  # a Meta não reconhece nada
+
+    assert await _adotar(repo, catalogo).executar(
+        payload=_evento_de_conta("999999999")
+    ) is None
+    assert repo.wabas[0].meta_waba_id == ""
+
+
+@pytest.mark.asyncio
+async def test_com_duas_contas_sem_id_nao_adota_nenhuma():
+    """Escolher uma seria chute, e o chute erra justamente onde há várias contas."""
+    repo = FakeWabaRepo(
+        [Waba(meta_waba_id="", nome="Conta A"), Waba(meta_waba_id="", nome="Conta B")]
+    )
+    assert await _adotar(repo).executar(payload=_evento_de_conta("700700700")) is None
+    assert all(w.meta_waba_id == "" for w in repo.wabas)
+
+
+@pytest.mark.asyncio
+async def test_conta_ja_cadastrada_nao_e_tocada():
+    """O caso comum: todo evento depois do primeiro não deve escrever nada."""
+    repo = FakeWabaRepo([waba_padrao()])
+    assert await _adotar(repo).executar(payload=_evento_de_conta("900900900")) is None
+    assert repo.wabas[0].nome == "WABA principal"
+
+
+@pytest.mark.asyncio
+async def test_entry_sem_id_numerico_e_ignorada():
+    repo = FakeWabaRepo([Waba(meta_waba_id="", nome="WABA principal")])
+    payload = {"entry": [{"id": "", "changes": []}, {"changes": []}]}
+    assert await _adotar(repo).executar(payload=payload) is None
+    assert repo.wabas[0].meta_waba_id == ""

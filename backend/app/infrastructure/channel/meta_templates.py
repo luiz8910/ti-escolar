@@ -186,6 +186,32 @@ class MetaCatalogoTemplates:
                 params = {}
         return remotos
 
+    async def descrever(self, *, meta_waba_id: str) -> str | None:
+        """``GET /{waba_id}?fields=id,name`` — existe e enxergamos? Então é conta nossa.
+
+        Qualquer falha devolve ``None``: quem chama trata isso como "não confirmado" e não
+        grava nada. Errar para o lado de não adotar custa um preenchimento manual; errar
+        para o outro grava um id que faz toda submissão falhar.
+        """
+        meta_waba_id = (meta_waba_id or "").strip()
+        if not meta_waba_id:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    f"{_BASE}/{meta_waba_id}",
+                    headers=self._headers,
+                    params={"fields": "id,name"},
+                )
+                resp.raise_for_status()
+                dados = resp.json()
+        except Exception as exc:  # noqa: BLE001 — id desconhecido, token sem acesso, rede
+            logger.info("Conta %r não confirmada na Meta: %s", meta_waba_id, exc)
+            return None
+        if str(dados.get("id") or "") != meta_waba_id:
+            return None
+        return str(dados.get("name") or "")
+
     async def remover(self, *, nome: str, meta_waba_id: str) -> bool:
         url = self._url(meta_waba_id)
         async with httpx.AsyncClient(timeout=30) as client:
@@ -231,3 +257,9 @@ class CatalogoTemplatesAusente:
     async def remover(self, *, nome: str, meta_waba_id: str) -> bool:
         self._falhar()
         raise AssertionError("inalcançável")  # pragma: no cover
+
+    async def descrever(self, *, meta_waba_id: str) -> str | None:
+        # Sem canal não há como confirmar — e "não confirmado" já é o estado seguro, então
+        # esta é a única operação do stub que **não** levanta: adoção simplesmente não
+        # acontece, e o id segue sendo preenchido à mão.
+        return None
