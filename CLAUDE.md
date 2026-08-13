@@ -1947,52 +1947,35 @@ observações de saúde — tudo em JSON de texto claro na `fichas_matricula`). 
 produto no ponto mais exigente da LGPD (arts. 11 e 14), então a conformidade é verificada
 por rotina, não por lembrança.
 
-São **duas camadas, separadas pela natureza do risco** — `.github/workflows/lgpd.yml`:
+São **duas camadas, separadas pela natureza do risco** — e desde 13/ago/2026 elas rodam em
+lugares diferentes:
 
-- **Código, sob demanda** — o agente **`lgpd-auditor`** (`.claude/agents/`, versionado)
-  audita **só o diff** de um PR e comenta os achados nele, com `arquivo:linha` e artigo da
-  lei; **não bloqueia o merge** e não substitui parecer jurídico. Exige o secret
-  `OPENAI_API_KEY` — sem ele o job avisa e passa, e desde 12/ago/2026 o aviso também vai
-  para o resumo do run: o secret **nunca existiu**, e como os passos são condicionais o
-  check ficava **verde sem auditar nada**. Um warning no fundo do log não é sinal.
-  - **Deixou de rodar sozinho em 13/ago/2026.** Disparava em todo PR que tocasse os
-    caminhos de dado pessoal — entidades, rotas, migrations, ficha/matrícula/importação/
-    exportação/inbound/conhecimento, política e termos —, e isso é quase todo PR do
-    projeto. Cada execução é uma sessão de agente lendo diff e repositório, cobrada em
-    créditos de API, na maioria das vezes para concluir que nada mudou para o titular. O
-    valor está em auditar mudança que mexe com dado pessoal, não em auditar toda vez.
-  - **Como pedir a auditoria:** rótulo **`lgpd`** no PR (reaplicar roda de novo), ou
-    **Actions → Run workflow** informando o número do PR. O filtro por caminhos saiu
-    junto: ele existia para conter execução automática, e sob disparo manual só produziria
-    o pior resultado possível — pedir a auditoria e não receber nada, sem erro.
-  - **O julgamento de quando auditar passou a ser humano**, e essa é a troca honesta: um
-    PR que mexe em dado pessoal e não recebe o rótulo passa sem auditoria nenhuma. A
-    camada de ambiente abaixo continua automática, e o painel §14 segue medindo a postura
-    de dentro.
-  - **O executor é a Codex CLI** (`codex exec`), trocada em 12/ago/2026 — antes era o
-    Claude Code, que só autentica contra Anthropic/Bedrock/Vertex e **não lê
-    `OPENAI_API_KEY`**: a variável não existe no binário. Trocar de provedor aqui é trocar
-    o executor, não o nome da env.
-  - **Roda sem o sandbox da Codex** (`--dangerously-bypass-approvals-and-sandbox`), e é
-    decisão consciente. O bubblewrap não sobe em runner hospedado — cria namespace de rede
-    e morre em `loopback: Failed RTM_NEWADDR`, idêntico com o bwrap embutido no npm e com o
-    da distro instalado por apt. Meio-morto é pior que ausente: o agente roda, não lê nada
-    e **publica um relatório dizendo que não conseguiu** — foi o que saiu no PR #64 antes
-    de virmos. O flag é documentado para ambiente já isolado, que é o caso (runner efêmero),
-    e mantém a proporção: o `npm install -g` do passo anterior já executa script de terceiro
-    sem sandbox no mesmo runner. **O "somente leitura" passa a ser sustentado pelo mandato
-    no prompt, não pelo SO** — e precisa ser revisto se um dia isto rodar em PR de fork,
-    quando o diff passa a ser texto de estranho.
-  - **O prompt continua sendo o corpo de `.claude/agents/lgpd-auditor.md`**, que segue
-    valendo para o Claude Code em uso local (`Agent`/`--agent`). O workflow descarta o
-    frontmatter (`model`, `tools`), que é sintaxe do Claude Code: na Codex o modelo vem do
-    `-m` e o acesso a arquivo vem do sandbox. **Mexeu no frontmatter, não mudou o CI.**
-  - O diff é **congelado em `diff-do-pr.patch`** antes da chamada, para o que se audita ser
-    o que o passo mediu, e não o que o agente conseguiu reconstruir com `git`.
-  - **A OpenAI passa a ser operadora sobre o diff** — que pode carregar dado pessoal real
-    se alguém commitar fixture com CPF ou laudo. Entra no registro de subprocessadores;
-    **exige validação jurídica**, e foi o próprio auditor quem levantou.
-- **Configuração, a cada deploy** — `scripts/postura_ambiente.py` mede o **ambiente no ar**.
+- **Código, sob demanda, no Claude Code** — o agente **`lgpd-auditor`**
+  (`.claude/agents/lgpd-auditor.md`, versionado) audita o diff ou a área que se pedir, e
+  devolve achados com `arquivo:linha` e artigo da lei. É consultivo: **não bloqueia nada** e
+  não substitui parecer jurídico. Roda **quando alguém pede**, na conversa — não há gatilho
+  automático em lugar nenhum.
+  - **Saiu do GitHub Actions em 13/ago/2026.** Disparava em todo PR que tocasse os caminhos
+    de dado pessoal — entidades, rotas, migrations, ficha/matrícula/importação/exportação/
+    inbound/conhecimento, política e termos —, o que é quase todo PR do projeto. Cada
+    execução era uma sessão de agente lendo diff e repositório, cobrada em créditos de API,
+    quase sempre para concluir que nada mudou para o titular. Rodando aqui, o custo é o da
+    própria sessão e a auditoria acontece **junto da mudança**, enquanto ela ainda está
+    sendo escrita — não depois, num comentário que ninguém releria.
+  - **De quebra, fecha um problema que o próprio auditor havia levantado:** o diff deixa de
+    ser enviado a uma API de terceiro. **A OpenAI não é mais operadora sobre ele** e sai do
+    registro de subprocessadores por esta via — o que importava porque um diff pode carregar
+    dado pessoal real, se alguém commitar fixture com CPF ou laudo.
+  - **O frontmatter voltou a valer.** `tools` e `model` são sintaxe do Claude Code e estavam
+    sendo descartados pelo workflow, que rodava na Codex CLI; agora o arquivo é lido inteiro
+    por quem o executa. `tools: Read, Grep, Glob, Bash, WebSearch, WebFetch` é o que sustenta
+    o **somente leitura** — no Actions isso dependia do mandato no prompt, porque o sandbox
+    da Codex não subia em runner hospedado.
+  - **A troca é o esquecimento.** Sem gatilho, uma mudança que mexe em dado pessoal só é
+    auditada se alguém pedir. O que continua automático é a camada de ambiente abaixo, e o
+    painel §14, que mede a postura de dentro — nenhum dos dois lê diff.
+- **Configuração, a cada deploy** — `.github/workflows/lgpd.yml`,
+  `scripts/postura_ambiente.py` mede o **ambiente no ar**.
   O código é o mesmo em homolog e em produção; o que difere é a config, e ela muda **por
   fora do git** (alguém edita uma env var no painel do Render), por isso há também um
   disparo semanal. É **determinístico e sem LLM** — pagar inferência para reler o mesmo

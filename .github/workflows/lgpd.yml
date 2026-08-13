@@ -1,59 +1,30 @@
-name: LGPD — auditoria
+name: LGPD — postura do ambiente
 
-# Duas camadas, separadas pela natureza do risco:
+# Este workflow mede **configuração**, e só isso. O código é o mesmo em todo ambiente; o que
+# muda é a CONFIGURAÇÃO, e ela muda por fora do git — alguém edita uma env var no painel do
+# Render e nenhum commit registra. Por isso roda a cada deploy e também numa agenda semanal.
+# É determinístico, sem LLM e sem credencial (scripts/postura_ambiente.py): custo zero e
+# resultado repetível.
 #
-#   1. `codigo`   — **sob demanda**, nunca automático. Roda o agente `lgpd-auditor`
-#                   (.claude/agents/) sobre o diff de um PR e comenta os achados nele. É
-#                   onde a LLM agrega: ler o diff no contexto da lei. Não bloqueia o merge.
-#
-#                   Rodava em todo PR que tocasse os caminhos de dado pessoal, e isso saiu
-#                   caro: cada execução é uma sessão de agente lendo diff e repositório,
-#                   cobrada em créditos de API, na maioria das vezes para concluir que a
-#                   mudança não afeta dado pessoal. Auditar continua valendo; auditar
-#                   **toda vez** não. Duas formas de disparar, ambas um ato humano
-#                   deliberado:
-#
-#                     - **rótulo `lgpd` no PR** — o caminho normal. Aplique quando a
-#                       mudança mexer de fato em dado pessoal; o agente comenta ali mesmo.
-#                       Reaplicar o rótulo roda de novo.
-#                     - **Actions → Run workflow**, informando o número do PR.
-#
-#                   O filtro por caminhos saiu junto: ele existia para poupar execução
-#                   automática. Com o disparo manual, ele só criaria o pior resultado
-#                   possível — pedir a auditoria e não receber nada, sem erro.
-#
-#                   O executor é a **Codex CLI** (`codex exec`, chave `OPENAI_API_KEY`),
-#                   **sem o sandbox dela** — ele não sobe em runner hospedado; o porquê
-#                   está no passo que a invoca. O prompt continua vindo do corpo de
-#                   `.claude/agents/lgpd-auditor.md` — o arquivo é a fonte da verdade e
-#                   segue servindo ao Claude Code em uso local; o frontmatter dele
-#                   (`model`, `tools`) só vale ali, não aqui.
-#
-#   2. `ambiente` — a cada deploy. O código é o mesmo em todo ambiente; o que muda é a
-#                   CONFIGURAÇÃO, e ela é medida por um script determinístico, sem LLM e
-#                   sem credencial (scripts/postura_ambiente.py). Custo zero, resultado
-#                   repetível — usar LLM aqui seria caro e não determinístico.
+# **A auditoria do código por LLM não mora mais aqui** (13/ago/2026). O agente
+# `lgpd-auditor` segue versionado em `.claude/agents/lgpd-auditor.md` e é executado **sob
+# demanda pelo Claude Code**, localmente, quando alguém pede — em vez de uma sessão de
+# agente cobrada em créditos de API a cada pull request, quase sempre para concluir que a
+# mudança não afeta dado pessoal. O que se perde é o disparo por conta própria; o que se
+# ganha é rodar quando a mudança de fato mexe com dado pessoal, com a conversa junto e sem
+# arrastar o diff para uma API de terceiro (a OpenAI deixa de ser operadora sobre o diff).
 #
 # Hoje o serviço do Render é o ambiente de HOMOLOG; produção ainda não existe. Quando
 # existir, basta acrescentar um job igual ao `ambiente`, apontando para a outra URL e com
 # `--estrito` (em homolog o modo é observação, para não travar a esteira).
 
 on:
-  # Só o rótulo dispara a auditoria do código — não a abertura nem cada push no PR.
-  pull_request:
-    types: [labeled]
-    branches: [main]
   push:
     branches: [main] # push na main = deploy do Render
   workflow_dispatch:
-    inputs:
-      pr:
-        description: "Número do PR a auditar (vazio = só mede a postura do ambiente)"
-        required: false
-        type: string
   schedule:
-    # Segunda, 09:00 BRT. A configuração de um ambiente muda por fora do git (alguém
-    # edita uma env var no painel do Render), então checar só no deploy deixa janela.
+    # Segunda, 09:00 BRT. A configuração de um ambiente muda por fora do git, então checar
+    # só no deploy deixa janela.
     - cron: "0 12 * * 1"
 
 concurrency:
@@ -62,190 +33,10 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  codigo:
-    name: Auditoria do código (agente)
-    # Rótulo `lgpd` aplicado ao PR, ou disparo manual com o número do PR. Sem uma das
-    # duas coisas este job não existe — é o que tira a LLM do caminho de todo PR.
-    if: >-
-      (github.event_name == 'pull_request' && github.event.label.name == 'lgpd') ||
-      (github.event_name == 'workflow_dispatch' && inputs.pr != '')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # o agente precisa do histórico para diffar contra a base
-
-      - name: Confere se há chave da OpenAI
-        id: chave
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "presente=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::OPENAI_API_KEY não configurado — auditoria LGPD pulada."
-            # Também no resumo do run: um warning enterrado no log deixou a auditoria
-            # desligada por semanas com o check verde. Silêncio precisa ser visível.
-            {
-              echo "### ⚠️ Auditoria LGPD do código não rodou"
-              echo
-              echo "O secret \`OPENAI_API_KEY\` não está configurado neste repositório."
-              echo "Cadastre em **Settings → Secrets and variables → Actions → New repository secret**."
-              echo
-              echo "Precisa ser uma chave da **API** (platform.openai.com), cobrada em"
-              echo "créditos de API — assinatura do ChatGPT não serve aqui."
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "presente=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Os dois disparos entregam contextos diferentes: o rótulo traz o PR no evento, o
-      # manual traz só o número digitado. Resolver os dois aqui, uma vez, evita espalhar
-      # `github.event.pull_request.* || inputs.*` por cada passo abaixo.
-      - name: Descobre o PR a auditar
-        id: alvo
-        if: steps.chave.outputs.presente == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ inputs.pr || github.event.pull_request.number }}
-        run: |
-          set -o pipefail
-          dados=$(gh pr view "$PR" --json number,state,baseRefOid,headRefOid)
-          estado=$(echo "$dados" | jq -r .state)
-          if [ "$estado" != "OPEN" ]; then
-            echo "::error::PR #$PR está $estado — nada a auditar."
-            exit 1
-          fi
-          {
-            echo "pr=$PR"
-            echo "base=$(echo "$dados" | jq -r .baseRefOid)"
-            echo "head=$(echo "$dados" | jq -r .headRefOid)"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Instala a Codex CLI
-        if: steps.chave.outputs.presente == 'true'
-        run: npm install -g @openai/codex
-
-      - name: Autentica a Codex com a chave da OpenAI
-        if: steps.chave.outputs.presente == 'true'
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          # Pela stdin, não por argumento: argumento de comando aparece na lista de
-          # processos do runner. A credencial fica em $CODEX_HOME, descartado com o runner.
-          printenv OPENAI_API_KEY | codex login --with-api-key
-
-      - name: Monta o prompt do auditor
-        if: steps.chave.outputs.presente == 'true'
-        env:
-          BASE_SHA: ${{ steps.alvo.outputs.base }}
-          HEAD_SHA: ${{ steps.alvo.outputs.head }}
-          PR: ${{ steps.alvo.outputs.pr }}
-        run: |
-          set -o pipefail
-
-          # No disparo manual o checkout é da `main`, e o commit do PR pode não estar
-          # aqui. `pull/N/head` é a referência que o GitHub sempre publica.
-          git fetch --no-tags origin "pull/${PR}/head" "${BASE_SHA}" 2>/dev/null \
-            || git fetch --no-tags origin "pull/${PR}/head"
-
-          # O diff vai para arquivo em vez de ser reconstruído pelo agente: assim o que
-          # ele audita é exatamente o que este passo mediu, e não depende de ele acertar
-          # o comando git.
-          git diff "${BASE_SHA}...${HEAD_SHA}" > diff-do-pr.patch
-          wc -l diff-do-pr.patch
-
-          # O corpo de .claude/agents/lgpd-auditor.md segue sendo a fonte da verdade do
-          # prompt — o arquivo continua servindo ao Claude Code em uso local. O que se
-          # descarta aqui é o frontmatter (name/description/tools/model), que é sintaxe
-          # do Claude Code: na Codex o modelo vem do `-m` (ou do default) e o acesso a
-          # arquivo vem do sandbox `read-only`, não daquela lista de `tools`.
-          awk 'BEGIN{n=0} /^---$/ && n<2 {n++; next} n==2' \
-            .claude/agents/lgpd-auditor.md > prompt-do-auditor.txt
-
-          {
-            echo
-            echo "## Tarefa desta execução"
-            echo
-            echo "Audite APENAS as mudanças deste pull request, não o repositório inteiro."
-            echo "O diff completo está no arquivo \`diff-do-pr.patch\`, na raiz do"
-            echo "repositório. Leia-o primeiro; use o restante do repositório só como"
-            echo "contexto para julgar o que mudou. Se a mudança não tiver efeito sobre"
-            echo "dado pessoal, diga isso em uma linha e pare — não invente achados para"
-            echo "justificar a execução. Responda no formato de relatório definido acima,"
-            echo "em português, direto no markdown do relatório (ele vai virar comentário"
-            echo "de pull request como veio)."
-          } >> prompt-do-auditor.txt
-
-      - name: Roda o agente lgpd-auditor sobre o diff
-        if: steps.chave.outputs.presente == 'true'
-        run: |
-          set -o pipefail
-          # Sem o sandbox da Codex, e isso é decisão consciente, não descuido.
-          #
-          # O sandbox dela (bubblewrap) não sobe em runner hospedado: cria namespace de rede
-          # e morre em `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. Testado
-          # nos dois caminhos — com o bwrap embutido no pacote npm (run 31656955912) e com o
-          # 0.9.0 da distro instalado por apt (run 31657099484). Falha idêntica; não é o perfil
-          # AppArmor, é o runner não permitir a operação. Com ele meio-morto o agente roda,
-          # não consegue ler NADA e publica um relatório dizendo isso — pior que não rodar.
-          #
-          # O flag é documentado exatamente para "environments that are externally sandboxed",
-          # que é o caso: runner efêmero, descartado no fim do job. E é bom manter a proporção
-          # — o `npm install -g` acima já executa script de terceiro sem sandbox nenhum neste
-          # mesmo runner. O que sustenta o "somente leitura" aqui passa a ser o mandato no
-          # prompt do agente, não o SO. Se um dia este workflow rodar em PR de fork, isto
-          # precisa ser revisto: aí o diff passa a ser texto de estranho.
-          #
-          # `-o` grava só a mensagem final; o stream fica no log do job. Para fixar o modelo,
-          # acrescente `-m <modelo>`.
-          codex exec \
-            --dangerously-bypass-approvals-and-sandbox \
-            --ephemeral \
-            --color never \
-            --output-last-message relatorio-lgpd.md \
-            - < prompt-do-auditor.txt
-
-          # Sem relatório não há o que comentar — e um comentário vazio no PR passaria a
-          # impressão de auditoria feita.
-          if [ ! -s relatorio-lgpd.md ]; then
-            echo "::error::A Codex não produziu relatório."
-            exit 1
-          fi
-
-          # Defesa em profundidade do preflight acima: relatório com conteúdo ainda pode ser
-          # um relatório dizendo "não consegui ler nada".
-          if grep -qiE "bwrap:|bloqueada pela camada de sandbox|sandbox.*(bloque|denied)" relatorio-lgpd.md; then
-            echo "::error::O agente foi bloqueado pelo sandbox — o relatório não é auditoria."
-            exit 1
-          fi
-
-      - name: Comenta o relatório no PR
-        if: steps.chave.outputs.presente == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.alvo.outputs.pr }}
-        run: |
-          {
-            echo "## 🔍 Auditoria LGPD do diff"
-            echo
-            cat relatorio-lgpd.md
-            echo
-            echo "---"
-            echo "_Gerado pelo agente \`lgpd-auditor\` (\`.claude/agents/\`). Relatório"
-            echo "consultivo: não bloqueia o merge e não substitui parecer jurídico._"
-          } > comentario.md
-
-          gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md
   ambiente:
     name: Postura do ambiente (homolog)
-    # Deploy, agenda ou disparo manual sem PR. Quem dispara informando um PR quer a
-    # auditoria daquele diff, não uma medição do ambiente.
-    if: >-
-      github.event_name != 'pull_request' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.pr != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
