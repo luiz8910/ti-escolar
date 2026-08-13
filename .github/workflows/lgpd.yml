@@ -6,6 +6,13 @@ name: LGPD — auditoria
 #                   `lgpd-auditor` (.claude/agents/) e comenta os achados no PR. É onde a
 #                   LLM agrega: ler o diff no contexto da lei. Não bloqueia o merge.
 #
+#                   O executor é a **Codex CLI** (`codex exec`, chave `OPENAI_API_KEY`),
+#                   **sem o sandbox dela** — ele não sobe em runner hospedado; o porquê
+#                   está no passo que a invoca. O prompt continua vindo do corpo de
+#                   `.claude/agents/lgpd-auditor.md` — o arquivo é a fonte da verdade e
+#                   segue servindo ao Claude Code em uso local; o frontmatter dele
+#                   (`model`, `tools`) só vale ali, não aqui.
+#
 #   2. `ambiente` — a cada deploy. O código é o mesmo em todo ambiente; o que muda é a
 #                   CONFIGURAÇÃO, e ela é medida por um script determinístico, sem LLM e
 #                   sem credencial (scripts/postura_ambiente.py). Custo zero, resultado
@@ -64,40 +71,120 @@ jobs:
         with:
           fetch-depth: 0 # o agente precisa do histórico para diffar contra a base
 
-      - name: Confere se há chave da Anthropic
+      - name: Confere se há chave da OpenAI
         id: chave
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
+          if [ -z "$OPENAI_API_KEY" ]; then
             echo "presente=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ANTHROPIC_API_KEY não configurado — auditoria LGPD pulada."
+            echo "::warning::OPENAI_API_KEY não configurado — auditoria LGPD pulada."
+            # Também no resumo do run: um warning enterrado no log deixou a auditoria
+            # desligada por semanas com o check verde. Silêncio precisa ser visível.
+            {
+              echo "### ⚠️ Auditoria LGPD do código não rodou"
+              echo
+              echo "O secret \`OPENAI_API_KEY\` não está configurado neste repositório."
+              echo "Cadastre em **Settings → Secrets and variables → Actions → New repository secret**."
+              echo
+              echo "Precisa ser uma chave da **API** (platform.openai.com), cobrada em"
+              echo "créditos de API — assinatura do ChatGPT não serve aqui."
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "presente=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Instala o Claude Code
+      - name: Instala a Codex CLI
         if: steps.chave.outputs.presente == 'true'
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @openai/codex
 
-      - name: Roda o agente lgpd-auditor sobre o diff
+      - name: Autentica a Codex com a chave da OpenAI
         if: steps.chave.outputs.presente == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Pela stdin, não por argumento: argumento de comando aparece na lista de
+          # processos do runner. A credencial fica em $CODEX_HOME, descartado com o runner.
+          printenv OPENAI_API_KEY | codex login --with-api-key
+
+      - name: Monta o prompt do auditor
+        if: steps.chave.outputs.presente == 'true'
+        env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -o pipefail
-          claude -p \
-            --agent lgpd-auditor \
-            --allowed-tools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(rg:*),Bash(ls:*),WebSearch,WebFetch" \
-            "Audite APENAS as mudanças deste pull request, não o repositório inteiro.
-             O diff é: git diff ${BASE_SHA}...${HEAD_SHA}
-             Leia o diff primeiro; use o restante do repositório só como contexto para
-             julgar o que mudou. Se a mudança não tiver efeito sobre dado pessoal, diga
-             isso em uma linha e pare — não invente achados para justificar a execução.
-             Responda no formato de relatório definido no seu prompt, em português." \
-            | tee relatorio-lgpd.md
+
+          # O diff vai para arquivo em vez de ser reconstruído pelo agente: assim o que
+          # ele audita é exatamente o que este passo mediu, e não depende de ele acertar
+          # o comando git.
+          git diff "${BASE_SHA}...${HEAD_SHA}" > diff-do-pr.patch
+          wc -l diff-do-pr.patch
+
+          # O corpo de .claude/agents/lgpd-auditor.md segue sendo a fonte da verdade do
+          # prompt — o arquivo continua servindo ao Claude Code em uso local. O que se
+          # descarta aqui é o frontmatter (name/description/tools/model), que é sintaxe
+          # do Claude Code: na Codex o modelo vem do `-m` (ou do default) e o acesso a
+          # arquivo vem do sandbox `read-only`, não daquela lista de `tools`.
+          awk 'BEGIN{n=0} /^---$/ && n<2 {n++; next} n==2' \
+            .claude/agents/lgpd-auditor.md > prompt-do-auditor.txt
+
+          {
+            echo
+            echo "## Tarefa desta execução"
+            echo
+            echo "Audite APENAS as mudanças deste pull request, não o repositório inteiro."
+            echo "O diff completo está no arquivo \`diff-do-pr.patch\`, na raiz do"
+            echo "repositório. Leia-o primeiro; use o restante do repositório só como"
+            echo "contexto para julgar o que mudou. Se a mudança não tiver efeito sobre"
+            echo "dado pessoal, diga isso em uma linha e pare — não invente achados para"
+            echo "justificar a execução. Responda no formato de relatório definido acima,"
+            echo "em português, direto no markdown do relatório (ele vai virar comentário"
+            echo "de pull request como veio)."
+          } >> prompt-do-auditor.txt
+
+      - name: Roda o agente lgpd-auditor sobre o diff
+        if: steps.chave.outputs.presente == 'true'
+        run: |
+          set -o pipefail
+          # Sem o sandbox da Codex, e isso é decisão consciente, não descuido.
+          #
+          # O sandbox dela (bubblewrap) não sobe em runner hospedado: cria namespace de rede
+          # e morre em `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. Testado
+          # nos dois caminhos — com o bwrap embutido no pacote npm (run 31656955912) e com o
+          # 0.9.0 da distro instalado por apt (run 31657099484). Falha idêntica; não é o perfil
+          # AppArmor, é o runner não permitir a operação. Com ele meio-morto o agente roda,
+          # não consegue ler NADA e publica um relatório dizendo isso — pior que não rodar.
+          #
+          # O flag é documentado exatamente para "environments that are externally sandboxed",
+          # que é o caso: runner efêmero, descartado no fim do job. E é bom manter a proporção
+          # — o `npm install -g` acima já executa script de terceiro sem sandbox nenhum neste
+          # mesmo runner. O que sustenta o "somente leitura" aqui passa a ser o mandato no
+          # prompt do agente, não o SO. Se um dia este workflow rodar em PR de fork, isto
+          # precisa ser revisto: aí o diff passa a ser texto de estranho.
+          #
+          # `-o` grava só a mensagem final; o stream fica no log do job. Para fixar o modelo,
+          # acrescente `-m <modelo>`.
+          codex exec \
+            --dangerously-bypass-approvals-and-sandbox \
+            --ephemeral \
+            --color never \
+            --output-last-message relatorio-lgpd.md \
+            - < prompt-do-auditor.txt
+
+          # Sem relatório não há o que comentar — e um comentário vazio no PR passaria a
+          # impressão de auditoria feita.
+          if [ ! -s relatorio-lgpd.md ]; then
+            echo "::error::A Codex não produziu relatório."
+            exit 1
+          fi
+
+          # Defesa em profundidade do preflight acima: relatório com conteúdo ainda pode ser
+          # um relatório dizendo "não consegui ler nada".
+          if grep -qiE "bwrap:|bloqueada pela camada de sandbox|sandbox.*(bloque|denied)" relatorio-lgpd.md; then
+            echo "::error::O agente foi bloqueado pelo sandbox — o relatório não é auditoria."
+            exit 1
+          fi
 
       - name: Comenta o relatório no PR
         if: steps.chave.outputs.presente == 'true'
@@ -113,6 +200,8 @@ jobs:
             echo "---"
             echo "_Gerado pelo agente \`lgpd-auditor\` (\`.claude/agents/\`). Relatório"
             echo "consultivo: não bloqueia o merge e não substitui parecer jurídico._"
+          } > comentario.md
+
           gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md
   ambiente:
     name: Postura do ambiente (homolog)
@@ -131,6 +220,12 @@ jobs:
         run: |
           if [ -z "$BASE_URL" ]; then
             echo "::warning::variável HOMOLOG_BASE_URL não definida — verificação pulada."
+            {
+              echo "### ⚠️ Postura do ambiente não foi medida"
+              echo
+              echo "A variável \`HOMOLOG_BASE_URL\` não está definida."
+              echo "Cadastre em **Settings → Secrets and variables → Actions → Variables**."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # O Render leva alguns minutos para publicar depois do push; sem esperar, o
