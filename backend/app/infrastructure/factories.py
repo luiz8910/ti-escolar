@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.domain.ports import (
+    CatalogoTemplates,
     EmailSender,
     Embedder,
     FonteMidia,
@@ -99,6 +100,36 @@ def criar_fonte_midia(settings: Settings) -> FonteMidia:
     from app.infrastructure.channel.meta_midia import FonteMidiaIndisponivel
 
     return FonteMidiaIndisponivel()
+
+
+def criar_catalogo_templates(settings: Settings) -> CatalogoTemplates:
+    """Adaptador de gestão de templates, alinhado ao canal **efetivo** (§9c).
+
+    Precisa de duas coisas que o envio não precisa: a ``META_WABA_ID`` (templates são da
+    WABA, não do número) e o escopo ``whatsapp_business_management`` no token. A primeira
+    dá para conferir aqui; a segunda só aparece na primeira chamada, e por isso o stub
+    diz qual das duas faltou.
+    """
+    if canal_efetivo(settings) != "meta":
+        from app.infrastructure.channel.meta_templates import CatalogoTemplatesAusente
+
+        return CatalogoTemplatesAusente(
+            "O canal do WhatsApp está em modo demo — configure MESSAGE_CHANNEL=meta e "
+            "META_ACCESS_TOKEN para gerenciar templates na Meta."
+        )
+    if not settings.meta_waba_id:
+        from app.infrastructure.channel.meta_templates import CatalogoTemplatesAusente
+
+        return CatalogoTemplatesAusente(
+            "META_WABA_ID não está configurada — sem o id da conta do WhatsApp Business "
+            "não há onde criar o template."
+        )
+    from app.infrastructure.channel.meta_templates import MetaCatalogoTemplates
+
+    return MetaCatalogoTemplates(
+        waba_id=settings.meta_waba_id,
+        access_token=settings.meta_access_token or "",
+    )
 
 
 def criar_email_sender(settings: Settings) -> EmailSender:

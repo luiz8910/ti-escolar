@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_use_cases import EnviarBroadcastParaGrupo
 from app.application.inbound_use_cases import ProcessarInboundMeta
+from app.application.templates_use_cases import (
+    CriarTemplate,
+    RemoverTemplate,
+    SincronizarTemplates,
+)
 from app.application.tenant_use_cases import NotificarLicencasAVencer
 from app.application.atendimento_humano_use_cases import (
     MesaDeAtendimento,
@@ -26,7 +31,7 @@ from app.application.use_cases import (
     RecuperarEEnviarDocumento,
 )
 from app.config import Settings, get_settings
-from app.domain.ports import LLMProvider, MessageChannel
+from app.domain.ports import CatalogoTemplates, LLMProvider, MessageChannel
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
     SqlBroadcastRepository,
@@ -72,6 +77,7 @@ from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import (
     criar_canal,
+    criar_catalogo_templates,
     criar_email_sender,
     criar_fonte_midia,
     criar_embedder,
@@ -273,6 +279,47 @@ def get_conversa_repo(
 
 def get_broadcast_repo(session: AsyncSession = Depends(get_session)) -> SqlBroadcastRepository:
     return SqlBroadcastRepository(session)
+
+
+def get_template_repo(session: AsyncSession = Depends(get_session)) -> SqlTemplateRepository:
+    return SqlTemplateRepository(session)
+
+
+def get_catalogo_templates(
+    settings: Settings = Depends(get_settings_dep),
+) -> CatalogoTemplates:
+    return criar_catalogo_templates(settings)
+
+
+def get_criar_template(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> CriarTemplate:
+    return CriarTemplate(
+        templates=SqlTemplateRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+        tenants=SqlTenantRepository(session),
+    )
+
+
+def get_remover_template(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> RemoverTemplate:
+    return RemoverTemplate(
+        templates=SqlTemplateRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+    )
+
+
+def get_sincronizar_templates(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> SincronizarTemplates:
+    return SincronizarTemplates(
+        templates=SqlTemplateRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+    )
 
 
 def get_audit_repo(session: AsyncSession = Depends(get_session)) -> SqlAuditLogRepository:

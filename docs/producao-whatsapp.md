@@ -208,6 +208,12 @@ produção** → **Configurar webhooks**.
 - **Verify token**: o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN` → **Verificar e salvar**
 - **Assinar o campo `messages`** — traz mensagens recebidas *e* status de entrega no mesmo
   envelope.
+- **Assinar `message_template_status_update`** — é o que fecha o ciclo de submissão de
+  template sem polling (§7.2). A revisão da Meta é assíncrona e este evento é o único aviso
+  de que ela terminou; sem ele o template fica "Em análise" no painel para sempre, mesmo
+  depois de aprovado, e o disparo continua recusado. Assine junto `template_category_update`,
+  que avisa quando a Meta reclassifica um `utility` em `marketing` — mudança que altera o
+  preço do disparo e que, sem o evento, só aparece na fatura.
 
 O `GET` de verificação já está implementado e responde ao `hub.challenge`. Quando o handshake
 passa, o sub-passo *Configurar webhooks* fica ✅ verde.
@@ -398,14 +404,51 @@ responsável escreve sexta às 20h, a secretaria só vê na segunda de manhã, e
 `{{1}}` = `EM Rosa Cury`, `{{2}}` = `a declaração de escolaridade já está pronta e pode ser
 retirada na secretaria.`
 
-Depois de **aprovado** pela Meta, cadastre o mesmo nome/idioma em `templates` no banco com
-`status = aprovado` e preencha `TEMPLATE_RETOMADA_ATENDIMENTO=retomada_atendimento` no Render.
+Depois de **aprovado** pela Meta, basta **sincronizar** (§7.2) — o status vem da própria
+Meta, casando por (nome, idioma). **Não é preciso mexer no Render:**
+`TEMPLATE_RETOMADA_ATENDIMENTO` já tem `retomada_atendimento` como default. Preencher só
+serve para apontar outro nome, ou para **desligar** a retomada (valor vazio).
 
 Enquanto isso não acontecer, o comportamento é **recusar com erro explícito** no painel
 ("a janela de 24h expirou e não há template de retomada aprovado"). É proposital: o modo de
 falha alternativo — deixar a chamada morrer na Graph API — faria a secretaria acreditar que
 respondeu um responsável que nunca recebeu nada. O seed cria o template como `pendente` pela
 mesma razão.
+
+### 7.2 Catálogo de templates no painel (`/admin/templates`)
+
+Criar template deixou de ser passo manual no WhatsApp Manager **mais** `INSERT` no banco. O
+painel cria, submete e acompanha; a API usada é a **WhatsApp Business Management**
+(`/{waba_id}/message_templates`), que exige o escopo **`whatsapp_business_management`** no
+token de usuário do sistema — diferente do `whatsapp_business_messaging` usado no envio.
+
+> **Conferido em 12/ago/2026:** a permissão está habilitada no caso de uso do app
+> ("Conectar-se com clientes pelo WhatsApp" → *Permissões e recursos*, status *Pronto para
+> teste*), e o usuário do sistema `ti_escolar_backend` é **Admin** com **acesso total** ao app
+> e à conta do WhatsApp. O que o console **não** mostra é com quais escopos um token **já
+> gerado** foi emitido; se a criação de template devolver erro de permissão, gere um token
+> novo marcando `whatsapp_business_management` e troque o `META_ACCESS_TOKEN` no Render.
+
+**Dois escopos:**
+
+| | Quem cria | Nome | Para quê |
+|---|---|---|---|
+| **Global** | só super admin | como digitado | o caso comum — nome da escola em `{{1}}`, aprovado uma vez, servindo todas |
+| **Da escola** | admin da escola | prefixado pelo slug (`rosacury_festa_junina`) | o que é mesmo específico dela |
+
+O global existe porque **template mora na WABA**, que é uma só (§9e do CLAUDE.md): um
+`aviso_geral` por escola seriam N revisões do mesmo texto e N chances de rejeição num ativo
+compartilhado. O prefixo do escopo por escola é o que evita colisão de nome na mesma WABA.
+
+**A submissão não é a aprovação.** O `POST` devolve `PENDING`; quem muda para aprovado é o
+webhook `message_template_status_update` (§5). Se ele falhar, `POST /api/admin/templates/sincronizar`
+(super admin) reconcilia lendo a Meta — é a rede de segurança, porque webhook perdido é
+indistinguível de revisão ainda em curso.
+
+**Validação local antes de submeter.** Não é preciosismo: rejeição conta contra a WABA, que
+todas as escolas compartilham. O painel recusa, antes de gastar uma submissão, corpo que
+começa ou termina em variável (a recusa que já levamos), corpo que é só variável, numeração
+fora de sequência, falta de exemplo e categoria `authentication`.
 
 ---
 

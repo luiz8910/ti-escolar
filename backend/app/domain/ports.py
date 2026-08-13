@@ -56,6 +56,7 @@ from app.domain.entities import (
     StatusMatricula,
     StatusSolicitacaoInterna,
     Tenant,
+    TemplateRemoto,
     TrechoConhecimento,
     TurnoConversa,
     Usuario,
@@ -307,15 +308,67 @@ class ConversaRepository(Protocol):
 
 @runtime_checkable
 class TemplateRepository(Protocol):
-    async def obter(self, *, tenant_id: UUID, template_id: UUID) -> MessageTemplate | None: ...
+    async def obter(self, *, tenant_id: UUID, template_id: UUID) -> MessageTemplate | None:
+        """O template da escola **ou** um global — os dois são visíveis para o tenant."""
+        ...
 
     async def por_nome(self, *, tenant_id: UUID, nome: str) -> MessageTemplate | None:
         """Template pelo nome aprovado na Meta (a chave que a Graph API entende).
 
         Usado pela retomada de conversa fora da janela de 24h (§A9), onde o template é
-        escolhido por configuração — e não por um id que ninguém digitaria.
+        escolhido por configuração — e não por um id que ninguém digitaria. O da própria
+        escola tem precedência sobre o global de mesmo nome: quem personalizou espera que
+        a versão dela seja a usada.
         """
         ...
+
+    async def listar(self, *, tenant_id: UUID) -> list[MessageTemplate]:
+        """Catálogo visível para a escola: os globais mais os dela."""
+        ...
+
+    async def salvar(self, template: MessageTemplate) -> MessageTemplate: ...
+
+    async def remover(self, template_id: UUID) -> bool: ...
+
+    async def por_meta_id(self, meta_template_id: str) -> MessageTemplate | None:
+        """Busca **cross-tenant**, pelo id da Meta — o caminho do webhook.
+
+        O evento de status não traz escola nenhuma (templates são da WABA), então esta é
+        a única chave que o webhook tem. Por isso ela ignora ``tenant_id`` de propósito.
+        """
+        ...
+
+    async def por_nome_e_idioma(self, *, nome: str, idioma: str) -> MessageTemplate | None:
+        """Também cross-tenant: o par (nome, idioma) é único na WABA, e é o que a Meta
+        manda quando o evento vem sem o id."""
+        ...
+
+    async def listar_todos(self) -> list[MessageTemplate]:
+        """Todos os templates, de todas as escolas — usado só pela sincronização."""
+        ...
+
+
+@runtime_checkable
+class CatalogoTemplates(Protocol):
+    """Gestão de templates na Meta (WhatsApp Business Management API).
+
+    Separada de ``MessageChannel`` porque é outra API e outro escopo de token: enviar usa
+    ``whatsapp_business_messaging`` e fala com ``/{phone_number_id}/messages``; gerenciar
+    template usa ``whatsapp_business_management`` e fala com ``/{waba_id}/message_templates``.
+    Misturar as duas obrigaria todo canal a saber submeter template a revisão.
+    """
+
+    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+        """Cria o template na Meta e o põe em revisão (é o mesmo POST).
+
+        A revisão é **assíncrona**: o retorno é o estado inicial (normalmente pendente),
+        não a aprovação.
+        """
+        ...
+
+    async def listar(self) -> list[TemplateRemoto]: ...
+
+    async def remover(self, *, nome: str) -> bool: ...
 
 
 @runtime_checkable

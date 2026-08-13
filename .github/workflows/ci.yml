@@ -55,6 +55,21 @@ jobs:
       - name: Lint (ruff)
         run: ruff check app tests
 
+      # Duas branches que criem uma migration a partir do mesmo head produzem **multiple
+      # heads**, e o sintoma só aparece depois do merge — no `alembic upgrade head` do CMD
+      # do container, ou seja, durante o deploy. Renumerar o arquivo NÃO resolve: o grafo é
+      # definido pelo `down_revision`, não pelo nome. Esta checagem antecipa a falha para o
+      # PR, com mensagem dizendo o que fazer.
+      - name: Cadeia de migrations linear (um head só)
+        run: |
+          heads=$(alembic heads | grep -c . || true)
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Existem $heads heads de migration. Re-aponte o down_revision da"
+            echo "::error::migration mais nova para o head atual da main (cadeia linear)."
+            alembic heads
+            exit 1
+          fi
+
       - name: Migrations (alembic upgrade head)
         run: alembic upgrade head
 

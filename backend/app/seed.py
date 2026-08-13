@@ -263,36 +263,50 @@ async def _seed() -> None:
                     tenant_id=DEMO_TENANT_ID, tipo=tipo, titulo=titulo, conteudo=conteudo
                 )
 
-        # Template aprovado para broadcasts
+        # Template de aviso geral. **Global** (``tenant_id=None``): templates moram na
+        # WABA, que é uma só, então o nome da escola é parâmetro e não texto fixo. O corpo
+        # antigo assinava "Escola Demonstração" cravado — num catálogo compartilhado isso
+        # faria toda escola assinar como a de demonstração.
         template = await session.get(TemplateORM, DEMO_TEMPLATE_ID)
         if template is None:
             session.add(
                 TemplateORM(
                     id=DEMO_TEMPLATE_ID,
-                    tenant_id=DEMO_TENANT_ID,
+                    tenant_id=None,
                     nome="aviso_reuniao",
                     categoria="utility",
                     idioma="pt_BR",
-                    corpo="Olá, {{1}}! Lembrete: {{2}}. Atenciosamente, Escola Demonstração.",
+                    corpo=(
+                        "Olá, {{1}}! A escola {{2}} informa: {{3}} Em caso de dúvida, "
+                        "fale com a secretaria."
+                    ),
+                    exemplos=["Maria Silva", "EM Rosa Cury", "a reunião de pais será dia 20/08, às 15h."],
                     status="aprovado",
                 )
             )
 
         # Template de retomada do atendimento humano (§6j / §A9): reabre a conversa cuja
         # janela de 24h expirou — o caso "o responsável escreveu sexta à noite e a
-        # secretaria só viu na segunda". Fica **pendente** de propósito: enquanto a Meta
-        # não aprovar o template de verdade, o painel precisa recusar a resposta com erro
-        # explícito, e não fingir que a mensagem saiu.
+        # secretaria só viu na segunda". Também **global**, e pelo mesmo motivo.
+        #
+        # Fica **pendente** de propósito: o seed não sabe o que a Meta aprovou, e fingir
+        # aprovação faria o painel prometer uma resposta que a Graph API recusa. Quem
+        # descobre o estado real é `POST /api/admin/templates/sincronizar`, que casa esta
+        # linha com o template da WABA por (nome, idioma).
         retomada = await session.get(TemplateORM, DEMO_TEMPLATE_RETOMADA_ID)
         if retomada is None:
             session.add(
                 TemplateORM(
                     id=DEMO_TEMPLATE_RETOMADA_ID,
-                    tenant_id=DEMO_TENANT_ID,
+                    tenant_id=None,
                     nome="retomada_atendimento",
                     categoria="utility",
                     idioma="pt_BR",
                     corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}} Se precisar de algo mais, é só responder por aqui.",
+                    exemplos=[
+                        "EM Rosa Cury",
+                        "a declaração de escolaridade já está pronta e pode ser retirada na secretaria.",
+                    ],
                     status="pendente",
                 )
             )

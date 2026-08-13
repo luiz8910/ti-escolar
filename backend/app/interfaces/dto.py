@@ -29,6 +29,40 @@ class BroadcastSaida(BaseModel):
     restante_cota: int
 
 
+class TemplateEntrada(BaseModel):
+    """Criação de template. ``tenant_id`` nulo = global (só super admin)."""
+
+    tenant_id: UUID | None = None
+    nome: str
+    corpo: str
+    categoria: str = "utility"
+    idioma: str = "pt_BR"
+    exemplos: list[str] = []
+
+
+class TemplateSaida(BaseModel):
+    id: UUID
+    tenant_id: UUID | None
+    escopo: str  # "global" | "escola"
+    nome: str
+    categoria: str
+    idioma: str
+    corpo: str
+    status: str
+    utilizavel: bool
+    meta_template_id: str
+    motivo_rejeicao: str
+    exemplos: list[str]
+    criado_em: datetime
+    atualizado_em: datetime | None
+
+
+class SincronizacaoTemplatesSaida(BaseModel):
+    verificados: int
+    atualizados: int
+    desconhecidos: int
+
+
 class QuotaSaida(BaseModel):
     tenant_id: UUID
     dia: str

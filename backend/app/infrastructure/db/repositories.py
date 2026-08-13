@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -56,6 +56,11 @@ def _to_template(row: TemplateORM) -> MessageTemplate:
         idioma=row.idioma,
         corpo=row.corpo,
         status=StatusTemplate(row.status),
+        meta_template_id=row.meta_template_id or "",
+        motivo_rejeicao=row.motivo_rejeicao or "",
+        exemplos=list(row.exemplos or []),
+        criado_em=row.criado_em or _now(),
+        atualizado_em=row.atualizado_em,
     )
 
 
@@ -259,7 +264,8 @@ class SqlTemplateRepository:
         self, *, tenant_id: uuid.UUID, template_id: uuid.UUID
     ) -> MessageTemplate | None:
         row = await self._s.get(TemplateORM, template_id)
-        if row is None or row.tenant_id != tenant_id:
+        # ``tenant_id IS NULL`` é template global: visível para toda escola.
+        if row is None or (row.tenant_id is not None and row.tenant_id != tenant_id):
             return None
         return _to_template(row)
 
@@ -268,10 +274,70 @@ class SqlTemplateRepository:
         if not nome:
             return None
         stmt = select(TemplateORM).where(
-            TemplateORM.tenant_id == tenant_id, TemplateORM.nome == nome
+            TemplateORM.nome == nome,
+            or_(TemplateORM.tenant_id == tenant_id, TemplateORM.tenant_id.is_(None)),
+            # O da própria escola primeiro: quem personalizou espera a versão dela.
+            # ``NULLS LAST`` ordena o global depois do específico.
+        ).order_by(TemplateORM.tenant_id.desc().nullslast())
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_template(row) if row else None
+
+    async def listar(self, *, tenant_id: uuid.UUID) -> list[MessageTemplate]:
+        stmt = (
+            select(TemplateORM)
+            .where(or_(TemplateORM.tenant_id == tenant_id, TemplateORM.tenant_id.is_(None)))
+            .order_by(TemplateORM.nome)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_template(r) for r in rows]
+
+    async def listar_todos(self) -> list[MessageTemplate]:
+        rows = (await self._s.execute(select(TemplateORM))).scalars().all()
+        return [_to_template(r) for r in rows]
+
+    async def por_meta_id(self, meta_template_id: str) -> MessageTemplate | None:
+        meta_template_id = (meta_template_id or "").strip()
+        if not meta_template_id:
+            return None
+        stmt = select(TemplateORM).where(TemplateORM.meta_template_id == meta_template_id)
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_template(row) if row else None
+
+    async def por_nome_e_idioma(self, *, nome: str, idioma: str) -> MessageTemplate | None:
+        nome = (nome or "").strip()
+        if not nome:
+            return None
+        stmt = select(TemplateORM).where(
+            TemplateORM.nome == nome, TemplateORM.idioma == idioma
         )
         row = (await self._s.execute(stmt)).scalars().first()
         return _to_template(row) if row else None
+
+    async def salvar(self, template: MessageTemplate) -> MessageTemplate:
+        row = await self._s.get(TemplateORM, template.id)
+        if row is None:
+            row = TemplateORM(id=template.id, criado_em=template.criado_em)
+            self._s.add(row)
+        row.tenant_id = template.tenant_id
+        row.nome = template.nome
+        row.categoria = template.categoria.value
+        row.idioma = template.idioma
+        row.corpo = template.corpo
+        row.status = template.status.value
+        row.meta_template_id = template.meta_template_id
+        row.motivo_rejeicao = template.motivo_rejeicao
+        row.exemplos = list(template.exemplos)
+        row.atualizado_em = _now()
+        await self._s.flush()
+        return _to_template(row)
+
+    async def remover(self, template_id: uuid.UUID) -> bool:
+        row = await self._s.get(TemplateORM, template_id)
+        if row is None:
+            return False
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
 
 
 class SqlBroadcastRepository:

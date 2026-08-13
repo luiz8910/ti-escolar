@@ -25,6 +25,8 @@ from app.domain.entities import (
     ResultadoBusca,
     Sala,
     SolicitacaoImpressao,
+    StatusTemplate,
+    TemplateRemoto,
     TrechoConhecimento,
     TurnoConversa,
 )
@@ -378,18 +380,96 @@ class FakeBroadcastRepo:
 
 
 class FakeTemplateRepo:
+    """Guarda vários templates e respeita o escopo global (``tenant_id`` nulo)."""
+
     def __init__(self, template: MessageTemplate | None = None) -> None:
-        self._template = template
+        self.templates: list[MessageTemplate] = [template] if template else []
+
+    def _visiveis(self, tenant_id) -> list[MessageTemplate]:
+        return [t for t in self.templates if t.visivel_para(tenant_id)]
 
     async def obter(self, *, tenant_id, template_id) -> MessageTemplate | None:
-        if self._template and self._template.tenant_id == tenant_id:
-            return self._template
+        for t in self._visiveis(tenant_id):
+            if t.id == template_id:
+                return t
         return None
 
     async def por_nome(self, *, tenant_id, nome) -> MessageTemplate | None:
-        if self._template and self._template.tenant_id == tenant_id:
-            return self._template if self._template.nome == nome else None
-        return None
+        candidatos = [t for t in self._visiveis(tenant_id) if t.nome == nome]
+        # O da própria escola tem precedência sobre o global de mesmo nome.
+        candidatos.sort(key=lambda t: t.global_)
+        return candidatos[0] if candidatos else None
+
+    async def listar(self, *, tenant_id) -> list[MessageTemplate]:
+        return sorted(self._visiveis(tenant_id), key=lambda t: t.nome)
+
+    async def listar_todos(self) -> list[MessageTemplate]:
+        return list(self.templates)
+
+    async def por_meta_id(self, meta_template_id) -> MessageTemplate | None:
+        if not meta_template_id:
+            return None
+        return next(
+            (t for t in self.templates if t.meta_template_id == meta_template_id), None
+        )
+
+    async def por_nome_e_idioma(self, *, nome, idioma) -> MessageTemplate | None:
+        return next(
+            (t for t in self.templates if t.nome == nome and t.idioma == idioma), None
+        )
+
+    async def salvar(self, template: MessageTemplate) -> MessageTemplate:
+        for i, existente in enumerate(self.templates):
+            if existente.id == template.id:
+                self.templates[i] = template
+                return template
+        self.templates.append(template)
+        return template
+
+    async def remover(self, template_id) -> bool:
+        antes = len(self.templates)
+        self.templates = [t for t in self.templates if t.id != template_id]
+        return len(self.templates) < antes
+
+
+class FakeCatalogoTemplates:
+    """Meta de mentira: registra as submissões e devolve o status que o teste mandar."""
+
+    def __init__(
+        self,
+        *,
+        status: StatusTemplate = StatusTemplate.PENDENTE,
+        remotos: list[TemplateRemoto] | None = None,
+        erro: Exception | None = None,
+    ) -> None:
+        self.submetidos: list[MessageTemplate] = []
+        self.removidos: list[str] = []
+        self._status = status
+        self._remotos = remotos or []
+        self._erro = erro
+
+    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+        if self._erro:
+            raise self._erro
+        self.submetidos.append(template)
+        return TemplateRemoto(
+            nome=template.nome,
+            idioma=template.idioma,
+            status=self._status,
+            categoria=template.categoria,
+            meta_template_id=f"meta-{len(self.submetidos)}",
+        )
+
+    async def listar(self) -> list[TemplateRemoto]:
+        if self._erro:
+            raise self._erro
+        return list(self._remotos)
+
+    async def remover(self, *, nome: str) -> bool:
+        if self._erro:
+            raise self._erro
+        self.removidos.append(nome)
+        return True
 
 
 class FakeAuditLogRepo:
