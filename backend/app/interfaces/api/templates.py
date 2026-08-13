@@ -33,6 +33,7 @@ from app.application.validacao_template import TemplateInvalido
 from app.domain.entities import CategoriaTemplate, MessageTemplate, Usuario, Waba
 from app.infrastructure.channel.meta_templates import CatalogoTemplatesIndisponivel
 from app.infrastructure.db.repositories import SqlTemplateRepository, SqlWabaRepository
+from app.infrastructure.db.repositories_admin import SqlTenantRepository
 from app.interfaces.api.admin import (
     _exige_acesso_tenant,
     _exige_super_admin,
@@ -44,6 +45,7 @@ from app.interfaces.deps import (
     get_replicar_templates,
     get_sincronizar_templates,
     get_template_repo,
+    get_tenant_repo,
     get_waba_repo,
 )
 from app.interfaces.dto import (
@@ -57,7 +59,12 @@ from app.interfaces.dto import (
 router = APIRouter(prefix="/api/admin/templates", tags=["templates"])
 
 
-def _saida(template: MessageTemplate, contas: dict[UUID, Waba]) -> TemplateSaida:
+def _saida(
+    template: MessageTemplate,
+    contas: dict[UUID, Waba],
+    *,
+    waba_da_escola: UUID | None = None,
+) -> TemplateSaida:
     return TemplateSaida(
         id=template.id,
         tenant_id=template.tenant_id,
@@ -68,6 +75,7 @@ def _saida(template: MessageTemplate, contas: dict[UUID, Waba]) -> TemplateSaida
         corpo=template.corpo,
         status=template.status.value,
         utilizavel=template.utilizavel,
+        enviavel_aqui=template.aprovado_em(waba_da_escola),
         contas=[
             TemplateNaWabaSaida(
                 waba_id=entrada.waba_id,
@@ -95,6 +103,11 @@ async def _contas(wabas: SqlWabaRepository) -> dict[UUID, Waba]:
     return {c.id: c for c in await wabas.listar()}
 
 
+async def _waba_da_escola(tenants: SqlTenantRepository, tenant_id: UUID) -> UUID | None:
+    escola = await tenants.obter(tenant_id)
+    return escola.waba_id if escola else None
+
+
 def _categoria(bruto: str) -> CategoriaTemplate:
     try:
         return CategoriaTemplate((bruto or "").lower())
@@ -111,11 +124,13 @@ async def listar_templates(
     solicitante: Usuario = Depends(usuario_autenticado),
     templates: SqlTemplateRepository = Depends(get_template_repo),
     wabas: SqlWabaRepository = Depends(get_waba_repo),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
 ) -> list[TemplateSaida]:
     _exige_acesso_tenant(solicitante, tenant_id)
     encontrados = await ListarTemplates(templates=templates).executar(tenant_id=tenant_id)
     contas = await _contas(wabas)
-    return [_saida(t, contas) for t in encontrados]
+    conta_da_escola = await _waba_da_escola(tenants, tenant_id)
+    return [_saida(t, contas, waba_da_escola=conta_da_escola) for t in encontrados]
 
 
 @router.get("/{template_id}", response_model=TemplateSaida)
@@ -125,6 +140,7 @@ async def obter_template(
     solicitante: Usuario = Depends(usuario_autenticado),
     templates: SqlTemplateRepository = Depends(get_template_repo),
     wabas: SqlWabaRepository = Depends(get_waba_repo),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
 ) -> TemplateSaida:
     _exige_acesso_tenant(solicitante, tenant_id)
     try:
@@ -133,7 +149,11 @@ async def obter_template(
         )
     except TemplateNaoEncontrado as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return _saida(template, await _contas(wabas))
+    return _saida(
+        template,
+        await _contas(wabas),
+        waba_da_escola=await _waba_da_escola(tenants, tenant_id),
+    )
 
 
 @router.post("", response_model=TemplateSaida, status_code=status.HTTP_201_CREATED)
@@ -142,6 +162,7 @@ async def criar_template(
     solicitante: Usuario = Depends(usuario_autenticado),
     uc: CriarTemplate = Depends(get_criar_template),
     wabas: SqlWabaRepository = Depends(get_waba_repo),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
 ) -> TemplateSaida:
     if payload.tenant_id is not None:
         _exige_acesso_tenant(solicitante, payload.tenant_id)
@@ -175,7 +196,15 @@ async def criar_template(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
-    return _saida(template, await _contas(wabas))
+    return _saida(
+        template,
+        await _contas(wabas),
+        waba_da_escola=(
+            await _waba_da_escola(tenants, payload.tenant_id)
+            if payload.tenant_id is not None
+            else None
+        ),
+    )
 
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)

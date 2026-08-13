@@ -58,6 +58,9 @@ class ConfiguracaoSeguranca:
     # Retenção dos documentos que os pais enviam (§6k). 0 = sem expurgo, e o que fica
     # guardado para sempre é dado sensível de criança.
     documento_retencao_dias: int = 0
+    # Escolas ativas sem conta do WhatsApp (`Tenant.waba_id`) vinculada. É contagem de
+    # banco, não de env: a configuração aqui está no cadastro.
+    escolas_sem_conta_whatsapp: int = 0
 
 
 # Segredos que vêm no .env.example e nunca devem sobreviver ao deploy.
@@ -302,6 +305,7 @@ class AvaliarPosturaSeguranca:
                 referencia="app/interfaces/api/webhook.py · verificar()",
             ),
             self._canal_efetivo(c),
+            self._conta_whatsapp(c),
         ]
 
     def _canal_efetivo(self, c: ConfiguracaoSeguranca) -> MedidaSeguranca:
@@ -338,6 +342,42 @@ class AvaliarPosturaSeguranca:
                 else f"Canal '{c.canal}' ativo, coerente com a configuração."
             ),
             referencia="app/infrastructure/factories.py · canal_efetivo()",
+        )
+
+    def _conta_whatsapp(self, c: ConfiguracaoSeguranca) -> MedidaSeguranca:
+        """Toda escola está vinculada a uma conta do WhatsApp Business?
+
+        A escola sem conta dispara pelo número dela, mas **não por template** — e template
+        é o que sai fora da janela de 24h, ou seja, todo aviso ativo. A tela de escolas
+        marca isso com ⚠; aqui entra porque é auditoria, e o modo de falha é o mesmo que
+        `canal_efetivo` existe para acusar: o produto parece configurado e não está.
+        """
+        pendentes = c.escolas_sem_conta_whatsapp
+        return MedidaSeguranca(
+            chave="conta_whatsapp_por_escola",
+            titulo="Escola vinculada a uma conta do WhatsApp (WABA)",
+            categoria="Integridade de dados",
+            descricao=(
+                "Cada escola declara em qual conta do WhatsApp Business o número dela "
+                "está. É a conta que responde pelo catálogo de templates: é onde o "
+                "template dela é criado e onde a aprovação é conferida antes de um "
+                "disparo."
+            ),
+            risco=(
+                "Sem conta vinculada, o disparo por template é recusado — e template é o "
+                "que sai fora da janela de 24h, ou seja, todo aviso ativo. Com a conta "
+                "errada é pior: o painel mostra 'aprovado' de um template que não existe "
+                "naquela conta, e a Graph API recusa destinatário a destinatário, depois "
+                "de a cota do dia ter sido consumida."
+            ),
+            status=StatusMedida.ATENCAO if pendentes else StatusMedida.ATIVA,
+            detalhe=(
+                f"{pendentes} escola(s) ativa(s) sem conta vinculada — o disparo por "
+                "template delas é recusado. Defina a conta no cadastro da escola."
+                if pendentes
+                else "Todas as escolas ativas estão vinculadas a uma conta."
+            ),
+            referencia="app/application/templates_use_cases.py · CriarTemplate._contas_alvo()",
         )
 
     # -- Autenticação e sessão --------------------------------------------

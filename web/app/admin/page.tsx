@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   adicionarContato,
   consultarQuota,
@@ -11,9 +11,15 @@ import {
   getSessao,
   Grupo,
   logout,
-  Quota,
   listarGrupos,
+  listarTemplates,
+  OrigemParametro,
+  ParametroDisparo,
+  placeholdersDoCorpo,
+  Quota,
   ResultadoEnvioGrupo,
+  TemplateMensagem,
+  trechoDoPlaceholder,
   Usuario,
 } from "@/lib/admin";
 
@@ -21,7 +27,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { QuotaBar } from "@/components/layout/QuotaBar";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Input, Textarea } from "@/components/ui/form";
+import { Input, Select, Textarea } from "@/components/ui/form";
 import { CampoTelefone } from "@/components/ui/campos";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -173,10 +179,46 @@ function GrupoDetalhe({
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
   const [titulo, setTitulo] = useState("");
-  const [mensagem, setMensagem] = useState("");
+  const [templates, setTemplates] = useState<TemplateMensagem[]>([]);
+  const [templateId, setTemplateId] = useState("");
+  const [parametros, setParametros] = useState<ParametroDisparo[]>([]);
   const [resultado, setResultado] = useState<ResultadoEnvioGrupo | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [adicionando, setAdicionando] = useState(false);
+
+  // Só os aprovados **na conta desta escola**: quem decide isso é o servidor, que conhece
+  // o vínculo escola → conta. Oferecer os demais seria convidar a um disparo que a Graph
+  // API recusa depois de a cota ter sido consumida.
+  const enviaveis = useMemo(() => templates.filter((t) => t.enviavel_aqui), [templates]);
+  const template = useMemo(
+    () => enviaveis.find((t) => t.id === templateId) ?? null,
+    [enviaveis, templateId]
+  );
+
+  useEffect(() => {
+    listarTemplates()
+      .then(setTemplates)
+      .catch(() => {
+        /* sem catálogo a tela ainda serve para gerir contatos */
+      });
+  }, []);
+
+  // Trocar de template zera os campos: o número de variáveis muda, e reaproveitar os
+  // valores antigos entregaria o texto de um `{{n}}` no lugar de outro.
+  useEffect(() => {
+    if (!template) {
+      setParametros([]);
+      return;
+    }
+    setParametros(
+      placeholdersDoCorpo(template.corpo).map((n) => ({
+        // O primeiro `{{n}}` é quase sempre a saudação — mas o palpite é só um default
+        // visível, que a secretaria vê e troca, não uma regra escondida como a de antes.
+        origem: n === 1 ? "responsavel" : "texto",
+        texto: "",
+      }))
+    );
+  }, [template]);
 
   if (!grupo) {
     return (
@@ -210,14 +252,19 @@ function GrupoDetalhe({
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
-    if (!titulo.trim() || !mensagem.trim()) return;
+    if (!titulo.trim() || !template) return;
+    const faltando = parametros.some((p) => p.origem === "texto" && !p.texto.trim());
+    if (faltando) {
+      toast({ tone: "danger", title: "Preencha todos os campos do template." });
+      return;
+    }
     setEnviando(true);
     setResultado(null);
     try {
-      const r = await enviarParaGrupo(grupo!.id, titulo.trim(), mensagem.trim());
+      const r = await enviarParaGrupo(grupo!.id, titulo.trim(), template.id, parametros);
       setResultado(r);
       setTitulo("");
-      setMensagem("");
+      setParametros((atuais) => atuais.map((p) => ({ ...p, texto: "" })));
       await onMudou();
       toast({
         tone: "success",
@@ -301,25 +348,94 @@ function GrupoDetalhe({
       <div className="mt-[18px] border-t border-n-100 pt-4">
         <h4 className="text-sm font-bold text-n-900">Enviar mensagem ao grupo</h4>
         <p className="mt-1 text-xs text-n-500">
-          Usa o template aprovado e respeita a cota diária. Alcança apenas os{" "}
-          {grupo.total_membros} contato(s) de <b>{grupo.nome}</b>.
+          Sai por um <b>template aprovado</b> e respeita a cota diária. Alcança apenas os{" "}
+          {grupo.total_membros} contato(s) de <b>{grupo.nome}</b>. O texto variável entra
+          nos campos abaixo — é o que muda a cada disparo sem exigir nova aprovação.
         </p>
-        <form onSubmit={enviar} className="mt-3 flex flex-col gap-2.5">
-          <Input
-            value={titulo}
-            onChange={(e) => setTitulo(e.target.value)}
-            placeholder="Título (ex.: Reunião de pais)"
-          />
-          <Textarea
-            rows={3}
-            value={mensagem}
-            onChange={(e) => setMensagem(e.target.value)}
-            placeholder="Mensagem aos responsáveis…"
-          />
-          <Button type="submit" loading={enviando} className="self-start">
-            {enviando ? "Enviando…" : `Enviar para ${grupo.total_membros} contatos`}
-          </Button>
-        </form>
+        {enviaveis.length === 0 ? (
+          <p className="mt-3 rounded-md bg-warning-soft p-3 text-[13px] text-warning">
+            Nenhum template aprovado para esta escola. Fora da janela de 24h o WhatsApp só
+            entrega template aprovado pela Meta — crie um em <b>Templates de mensagem</b> e
+            aguarde a revisão.
+          </p>
+        ) : (
+          <form onSubmit={enviar} className="mt-3 flex flex-col gap-2.5">
+            <Input
+              value={titulo}
+              onChange={(e) => setTitulo(e.target.value)}
+              placeholder="Título do disparo (só para o histórico)"
+            />
+            <Select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+              <option value="">Escolha o template aprovado…</option>
+              {enviaveis.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nome}
+                  {t.categoria === "marketing" ? " (marketing — mais caro)" : ""}
+                </option>
+              ))}
+            </Select>
+
+            {template && (
+              <>
+                <p className="rounded-md bg-n-50 p-2.5 font-mono text-[11.5px] leading-relaxed text-n-600">
+                  {template.corpo}
+                </p>
+                {parametros.map((p, i) => {
+                  const numero = i + 1;
+                  return (
+                    <div key={numero} className="flex flex-wrap items-start gap-2">
+                      <div className="w-full text-[11.5px] text-n-500">
+                        <b className="font-mono">{`{{${numero}}}`}</b>{" "}
+                        {trechoDoPlaceholder(template.corpo, numero)}
+                      </div>
+                      <Select
+                        className="w-[190px]"
+                        value={p.origem}
+                        onChange={(e) =>
+                          setParametros((atuais) =>
+                            atuais.map((atual, j) =>
+                              j === i
+                                ? { ...atual, origem: e.target.value as OrigemParametro }
+                                : atual
+                            )
+                          )
+                        }
+                      >
+                        <option value="responsavel">Nome do responsável</option>
+                        <option value="escola">Nome da escola</option>
+                        <option value="texto">Texto que eu escrever</option>
+                      </Select>
+                      {p.origem === "texto" && (
+                        <Textarea
+                          className="min-w-[220px] flex-1"
+                          rows={2}
+                          value={p.texto}
+                          onChange={(e) =>
+                            setParametros((atuais) =>
+                              atuais.map((atual, j) =>
+                                j === i ? { ...atual, texto: e.target.value } : atual
+                              )
+                            )
+                          }
+                          placeholder="Ex.: a reunião de pais será dia 20/08, às 15h."
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+
+            <Button
+              type="submit"
+              loading={enviando}
+              disabled={!template}
+              className="self-start"
+            >
+              {enviando ? "Enviando…" : `Enviar para ${grupo.total_membros} contatos`}
+            </Button>
+          </form>
+        )}
 
         {resultado && (
           <div className="mt-4 rounded-md bg-success-soft p-3 text-[13px] text-success">

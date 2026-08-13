@@ -23,7 +23,8 @@ from app.config import Settings
 from app.domain.entities import Usuario
 from app.infrastructure.factories import canal_efetivo
 from app.interfaces.api.admin import _exige_super_admin, usuario_autenticado
-from app.interfaces.deps import get_settings_dep
+from app.infrastructure.db.repositories_admin import SqlTenantRepository
+from app.interfaces.deps import get_settings_dep, get_tenant_repo
 from app.interfaces.dto import (
     ItemChecklistSaida,
     MedidaSegurancaSaida,
@@ -33,8 +34,14 @@ from app.interfaces.dto import (
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-def _config_atual(settings: Settings) -> ConfiguracaoSeguranca:
-    """Traduz as ``Settings`` em sinais booleanos — o caso de uso não vê env nem segredo."""
+def _config_atual(
+    settings: Settings, *, escolas_sem_conta: int = 0
+) -> ConfiguracaoSeguranca:
+    """Traduz as ``Settings`` em sinais booleanos — o caso de uso não vê env nem segredo.
+
+    ``escolas_sem_conta`` não sai de env: é contagem de banco, feita na rota. O caso de uso
+    segue recebendo um retrato pronto, sem saber de onde cada sinal veio.
+    """
     return ConfiguracaoSeguranca(
         # O canal **pedido**: é a divergência entre ele e o token que a medida detecta.
         canal=settings.message_channel,
@@ -55,6 +62,7 @@ def _config_atual(settings: Settings) -> ConfiguracaoSeguranca:
         logs_persistidos=settings.log_persistir,
         logs_retencao_dias=settings.log_retencao_dias,
         documento_retencao_dias=settings.documento_retencao_dias,
+        escolas_sem_conta_whatsapp=escolas_sem_conta,
     )
 
 
@@ -62,10 +70,18 @@ def _config_atual(settings: Settings) -> ConfiguracaoSeguranca:
 async def obter_postura_seguranca(
     solicitante: Usuario = Depends(usuario_autenticado),
     settings: Settings = Depends(get_settings_dep),
+    tenants: SqlTenantRepository = Depends(get_tenant_repo),
 ) -> PosturaSegurancaSaida:
     _exige_super_admin(solicitante)
 
-    postura = AvaliarPosturaSeguranca().executar(config=_config_atual(settings))
+    # Escola cancelada não dispara de qualquer forma; contá-la viraria alarme falso que
+    # nunca fecha.
+    sem_conta = sum(
+        1 for t in await tenants.listar() if t.waba_id is None and not t.acesso_suspenso
+    )
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config_atual(settings, escolas_sem_conta=sem_conta)
+    )
     return PosturaSegurancaSaida(
         medidas=[
             MedidaSegurancaSaida(

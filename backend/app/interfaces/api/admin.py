@@ -47,7 +47,9 @@ from app.config import Settings
 from app.domain.entities import (
     AtorAuditoria,
     Cargo,
+    OrigemParametro,
     Papel,
+    ParametroTemplate,
     PlanoTenant,
     Tenant,
     Turno,
@@ -97,6 +99,7 @@ from app.interfaces.dto import (
     CriarUsuarioEntrada,
     DestinatarioBroadcastSaida,
     EnvioGrupoEntrada,
+    ParametroTemplateEntrada,
     EnvioGrupoSaida,
     EscolaEntrada,
     EscolaResumoSaida,
@@ -487,6 +490,16 @@ async def adicionar_contato(
     return ContatoSaida(id=contato.id, nome=contato.nome, telefone=contato.telefone)
 
 
+def _parametro(entrada: ParametroTemplateEntrada) -> ParametroTemplate:
+    """Traduz o DTO para o domínio. Origem desconhecida vira ``texto``, que é inerte —
+    cair em ``responsavel`` por engano mandaria o nome de outra pessoa no lugar."""
+    try:
+        origem = OrigemParametro(entrada.origem)
+    except ValueError:
+        origem = OrigemParametro.TEXTO
+    return ParametroTemplate(origem=origem, texto=entrada.texto)
+
+
 @router.post("/grupos/{grupo_id}/enviar", response_model=EnvioGrupoSaida)
 async def enviar_para_grupo(
     grupo_id: UUID,
@@ -504,7 +517,7 @@ async def enviar_para_grupo(
             grupo_id=grupo_id,
             template_id=payload.template_id,
             titulo=payload.titulo,
-            mensagem=payload.mensagem,
+            parametros=[_parametro(p) for p in payload.parametros],
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

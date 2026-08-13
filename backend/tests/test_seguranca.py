@@ -306,3 +306,19 @@ def test_item_8_permanece_atencao_por_falta_de_alerta():
 def test_item_6_atendido_com_telas_de_erro_e_id_de_correlacao():
     postura = AvaliarPosturaSeguranca().executar(config=_config())
     assert _item(postura, 6).status is StatusMedida.ATIVA
+
+
+def test_escola_sem_conta_whatsapp_vira_atencao():
+    """O disparo por template dela é recusado — e template é todo aviso ativo."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(escolas_sem_conta_whatsapp=2)
+    )
+    medida = next(m for m in postura.medidas if m.chave == "conta_whatsapp_por_escola")
+    assert medida.status is StatusMedida.ATENCAO
+    assert "2 escola(s)" in medida.detalhe
+
+
+def test_todas_as_escolas_com_conta_fica_ativa():
+    postura = AvaliarPosturaSeguranca().executar(config=_config())
+    medida = next(m for m in postura.medidas if m.chave == "conta_whatsapp_por_escola")
+    assert medida.status is StatusMedida.ATIVA
