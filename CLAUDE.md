@@ -310,6 +310,11 @@ ti-escolar/
   - **Grade de horário em dois formatos** (decisão B do plano de 10/08), sobre a mesma
     coluna JSON: `turno` (entrada, saída e intervalo) e `aulas` (bloco por dia/horário,
     com o **intervalo como bloco** — tratá-lo à parte faria a carga horária ignorá-lo).
+    A disciplina do bloco escolhe de um **catálogo do ensino fundamental**
+    (`DISCIPLINAS_FUNDAMENTAL`, em `web/lib/admin.ts`) — inclusive Educação Física. É
+    `datalist` e **não** `select`: escola tem "Robótica", "Xadrez", "Reforço", e uma
+    lista fechada exigiria um deploy nosso para cada uma. O campo gravado segue sendo o
+    `rotulo` livre.
     Validação em `app/application/grade_horario.py`, compartilhada por painel e seed:
     recusa hora fora de formato, fim antes do início, intervalo fora do turno e **aulas
     sobrepostas no mesmo dia**. Como o formato gravado é o mesmo, descartar um deles
