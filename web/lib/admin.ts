@@ -1284,6 +1284,8 @@ export interface Professor {
   educacao_fisica: boolean;
   /** `false` = eventual: entra na lista de quem cobre falta (§I1). */
   titular: boolean;
+  /** Vínculo vivo com a escola. Desligado, o número deixa de valer no WhatsApp. */
+  ativo: boolean;
   tem_acesso: boolean;
 }
 
@@ -1297,6 +1299,7 @@ export interface DadosProfessor {
   email: string;
   educacao_fisica: boolean;
   titular: boolean;
+  ativo: boolean;
 }
 
 export const DADOS_PROFESSOR_VAZIO: DadosProfessor = {
@@ -1308,6 +1311,7 @@ export const DADOS_PROFESSOR_VAZIO: DadosProfessor = {
   email: "",
   educacao_fisica: false,
   titular: true,
+  ativo: true,
 };
 
 export async function listarProfessores(): Promise<Professor[]> {
@@ -1693,8 +1697,29 @@ export interface Impressao {
   frente_verso: boolean;
   observacao: string;
   status: StatusImpressao;
+  /** "portal" (formulário) ou "whatsapp" (arquivo enviado ao número da escola). */
+  origem: OrigemImpressao;
+  /** Verdadeiro quando os bytes estão com a escola e há o que baixar. */
+  tem_arquivo: boolean;
+  mime: string;
+  tamanho: number;
   criado_em: string;
   atualizado_em: string | null;
+}
+
+export type OrigemImpressao = "portal" | "whatsapp";
+
+/**
+ * Baixa o arquivo que o professor mandou pelo WhatsApp. Sem URL pública: os bytes só
+ * saem por rota autenticada, então a tela busca com o token e abre o blob.
+ */
+export async function baixarArquivoImpressao(id: string): Promise<Blob> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/${id}/arquivo?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  if (!resp.ok) throw await erroDe(resp, "baixar arquivo da impressão");
+  return resp.blob();
 }
 
 export async function listarFilaImpressao(status?: StatusImpressao): Promise<Impressao[]> {

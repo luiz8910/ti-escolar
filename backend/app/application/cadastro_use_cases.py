@@ -703,6 +703,9 @@ class DadosProfessor:
     email: str = ""
     educacao_fisica: bool = False
     titular: bool = True
+    # Vínculo vivo com a escola. Desligado, o professor perde o portal **e** deixa de ser
+    # reconhecido no WhatsApp (o arquivo dele não vai mais para a fila de impressão).
+    ativo: bool = True
 
 
 def _validar_dados_professor(dados: DadosProfessor) -> DadosProfessor:
@@ -721,6 +724,7 @@ def _validar_dados_professor(dados: DadosProfessor) -> DadosProfessor:
         email=normalizar_email(dados.email),
         educacao_fisica=dados.educacao_fisica,
         titular=dados.titular,
+        ativo=dados.ativo,
     )
 
 

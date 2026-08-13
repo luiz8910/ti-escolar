@@ -307,9 +307,14 @@ function ListaProfessores({
                       {p.cpf_formatado || <span className="text-n-400">—</span>}
                     </Td>
                     <Td>
-                      <Badge tone={p.titular ? "brand" : "warning"}>
-                        {p.titular ? "Titular" : "Eventual"}
-                      </Badge>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge tone={p.titular ? "brand" : "warning"}>
+                          {p.titular ? "Titular" : "Eventual"}
+                        </Badge>
+                        {/* Só o desligado ganha selo: "ativo" é a regra, e um selo em
+                            toda linha viraria ruído. */}
+                        {!p.ativo && <Badge tone="neutral">Desligado</Badge>}
+                      </div>
                     </Td>
                     <Td className="text-xs text-n-600">
                       {series.length === 0 ? (
@@ -382,6 +387,7 @@ function EditarProfessor({
     email: professor.email,
     educacao_fisica: professor.educacao_fisica,
     titular: professor.titular,
+    ativo: professor.ativo,
   });
 
   async function salvar() {

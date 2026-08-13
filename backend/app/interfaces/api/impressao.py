@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.impressao_use_cases import (
     AtualizarStatusImpressao,
+    BaixarArquivoDeImpressao,
     DefinirCotaImpressao,
     ListarCotasImpressao,
     ListarFilaImpressao,
@@ -30,6 +32,7 @@ from app.domain.entities import (
     Usuario,
 )
 from app.infrastructure.db.repositories_admin import SqlProfessorRepository
+from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.db.repositories_comunicacao import (
     SqlCotaImpressaoRepository,
     SqlSolicitacaoImpressaoRepository,
@@ -39,6 +42,7 @@ from app.interfaces.deps import (
     get_cota_impressao_repo,
     get_impressao_repo,
     get_professor_repo,
+    get_session,
 )
 from app.interfaces.dto import (
     CotaImpressaoEntrada,
@@ -65,6 +69,10 @@ def _saida(s: SolicitacaoImpressao) -> ImpressaoSaida:
         frente_verso=s.frente_verso,
         observacao=s.observacao,
         status=s.status.value,
+        origem=s.origem.value,
+        tem_arquivo=s.tem_arquivo,
+        mime=s.mime,
+        tamanho=s.tamanho,
         criado_em=s.criado_em,
         atualizado_em=s.atualizado_em,
     )
@@ -139,6 +147,39 @@ async def obter_impressao(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return _saida(solicitacao)
+
+
+@router.get("/impressao/{solicitacao_id}/arquivo", response_class=Response)
+async def baixar_arquivo_impressao(
+    solicitacao_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    session: AsyncSession = Depends(get_session),
+    solicitacoes: SqlSolicitacaoImpressaoRepository = Depends(get_impressao_repo),
+) -> Response:
+    """Bytes do arquivo enviado pelo professor no WhatsApp — é o que se leva à impressora.
+
+    Sem URL pública: quem imprime precisa estar autenticado e dentro da escola, como em
+    todo arquivo que a plataforma guarda (§6k).
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    arquivo = await BaixarArquivoDeImpressao(
+        solicitacoes=solicitacoes, storage=PostgresArquivoStorage(session)
+    ).executar(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
+    if arquivo is None:
+        # Mesma resposta para "não é desta escola", "veio pelo portal (sem bytes)" e
+        # "o storage perdeu o objeto": distinguir revelaria o que existe na fila alheia.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Arquivo não disponível"
+        )
+    return Response(
+        content=arquivo.conteudo,
+        media_type=arquivo.mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{arquivo.nome}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.put("/impressao/{solicitacao_id}/status", response_model=ImpressaoSaida)

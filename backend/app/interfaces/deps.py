@@ -8,6 +8,10 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_use_cases import EnviarBroadcastParaGrupo
+from app.application.impressao_use_cases import (
+    ConsultarSaldoImpressao,
+    ReceberImpressaoDoProfessor,
+)
 from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.tenant_use_cases import NotificarLicencasAVencer
 from app.application.atendimento_humano_use_cases import (
@@ -139,6 +143,23 @@ def get_receber_midia(
     )
 
 
+def get_receber_impressao(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ReceberImpressaoDoProfessor:
+    """Arquivo enviado por um professor ao número da escola: baixa, guarda e enfileira."""
+    solicitacoes = SqlSolicitacaoImpressaoRepository(session)
+    return ReceberImpressaoDoProfessor(
+        fonte=criar_fonte_midia(settings),
+        storage=PostgresArquivoStorage(session),
+        solicitacoes=solicitacoes,
+        saldo=ConsultarSaldoImpressao(
+            solicitacoes=solicitacoes, cotas=SqlCotaImpressaoRepository(session)
+        ),
+        conversas=_conversas(session, settings),
+    )
+
+
 def get_documento_repo(
     session: AsyncSession = Depends(get_session),
 ) -> SqlDocumentoRecebidoRepository:
@@ -177,6 +198,9 @@ def get_processar_inbound_meta(
         canal=criar_canal(settings),
         atendimentos=_atendimentos_inbound,
         midias=get_receber_midia(session=session, settings=settings),
+        # Reconhece o número do professor e desvia o arquivo para a fila de impressão.
+        professores=SqlProfessorRepository(session),
+        impressao=get_receber_impressao(session=session, settings=settings),
         controle_taxa=_controle_taxa,
         limite_por_remetente=(
             settings.rate_limit_inbound_mensagens if settings.rate_limit_habilitado else 0

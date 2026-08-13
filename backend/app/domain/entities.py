@@ -627,6 +627,11 @@ class Professor:
     titular: bool = True
     # Senha (hash PBKDF2) para o login do professor no mural (§A1). Vazio = sem acesso.
     senha_hash: str = ""
+    # Vínculo vivo com a escola. Desligado, o professor deixa de entrar no mural **e** o
+    # número dele deixa de ser reconhecido no WhatsApp — que é o ponto: sem esta flag,
+    # quem saiu da escola continuaria mandando arquivo direto para a fila de impressão,
+    # porque o cadastro permanece (o histórico da fila depende dele).
+    ativo: bool = True
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
 
@@ -650,6 +655,18 @@ class StatusImpressao(str, enum.Enum):
     CANCELADA = "cancelada"  # cancelada (pelo professor ou pela secretaria)
 
 
+class OrigemImpressao(str, enum.Enum):
+    """Por onde o pedido entrou na fila.
+
+    Não é enfeite de relatório: o pedido que chega pelo WhatsApp não passou por
+    formulário nenhum — o número de cópias saiu de um palpite sobre a legenda —, e a
+    secretaria precisa saber disso antes de mandar 200 folhas para a impressora.
+    """
+
+    PORTAL = "portal"  # formulário do portal do professor (§A1/§B1)
+    WHATSAPP = "whatsapp"  # arquivo enviado ao número da escola
+
+
 @dataclass
 class SolicitacaoImpressao:
     """Pedido de impressão feito por um professor à secretaria (fila de impressão).
@@ -658,6 +675,11 @@ class SolicitacaoImpressao:
     o dia inteiro". O professor envia o arquivo com os parâmetros (nº de cópias,
     colorido/PB, frente-e-verso) e o pedido cai numa fila para a secretaria processar,
     sem ficar perguntando cada detalhe. ``professor_nome`` é denormalizado só para exibição.
+
+    O arquivo pode chegar por dois caminhos. Pelo portal, ele é apenas **referenciado**
+    (``arquivo_url``). Pelo WhatsApp, os **bytes ficam com a escola** (``chave_storage``
+    aponta para o ``ArquivoStorage``, como nos documentos recebidos — §6k): sem isso, o
+    pedido cairia na fila sem o que imprimir.
     """
 
     tenant_id: UUID
@@ -670,9 +692,21 @@ class SolicitacaoImpressao:
     frente_verso: bool = False
     observacao: str = ""
     status: StatusImpressao = StatusImpressao.PENDENTE
+    origem: OrigemImpressao = OrigemImpressao.PORTAL
+    # Arquivo guardado (só no caminho do WhatsApp). Vazio = nada para baixar.
+    chave_storage: str = ""
+    mime: str = ""
+    tamanho: int = 0
+    # `media_id` da Meta — deduplica a reentrega do webhook, como em `DocumentoRecebido`.
+    media_id: str = ""
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     atualizado_em: datetime = field(default_factory=_now)
+
+    @property
+    def tem_arquivo(self) -> bool:
+        """Verdadeiro quando os bytes estão com a escola e há o que baixar."""
+        return bool(self.chave_storage)
 
 
 @dataclass
@@ -1622,6 +1656,33 @@ class CotaImpressao:
     @property
     def ilimitado(self) -> bool:
         return self.limite_mensal <= 0
+
+
+@dataclass(frozen=True)
+class SaldoImpressao:
+    """Franquia de um professor numa competência, já cruzada com o consumo.
+
+    É o que o professor ouve de volta quando manda um arquivo pelo WhatsApp. O saldo é
+    **derivado** das solicitações do mês, nunca um contador guardado: um contador
+    divergiria da fila no primeiro cancelamento, e aí a escola teria dois números
+    diferentes para a mesma pergunta.
+    """
+
+    competencia: str  # "YYYY-MM"
+    limite_mensal: int = 0
+    consumido: int = 0
+
+    @property
+    def ilimitado(self) -> bool:
+        return self.limite_mensal <= 0
+
+    @property
+    def restante(self) -> int:
+        return max(0, self.limite_mensal - self.consumido)
+
+    @property
+    def excedeu(self) -> bool:
+        return not self.ilimitado and self.consumido > self.limite_mensal
 
 
 @dataclass
