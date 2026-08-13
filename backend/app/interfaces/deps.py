@@ -205,6 +205,9 @@ def get_atender_conversa(
         auditoria=SqlAuditLogRepository(session),
         avisos=SqlAvisoTemporizadoRepository(session),
         mesa=get_mesa_atendimento(session),
+        # Saber se o número já está cadastrado é o que decide se a saída antecipada
+        # precisa perguntar o nome de quem está pedindo (§6l).
+        contatos=SqlContatoRepository(session),
         max_chars=settings.mensagem_pai_max_chars,
     )
 
