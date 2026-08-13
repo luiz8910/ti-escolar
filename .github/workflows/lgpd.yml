@@ -2,9 +2,25 @@ name: LGPD — auditoria
 
 # Duas camadas, separadas pela natureza do risco:
 #
-#   1. `codigo`   — no pull request, e só quando o diff toca dado pessoal. Roda o agente
-#                   `lgpd-auditor` (.claude/agents/) e comenta os achados no PR. É onde a
-#                   LLM agrega: ler o diff no contexto da lei. Não bloqueia o merge.
+#   1. `codigo`   — **sob demanda**, nunca automático. Roda o agente `lgpd-auditor`
+#                   (.claude/agents/) sobre o diff de um PR e comenta os achados nele. É
+#                   onde a LLM agrega: ler o diff no contexto da lei. Não bloqueia o merge.
+#
+#                   Rodava em todo PR que tocasse os caminhos de dado pessoal, e isso saiu
+#                   caro: cada execução é uma sessão de agente lendo diff e repositório,
+#                   cobrada em créditos de API, na maioria das vezes para concluir que a
+#                   mudança não afeta dado pessoal. Auditar continua valendo; auditar
+#                   **toda vez** não. Duas formas de disparar, ambas um ato humano
+#                   deliberado:
+#
+#                     - **rótulo `lgpd` no PR** — o caminho normal. Aplique quando a
+#                       mudança mexer de fato em dado pessoal; o agente comenta ali mesmo.
+#                       Reaplicar o rótulo roda de novo.
+#                     - **Actions → Run workflow**, informando o número do PR.
+#
+#                   O filtro por caminhos saiu junto: ele existia para poupar execução
+#                   automática. Com o disparo manual, ele só criaria o pior resultado
+#                   possível — pedir a auditoria e não receber nada, sem erro.
 #
 #                   O executor é a **Codex CLI** (`codex exec`, chave `OPENAI_API_KEY`),
 #                   **sem o sandbox dela** — ele não sobe em runner hospedado; o porquê
@@ -23,31 +39,18 @@ name: LGPD — auditoria
 # `--estrito` (em homolog o modo é observação, para não travar a esteira).
 
 on:
+  # Só o rótulo dispara a auditoria do código — não a abertura nem cada push no PR.
   pull_request:
+    types: [labeled]
     branches: [main]
-    paths:
-      # Onde o dado pessoal é definido, movido ou exposto.
-      - "backend/app/domain/entities.py"
-      - "backend/app/domain/ports.py"
-      - "backend/app/interfaces/api/**"
-      - "backend/app/application/ficha_use_cases.py"
-      - "backend/app/application/matricula_use_cases.py"
-      - "backend/app/application/importacao_use_cases.py"
-      - "backend/app/application/exportacao_use_cases.py"
-      - "backend/app/application/inbound_use_cases.py"
-      - "backend/app/application/conhecimento_use_cases.py"
-      - "backend/app/application/auditoria_use_cases.py"
-      - "backend/app/infrastructure/db/**"
-      - "backend/alembic/versions/**"
-      # Onde o tratamento é declarado ao titular.
-      - "site/app/privacidade/**"
-      - "site/app/termos/**"
-      # O próprio auditor.
-      - ".claude/agents/lgpd-auditor.md"
-      - ".github/workflows/lgpd.yml"
   push:
     branches: [main] # push na main = deploy do Render
   workflow_dispatch:
+    inputs:
+      pr:
+        description: "Número do PR a auditar (vazio = só mede a postura do ambiente)"
+        required: false
+        type: string
   schedule:
     # Segunda, 09:00 BRT. A configuração de um ambiente muda por fora do git (alguém
     # edita uma env var no painel do Render), então checar só no deploy deixa janela.
@@ -64,7 +67,11 @@ permissions:
 jobs:
   codigo:
     name: Auditoria do código (agente)
-    if: github.event_name == 'pull_request'
+    # Rótulo `lgpd` aplicado ao PR, ou disparo manual com o número do PR. Sem uma das
+    # duas coisas este job não existe — é o que tira a LLM do caminho de todo PR.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.label.name == 'lgpd') ||
+      (github.event_name == 'workflow_dispatch' && inputs.pr != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +101,29 @@ jobs:
             echo "presente=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Os dois disparos entregam contextos diferentes: o rótulo traz o PR no evento, o
+      # manual traz só o número digitado. Resolver os dois aqui, uma vez, evita espalhar
+      # `github.event.pull_request.* || inputs.*` por cada passo abaixo.
+      - name: Descobre o PR a auditar
+        id: alvo
+        if: steps.chave.outputs.presente == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ inputs.pr || github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          dados=$(gh pr view "$PR" --json number,state,baseRefOid,headRefOid)
+          estado=$(echo "$dados" | jq -r .state)
+          if [ "$estado" != "OPEN" ]; then
+            echo "::error::PR #$PR está $estado — nada a auditar."
+            exit 1
+          fi
+          {
+            echo "pr=$PR"
+            echo "base=$(echo "$dados" | jq -r .baseRefOid)"
+            echo "head=$(echo "$dados" | jq -r .headRefOid)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Instala a Codex CLI
         if: steps.chave.outputs.presente == 'true'
         run: npm install -g @openai/codex
@@ -110,10 +140,16 @@ jobs:
       - name: Monta o prompt do auditor
         if: steps.chave.outputs.presente == 'true'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ steps.alvo.outputs.base }}
+          HEAD_SHA: ${{ steps.alvo.outputs.head }}
+          PR: ${{ steps.alvo.outputs.pr }}
         run: |
           set -o pipefail
+
+          # No disparo manual o checkout é da `main`, e o commit do PR pode não estar
+          # aqui. `pull/N/head` é a referência que o GitHub sempre publica.
+          git fetch --no-tags origin "pull/${PR}/head" "${BASE_SHA}" 2>/dev/null \
+            || git fetch --no-tags origin "pull/${PR}/head"
 
           # O diff vai para arquivo em vez de ser reconstruído pelo agente: assim o que
           # ele audita é exatamente o que este passo mediu, e não depende de ele acertar
@@ -190,7 +226,7 @@ jobs:
         if: steps.chave.outputs.presente == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ steps.alvo.outputs.pr }}
         run: |
           {
             echo "## 🔍 Auditoria LGPD do diff"
@@ -205,7 +241,11 @@ jobs:
           gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md
   ambiente:
     name: Postura do ambiente (homolog)
-    if: github.event_name != 'pull_request'
+    # Deploy, agenda ou disparo manual sem PR. Quem dispara informando um PR quer a
+    # auditoria daquele diff, não uma medição do ambiente.
+    if: >-
+      github.event_name != 'pull_request' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.pr != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
