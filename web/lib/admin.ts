@@ -1157,10 +1157,13 @@ export async function listarAlunos(
   apenasAtivos?: boolean,
   pagina?: number,
   porPagina?: number,
+  /** Busca por nome ou matrícula — alimenta a busca instantânea. */
+  q?: string,
 ): Promise<Pagina<Aluno>> {
   const params = new URLSearchParams();
   if (salaId) params.set("sala_id", salaId);
   if (apenasAtivos !== undefined) params.set("apenas_ativos", String(apenasAtivos));
+  if (q) params.set("q", q);
   if (pagina) params.set("pagina", String(pagina));
   if (porPagina) params.set("por_pagina", String(porPagina));
   const qs = params.toString() ? `?${params.toString()}` : "";
@@ -2404,7 +2407,12 @@ export async function atualizarUsuario(
 // Documentos que os responsáveis enviam pelo WhatsApp (§6k)
 // --------------------------------------------------------------------------- //
 export type CategoriaDocumento = "matricula" | "atestado" | "comprovante" | "outro";
-export type StatusDocumento = "recebido" | "processado" | "descartado";
+// "quarentena": veio de número sem cadastro. Fica fora da fila, mas o arquivo é guardado.
+export type StatusDocumento =
+  | "recebido"
+  | "processado"
+  | "descartado"
+  | "quarentena";
 
 export interface DocumentoRecebido {
   id: string;
@@ -2639,4 +2647,92 @@ export function problemaNoCorpoDoTemplate(corpo: string): string | null {
   if (numeros.join(",") !== esperado.join(","))
     return `As variáveis precisam ser numeradas em sequência a partir de {{1}}.`;
   return null;
+}
+// --------------------------------------------------------------------------- //
+// §4.3 leitura por IA · §4.5 anti-spam (documentos recebidos)
+// --------------------------------------------------------------------------- //
+/** O que a IA sugeriu. **Sugestão** — nada foi gravado até a secretaria confirmar. */
+export interface DocumentoLido {
+  categoria: CategoriaDocumento | "";
+  aluno_nome: string;
+  resumo: string;
+  campos_ficha: Record<string, string>;
+  erro: string;
+}
+
+export async function lerDocumentoPorIA(documentoId: string): Promise<DocumentoLido> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/${documentoId}/ler?tenant_id=${tenantEmFoco()}`,
+    { method: "POST", headers: authHeaders() },
+  );
+  return jsonOuErro(resp, "ler o documento por IA");
+}
+
+/**
+ * Blob URL para **exibir** o arquivo (preview).
+ *
+ * O endpoint é autenticado, então não dá para pendurar a URL num `<img src>` — o
+ * navegador não manda o cabeçalho `Authorization`. Quem chamar precisa revogar o blob ao
+ * fechar. `inline=true` só muda o `Content-Disposition`: autenticação, escopo por tenant,
+ * `no-store` e auditoria continuam valendo (o registro distingue visualizar de baixar).
+ */
+export async function previewDocumento(documentoId: string): Promise<string | null> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/${documentoId}/arquivo?tenant_id=${tenantEmFoco()}&inline=true`,
+    { headers: authHeaders() },
+  );
+  if (!resp.ok) return null;
+  return URL.createObjectURL(await resp.blob());
+}
+
+export interface SugestaoBloqueio {
+  telefone: string;
+  descartados: number;
+  contato_nome: string;
+  ultimo_em: string | null;
+}
+
+export interface NumeroBloqueado {
+  telefone: string;
+  motivo: string;
+  bloqueado_por: string;
+  bloqueado_em: string;
+}
+
+export async function listarSugestoesBloqueio(): Promise<SugestaoBloqueio[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/tenant/${tenantEmFoco()}/sugestoes-bloqueio`,
+    { headers: authHeaders() },
+  );
+  return jsonOuErro(resp, "carregar sugestões de bloqueio");
+}
+
+export async function listarNumerosBloqueados(): Promise<NumeroBloqueado[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/tenant/${tenantEmFoco()}/bloqueados`,
+    { headers: authHeaders() },
+  );
+  return jsonOuErro(resp, "listar números bloqueados");
+}
+
+export async function bloquearNumero(
+  telefone: string,
+  motivo = "",
+): Promise<NumeroBloqueado> {
+  const resp = await apiFetch(`${API_URL}/api/admin/documentos/bloqueados`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), telefone, motivo }),
+  });
+  return jsonOuErro(resp, "bloquear número");
+}
+
+export async function desbloquearNumero(telefone: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/documentos/bloqueados/${encodeURIComponent(telefone)}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (!resp.ok && resp.status !== 204) {
+    throw await erroDe(resp, `Erro ${resp.status} ao desbloquear`);
+  }
 }

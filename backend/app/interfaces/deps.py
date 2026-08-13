@@ -24,6 +24,7 @@ from app.application.atendimento_humano_use_cases import (
     ResponderAtendimento,
 )
 from app.application.documentos_use_cases import (
+    LerDocumentoPorIA,
     BaixarDocumentoRecebido,
     ExpurgarDocumentosVencidos,
     ReceberDocumentoDoResponsavel,
@@ -58,6 +59,7 @@ from app.infrastructure.db.repositories_admin import (
     SqlUsuarioRepository,
 )
 from app.infrastructure.db.repositories_comunicacao import (
+    SqlNumeroBloqueadoRepository,
     SqlAtendimentoHumanoRepository,
     SqlDocumentoRecebidoRepository,
     SqlAvisoTemporizadoRepository,
@@ -80,6 +82,7 @@ from app.infrastructure.db.repositories_onda3 import (
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import (
+    criar_leitor_documento,
     criar_canal,
     criar_catalogo_templates,
     criar_email_sender,
@@ -132,6 +135,9 @@ def get_recepcao_documentos(
         documentos=SqlDocumentoRecebidoRepository(session),
         storage=PostgresArquivoStorage(session),
         contatos=SqlContatoRepository(session),
+        # Anti-spam (§4.5): número bloqueado não manda arquivo; origem desconhecida vai
+        # para quarentena.
+        bloqueios=SqlNumeroBloqueadoRepository(session),
         retencao_dias=settings.documento_retencao_dias,
     )
 
@@ -163,6 +169,24 @@ def get_receber_impressao(
             solicitacoes=solicitacoes, cotas=SqlCotaImpressaoRepository(session)
         ),
         conversas=_conversas(session, settings),
+    )
+
+
+def get_bloqueio_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlNumeroBloqueadoRepository:
+    return SqlNumeroBloqueadoRepository(session)
+
+
+def get_ler_documento_ia(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> LerDocumentoPorIA:
+    """Leitura de documento por IA (§4.3) — sob demanda, nunca em todo upload."""
+    return LerDocumentoPorIA(
+        documentos=SqlDocumentoRecebidoRepository(session),
+        storage=PostgresArquivoStorage(session),
+        leitor=criar_leitor_documento(settings),
     )
 
 
