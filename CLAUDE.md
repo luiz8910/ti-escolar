@@ -805,11 +805,23 @@ resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro
   consulta por página); o campo persistido virou fallback histórico.
 - **Painel:** `web/app/admin/atendimentos/` (fila Na fila / Meus / Resolvidos, **refresh
   automático** — 20 s na lista, 10 s na conversa aberta, pausado com a aba escondida e em
-  falha silenciosa, sem toast —, motivo já
+  falha silenciosa, sem toast —, **rolagem que acompanha a conversa** e **aviso sonoro**
+  quando o responsável escreve, motivo já
   resumido pelo assistente, tempo de espera, selo de fora do expediente, contador da janela
   de 24h e a thread completa com caixa de resposta) e **badge de contagem no `Sidebar`**
   (polling de 20s em `/pendentes`) — é a notificação in-app. Expediente editável no
   cadastro de escola (`components/admin/CamposExpediente.tsx`).
+- **A conversa aberta se comporta como conversa** (12/ago/2026). Duas correções na
+  mesma tela:
+  - **Rolagem só quando a leitura está no fim.** A cada 10 s o polling traz mensagem
+    nova; rolar à força arrancaria do lugar quem subiu para reler o que o responsável
+    disse. Abrir uma conversa cai no fim direto, sem animação.
+  - **Aviso sonoro** (`web/lib/som.ts`), sintetizado em Web Audio — dois toques curtos,
+    ganho baixo, cauda de 0,22 s. Toca **só** quando cresce o número de mensagens *do
+    responsável*, nunca ao abrir a conversa (ali toda mensagem é "nova" para o
+    componente) nem quando a própria atendente envia. **Desligável**, com a preferência
+    por navegador: som que não se desliga no produto é desligado no sistema operacional,
+    e aí nenhum aviso chega — o oposto do pedido.
 - **Cobertura:** `tests/test_atendimento_humano.py` (28 testes: expediente e a armadilha do
   "amanhã" no sábado, as duas travas, oferta vencida, idempotência, trava do atendente,
   janela de 24h com e sem template, silêncio do assistente, isolamento entre escolas).

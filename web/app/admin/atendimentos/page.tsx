@@ -52,6 +52,8 @@ import {
   salvarTamanhoPreferido,
   tamanhoPreferido,
 } from "@/components/ui/Paginacao";
+import { BellIcon } from "@/components/ui/icons";
+import { alertaSonoroLigado, definirAlertaSonoro, tocarAlertaSuave } from "@/lib/som";
 
 const STATUS_LABEL: Record<StatusAtendimento, string> = {
   oferecido: "Oferecido",
@@ -362,10 +364,53 @@ function Conversa({
 }) {
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [comSom, setComSom] = useState(true);
   const a = detalhe.atendimento;
   // Outra pessoa já assumiu: a caixa some, porque duas respostas pelo mesmo número
   // chegam ao responsável como duas vozes da escola se contradizendo.
   const deOutraPessoa = Boolean(a.atendente_id && a.atendente_id !== usuarioId);
+
+  const listaRef = useRef<HTMLDivElement>(null);
+  // Fica falso quando a pessoa sobe no histórico. É o que separa "acompanhar a conversa"
+  // de "arrancar a leitura do lugar": a cada 10s o polling traz mensagens novas, e rolar
+  // à força faria a atendente perder a linha que estava lendo.
+  const grudadoNoFim = useRef(true);
+  // Conversa da última renderização e quantas mensagens do responsável ela tinha. As duas
+  // coisas juntas evitam o toque falso: ao abrir uma conversa antiga, todas as mensagens
+  // são "novas" para o componente, e sem isso a caixa de som dispararia na abertura.
+  const conversaAnterior = useRef<string>("");
+  const recebidasAnterior = useRef(0);
+
+  useEffect(() => setComSom(alertaSonoroLigado()), []);
+
+  const recebidas = detalhe.mensagens.filter((m) => m.autor === "usuario").length;
+
+  useEffect(() => {
+    const el = listaRef.current;
+    const trocou = conversaAnterior.current !== a.id;
+
+    if (trocou) {
+      conversaAnterior.current = a.id;
+      recebidasAnterior.current = recebidas;
+      grudadoNoFim.current = true;
+      if (el) el.scrollTop = el.scrollHeight; // abrir uma conversa cai no fim, sem animação
+      return;
+    }
+
+    if (recebidas > recebidasAnterior.current) tocarAlertaSuave();
+    recebidasAnterior.current = recebidas;
+
+    if (el && grudadoNoFim.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+  }, [a.id, recebidas, detalhe.mensagens.length]);
+
+  function aoRolar() {
+    const el = listaRef.current;
+    if (!el) return;
+    // 40px de tolerância: quem está "no fim" raramente está no pixel exato do fim.
+    grudadoNoFim.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  }
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -385,6 +430,22 @@ function Conversa({
         title={`Conversa com ${a.contato_nome || a.contato}`}
         action={
           <div className="flex gap-2">
+            {/* Som que não se desliga aqui é som desligado no computador — e aí nenhum
+                aviso chega. A preferência é por navegador, de quem senta na mesa. */}
+            <Button
+              variant="ghost"
+              title={comSom ? "Desligar o aviso sonoro" : "Ligar o aviso sonoro"}
+              aria-pressed={comSom}
+              onClick={() => {
+                const novo = !comSom;
+                definirAlertaSonoro(novo);
+                setComSom(novo);
+                if (novo) tocarAlertaSuave(); // confirma na hora como o som é
+              }}
+            >
+              <BellIcon size={16} className={comSom ? "" : "opacity-40"} />
+              {comSom ? "Som ligado" : "Som desligado"}
+            </Button>
             {a.status === "resolvido" ? (
               <Button variant="secondary" onClick={onReabrir}>
                 Reabrir
@@ -417,7 +478,11 @@ function Conversa({
         </span>
       </div>
 
-      <div className="mb-4 flex max-h-[420px] flex-col gap-2 overflow-y-auto">
+      <div
+        ref={listaRef}
+        onScroll={aoRolar}
+        className="mb-4 flex max-h-[420px] flex-col gap-2 overflow-y-auto"
+      >
         {detalhe.mensagens.map((m, i) => (
           <div
             key={i}
