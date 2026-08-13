@@ -15,6 +15,7 @@
 
 import { DadosProfessor } from "@/lib/admin";
 import { Input, Field } from "@/components/ui/form";
+import { CampoCPF, CampoData, CampoTelefone } from "@/components/ui/campos";
 
 export function CamposProfessor({
   dados,
@@ -30,20 +31,13 @@ export function CamposProfessor({
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Field label="CPF" htmlFor="prof-cpf">
-          <Input
-            id="prof-cpf"
-            value={dados.cpf}
-            onChange={(e) => set("cpf", e.target.value)}
-            placeholder="000.000.000-00"
-            inputMode="numeric"
-          />
+          <CampoCPF id="prof-cpf" value={dados.cpf} onChange={(v) => set("cpf", v)} />
         </Field>
         <Field label="Data de nascimento" htmlFor="prof-nasc">
-          <Input
+          <CampoData
             id="prof-nasc"
-            type="date"
             value={dados.data_nascimento}
-            onChange={(e) => set("data_nascimento", e.target.value)}
+            onChange={(v) => set("data_nascimento", v)}
           />
         </Field>
         <Field label="Matrícula funcional" htmlFor="prof-mat">
@@ -75,11 +69,10 @@ export function CamposProfessor({
       </Field>
 
       <Field label="Telefone 2 (emergência)" htmlFor="prof-tel2">
-        <Input
+        <CampoTelefone
           id="prof-tel2"
           value={dados.telefone_2}
-          onChange={(e) => set("telefone_2", e.target.value)}
-          placeholder="(15) 98888-7777"
+          onChange={(v) => set("telefone_2", v)}
         />
       </Field>
       <p className="-mt-1 text-[11.5px] text-n-400">

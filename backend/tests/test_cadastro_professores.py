@@ -369,3 +369,23 @@ def test_normalizar_email_recusa_o_que_nao_e_endereco():
     assert normalizar_email("") == ""
     with pytest.raises(ValueError):
         normalizar_email("ana arroba escola")
+
+
+async def test_telefone_digitado_com_mascara_vira_e164():
+    """A máscara da tela é conforto de digitação; o dado guardado é a chave da conversa.
+
+    Sem normalizar aqui, "(15) 99999-0001" ficaria no banco como foi digitado: o inbound
+    procura o remetente em E.164 e não reconheceria o professor, e a Graph API recusaria
+    o envio.
+    """
+    professores, _ = _repos()
+    prof = await _cadastrar(professores, nome="Carla", telefone="(15) 99999-0001")
+    assert prof.telefone == "+5515999990001"
+
+
+async def test_mesmo_numero_em_formatos_diferentes_e_recusado():
+    professores, _ = _repos()
+    await _cadastrar(professores, nome="Carla", telefone="+5515999990001")
+
+    with pytest.raises(ValueError, match="telefone"):
+        await _cadastrar(professores, nome="Outra", telefone="(15) 99999-0001")

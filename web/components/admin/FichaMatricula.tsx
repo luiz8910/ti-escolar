@@ -34,9 +34,11 @@ import {
 } from "@/lib/admin";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
+import { CampoCPF, CampoData, CampoRA } from "@/components/ui/campos";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { cn } from "@/components/ui/cn";
+import { formatarTelefone } from "@/lib/mascaras";
 
 const ABAS = [
   { chave: "aluno", rotulo: "Aluno" },
@@ -184,27 +186,24 @@ function AbaAluno({
       <FotoDoAluno aluno={aluno} onMudou={onSalvo} />
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Field label="CPF *" htmlFor="fm-cpf">
-          <Input
+          <CampoCPF
             id="fm-cpf"
             value={texto(campos, "cpf")}
-            onChange={(e) => set("cpf", e.target.value)}
-            placeholder="000.000.000-00"
-            inputMode="numeric"
+            onChange={(v) => set("cpf", v)}
           />
         </Field>
         <Field label="RA / RM *" htmlFor="fm-ra">
-          <Input
+          <CampoRA
             id="fm-ra"
             value={texto(campos, "ra_rm")}
-            onChange={(e) => set("ra_rm", e.target.value)}
+            onChange={(v) => set("ra_rm", v)}
           />
         </Field>
         <Field label="Data de nascimento *" htmlFor="fm-nasc">
-          <Input
+          <CampoData
             id="fm-nasc"
-            type="date"
             value={texto(campos, "data_nascimento")}
-            onChange={(e) => set("data_nascimento", e.target.value)}
+            onChange={(v) => set("data_nascimento", v)}
           />
         </Field>
         <Field label="Sexo *" htmlFor="fm-sexo">
@@ -410,7 +409,7 @@ function AbaResponsaveis({ aluno }: { aluno: Aluno }) {
                 ? "termo de guarda"
                 : r.tipo_filiacao_rotulo.toLowerCase() || "filiação não informada"}
             </span>
-            <span className="ml-auto font-mono text-xs text-n-500">{r.telefone}</span>
+            <span className="ml-auto font-mono text-xs text-n-500">{formatarTelefone(r.telefone)}</span>
             {r.cpf_formatado && (
               <span className="font-mono text-xs text-n-400">{r.cpf_formatado}</span>
             )}
