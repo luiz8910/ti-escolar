@@ -38,6 +38,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/form";
+import { CampoTelefone } from "@/components/ui/campos";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/Table";
@@ -67,11 +68,28 @@ export default function EquipeDaEscola() {
   const [itens, setItens] = useState<Usuario[]>([]);
   const [criando, setCriando] = useState(false);
   const [editando, setEditando] = useState<Usuario | null>(null);
+  // Conta a destacar, vinda de `?u=` — é como a auditoria (§13) chega aqui a partir do
+  // nome de quem fez a ação. Lida do `location` e não de `useSearchParams` para não
+  // arrastar a tela inteira para uma fronteira de Suspense por causa de um realce.
+  const [destaque, setDestaque] = useState("");
   const toast = useToast();
 
   const recarregar = useCallback(async () => {
     setItens(await listarUsuarios());
   }, []);
+
+  useEffect(() => {
+    setDestaque(new URLSearchParams(window.location.search).get("u") ?? "");
+  }, []);
+
+  // Rola até a conta destacada depois que a lista chega. Numa escola com trinta contas,
+  // realçar uma linha fora da dobra não ajudaria ninguém.
+  useEffect(() => {
+    if (!destaque || itens.length === 0) return;
+    document
+      .getElementById(`usuario-${destaque}`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [destaque, itens]);
 
   useEffect(() => {
     const s = getSessao();
@@ -159,7 +177,13 @@ export default function EquipeDaEscola() {
                 // Editar a própria conta (nome, senha, contato) é sempre permitido.
                 const podeEditar = proprio || mandaEm(usuario, u);
                 return (
-                  <Tr key={u.id}>
+                  <Tr
+                    key={u.id}
+                    id={`usuario-${u.id}`}
+                    className={
+                      u.id === destaque ? "bg-brand-50 ring-2 ring-inset ring-brand-500" : ""
+                    }
+                  >
                     <Td className="font-semibold">
                       {u.nome}
                       {proprio && (
@@ -264,11 +288,7 @@ function CamposContato({
         label="WhatsApp"
         hint="Usado para avisar de um atendimento esperando na fila."
       >
-        <Input
-          value={telefone}
-          onChange={(e) => setTelefone(e.target.value)}
-          placeholder="(15) 99999-0000"
-        />
+        <CampoTelefone value={telefone} onChange={setTelefone} />
       </Field>
       <Field label="Endereço completo">
         <Input

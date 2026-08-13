@@ -227,6 +227,12 @@ export interface RegistroAuditoria {
   ator: "usuario" | "llm" | "sistema";
   ator_id: string;
   ator_nome: string;
+  /**
+   * Id do usuário quando ele **ainda tem conta** — é o que autoriza o link para o
+   * perfil. Vazio para LLM/sistema e para conta que não existe mais: um link para o
+   * nada é pior que texto puro.
+   */
+  ator_perfil_id: string;
   acao: string;
   descricao: string;
   metadados: Record<string, unknown>;
@@ -789,6 +795,34 @@ export interface Grade {
   blocos?: BlocoGrade[];
 }
 
+/**
+ * Disciplinas do ensino fundamental, para escolher no lugar de digitar.
+ *
+ * São os componentes curriculares da BNCC (áreas de Linguagens, Matemática, Ciências da
+ * Natureza e Ciências Humanas) mais os que quase toda escola tem na prática — Ensino
+ * Religioso, Projeto de Vida, Informática.
+ *
+ * **É sugestão, não trava.** O campo continua aceitando texto livre: escola tem
+ * "Robótica", "Xadrez", "Reforço", e uma lista fechada exigiria um deploy nosso para cada
+ * uma. Por isso é um combo (`datalist`) e não um `select` — quem reconhece a disciplina
+ * escolhe em um clique, quem não a encontra escreve.
+ */
+export const DISCIPLINAS_FUNDAMENTAL = [
+  "Língua Portuguesa",
+  "Matemática",
+  "Ciências",
+  "História",
+  "Geografia",
+  "Arte",
+  "Educação Física",
+  "Língua Inglesa",
+  "Ensino Religioso",
+  "Informática",
+  "Projeto de Vida",
+  "Leitura",
+  "Reforço",
+];
+
 export const DIAS_SEMANA = [
   { valor: 1, curto: "Seg" },
   { valor: 2, curto: "Ter" },
@@ -1250,6 +1284,8 @@ export interface Professor {
   educacao_fisica: boolean;
   /** `false` = eventual: entra na lista de quem cobre falta (§I1). */
   titular: boolean;
+  /** Vínculo vivo com a escola. Desligado, o número deixa de valer no WhatsApp. */
+  ativo: boolean;
   tem_acesso: boolean;
 }
 
@@ -1263,6 +1299,7 @@ export interface DadosProfessor {
   email: string;
   educacao_fisica: boolean;
   titular: boolean;
+  ativo: boolean;
 }
 
 export const DADOS_PROFESSOR_VAZIO: DadosProfessor = {
@@ -1274,6 +1311,7 @@ export const DADOS_PROFESSOR_VAZIO: DadosProfessor = {
   email: "",
   educacao_fisica: false,
   titular: true,
+  ativo: true,
 };
 
 export async function listarProfessores(): Promise<Professor[]> {
@@ -1659,8 +1697,29 @@ export interface Impressao {
   frente_verso: boolean;
   observacao: string;
   status: StatusImpressao;
+  /** "portal" (formulário) ou "whatsapp" (arquivo enviado ao número da escola). */
+  origem: OrigemImpressao;
+  /** Verdadeiro quando os bytes estão com a escola e há o que baixar. */
+  tem_arquivo: boolean;
+  mime: string;
+  tamanho: number;
   criado_em: string;
   atualizado_em: string | null;
+}
+
+export type OrigemImpressao = "portal" | "whatsapp";
+
+/**
+ * Baixa o arquivo que o professor mandou pelo WhatsApp. Sem URL pública: os bytes só
+ * saem por rota autenticada, então a tela busca com o token e abre o blob.
+ */
+export async function baixarArquivoImpressao(id: string): Promise<Blob> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/impressao/${id}/arquivo?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  if (!resp.ok) throw await erroDe(resp, "baixar arquivo da impressão");
+  return resp.blob();
 }
 
 export async function listarFilaImpressao(status?: StatusImpressao): Promise<Impressao[]> {

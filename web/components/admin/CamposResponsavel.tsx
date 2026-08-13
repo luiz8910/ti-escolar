@@ -16,6 +16,7 @@
 
 import { DadosResponsavel, TipoFiliacao, TIPOS_FILIACAO } from "@/lib/admin";
 import { Input, Select, Field } from "@/components/ui/form";
+import { CampoCPF, CampoData, CampoTelefone } from "@/components/ui/campos";
 
 export function CamposResponsavel({
   dados,
@@ -38,12 +39,10 @@ export function CamposResponsavel({
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Field label="CPF" htmlFor={`${idPrefixo}-cpf`}>
-          <Input
+          <CampoCPF
             id={`${idPrefixo}-cpf`}
             value={dados.cpf}
-            onChange={(e) => set("cpf", e.target.value)}
-            placeholder="000.000.000-00"
-            inputMode="numeric"
+            onChange={(v) => set("cpf", v)}
           />
         </Field>
         <Field label="Tipo de filiação" htmlFor={`${idPrefixo}-filiacao`}>
@@ -74,11 +73,10 @@ export function CamposResponsavel({
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Field label="Data de nascimento" htmlFor={`${idPrefixo}-nasc`}>
-          <Input
+          <CampoData
             id={`${idPrefixo}-nasc`}
-            type="date"
             value={dados.data_nascimento}
-            onChange={(e) => set("data_nascimento", e.target.value)}
+            onChange={(v) => set("data_nascimento", v)}
           />
         </Field>
         <Field label="E-mail" htmlFor={`${idPrefixo}-email`}>
@@ -98,21 +96,20 @@ export function CamposResponsavel({
           />
         </Field>
         <Field label="Telefone do trabalho" htmlFor={`${idPrefixo}-teltrab`}>
-          <Input
+          <CampoTelefone
             id={`${idPrefixo}-teltrab`}
             value={dados.telefone_trabalho}
-            onChange={(e) => set("telefone_trabalho", e.target.value)}
+            onChange={(v) => set("telefone_trabalho", v)}
             placeholder="(15) 3333-4444"
           />
         </Field>
       </div>
 
       <Field label="Telefone 2 (emergência)" htmlFor={`${idPrefixo}-tel2`}>
-        <Input
+        <CampoTelefone
           id={`${idPrefixo}-tel2`}
           value={dados.telefone_2}
-          onChange={(e) => set("telefone_2", e.target.value)}
-          placeholder="(15) 98888-7777"
+          onChange={(v) => set("telefone_2", v)}
         />
       </Field>
       <p className="-mt-1 text-[11.5px] text-n-400">

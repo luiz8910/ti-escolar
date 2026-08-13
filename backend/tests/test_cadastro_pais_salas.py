@@ -477,3 +477,21 @@ async def test_grade_e_guardada_normalizada():
         },
     )
     assert [b["dia"] for b in turma.grade_horario["blocos"]] == [1, 2]
+
+
+async def test_telefone_do_responsavel_e_normalizado_antes_da_duplicidade():
+    """"(15) 99999-0001" e "+5515999990001" são a mesma família.
+
+    Comparar o que foi digitado deixaria a mesma pessoa entrar duas vezes — e a segunda
+    invisível para o inbound, que procura o remetente em E.164.
+    """
+    contatos = FakeContatoRepo()
+    pai = await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Mãe da Ana", telefone="(15) 99999-0001"
+    )
+    assert pai.telefone == "+5515999990001"
+
+    with pytest.raises(ValueError, match="telefone"):
+        await CadastrarPai(contatos=contatos).executar(
+            tenant_id=TENANT, nome="Repetida", telefone="+5515999990001"
+        )

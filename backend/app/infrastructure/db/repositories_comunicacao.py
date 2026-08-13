@@ -20,6 +20,7 @@ from app.domain.entities import (
     CategoriaSolicitacao,
     CotaImpressao,
     DirecaoMensagem,
+    OrigemImpressao,
     DocumentoRecebido,
     LeituraRecado,
     MensagemMediada,
@@ -159,6 +160,11 @@ def _to_impressao(row: SolicitacaoImpressaoORM) -> SolicitacaoImpressao:
         frente_verso=row.frente_verso,
         observacao=row.observacao,
         status=StatusImpressao(row.status),
+        origem=OrigemImpressao(row.origem),
+        chave_storage=row.chave_storage,
+        mime=row.mime,
+        tamanho=row.tamanho,
+        media_id=row.media_id,
         criado_em=row.criado_em,
         atualizado_em=row.atualizado_em,
     )
@@ -184,6 +190,11 @@ class SqlSolicitacaoImpressaoRepository:
                 frente_verso=solicitacao.frente_verso,
                 observacao=solicitacao.observacao,
                 status=solicitacao.status.value,
+                origem=solicitacao.origem.value,
+                chave_storage=solicitacao.chave_storage,
+                mime=solicitacao.mime,
+                tamanho=solicitacao.tamanho,
+                media_id=solicitacao.media_id,
                 criado_em=solicitacao.criado_em,
                 atualizado_em=solicitacao.atualizado_em,
             )
@@ -232,6 +243,36 @@ class SqlSolicitacaoImpressaoRepository:
         row.atualizado_em = solicitacao.atualizado_em
         await self._s.flush()
         return _to_impressao(row)
+
+    async def por_media_id(
+        self, *, tenant_id: uuid.UUID, media_id: str
+    ) -> SolicitacaoImpressao | None:
+        """Reentrega do webhook: o mesmo arquivo não pode virar dois pedidos na fila."""
+        if not media_id:
+            return None
+        stmt = select(SolicitacaoImpressaoORM).where(
+            SolicitacaoImpressaoORM.tenant_id == tenant_id,
+            SolicitacaoImpressaoORM.media_id == media_id,
+        )
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_impressao(row) if row else None
+
+    async def consumo_do_professor(
+        self, *, tenant_id: uuid.UUID, professor_id: uuid.UUID, competencia: str
+    ) -> int:
+        """Cópias já consumidas por um professor na competência (``YYYY-MM``).
+
+        Soma no banco, e não em memória: carregar a fila inteira para descobrir o saldo de
+        uma pessoa é um custo que cresce com o ano letivo. Canceladas ficam de fora — é a
+        mesma regra do relatório mensal (§B2), e as duas contas precisam bater.
+        """
+        stmt = select(func.coalesce(func.sum(SolicitacaoImpressaoORM.copias), 0)).where(
+            SolicitacaoImpressaoORM.tenant_id == tenant_id,
+            SolicitacaoImpressaoORM.professor_id == professor_id,
+            SolicitacaoImpressaoORM.status != StatusImpressao.CANCELADA.value,
+            func.to_char(SolicitacaoImpressaoORM.criado_em, "YYYY-MM") == competencia,
+        )
+        return int((await self._s.execute(stmt)).scalar_one() or 0)
 
     async def remover(self, *, tenant_id: uuid.UUID, solicitacao_id: uuid.UUID) -> bool:
         row = await self._orm(tenant_id=tenant_id, solicitacao_id=solicitacao_id)

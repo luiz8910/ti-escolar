@@ -111,6 +111,11 @@ class CadastrarPai:
         telefone: str,
         dados: DadosResponsavel | None = None,
     ) -> Contato:
+        # Normaliza **antes** da checagem de duplicidade: "(15) 99999-0000" e
+        # "+5515999990000" são a mesma pessoa, e comparar o que foi digitado deixaria a
+        # mesma família entrar duas vezes — e a segunda invisível para o inbound, que
+        # procura o remetente em E.164.
+        telefone = _e164_ou_erro(telefone, campo="Telefone")
         if await self._contatos.por_telefone(tenant_id=tenant_id, telefone=telefone):
             raise ValueError("Já existe um responsável com este telefone neste tenant.")
 
@@ -159,6 +164,7 @@ class AtualizarPai:
         if atual is None:
             raise ValueError("Responsável não encontrado para o tenant.")
 
+        telefone = _e164_ou_erro(telefone, campo="Telefone")
         # Telefone só pode mudar para um valor ainda não usado por outro responsável.
         if telefone != atual.telefone:
             existente = await self._contatos.por_telefone(tenant_id=tenant_id, telefone=telefone)
@@ -703,6 +709,9 @@ class DadosProfessor:
     email: str = ""
     educacao_fisica: bool = False
     titular: bool = True
+    # Vínculo vivo com a escola. Desligado, o professor perde o portal **e** deixa de ser
+    # reconhecido no WhatsApp (o arquivo dele não vai mais para a fila de impressão).
+    ativo: bool = True
 
 
 def _validar_dados_professor(dados: DadosProfessor) -> DadosProfessor:
@@ -721,13 +730,25 @@ def _validar_dados_professor(dados: DadosProfessor) -> DadosProfessor:
         email=normalizar_email(dados.email),
         educacao_fisica=dados.educacao_fisica,
         titular=dados.titular,
+        ativo=dados.ativo,
     )
 
 
 def _e164_ou_erro(bruto: str, *, campo: str) -> str:
+    """Telefone em E.164, ou erro com mensagem para a tela.
+
+    O telefone principal do responsável e do professor **é a chave da conversa**: o webhook
+    entrega o remetente, não o id do cadastro. Guardá-lo como foi digitado — "(15)
+    99999-0000" — faz o inbound não reconhecer a pessoa, o outbound ser recusado pela Graph
+    API e a checagem de duplicidade comparar formatos diferentes do mesmo número. Por isso
+    a normalização acontece aqui, e não na tela: máscara é conforto de digitação, não
+    contrato de dado.
+    """
     e164, aviso = normalizar_telefone(bruto)
     if aviso:
         raise ValueError(f"{campo}: {aviso}")
+    # Vazio continua aceito: professor sem número existe (não entra na chamada de
+    # eventual, §I1) e responsável sem telefone é o que a cobertura de contatos acusa.
     return e164
 
 
@@ -746,6 +767,7 @@ class CadastrarProfessor:
         senha: str = "",
         dados: DadosProfessor | None = None,
     ) -> Professor:
+        telefone = _e164_ou_erro(telefone, campo="Telefone")
         if await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone):
             raise ValueError("Já existe um professor com este telefone neste tenant.")
         validos = _validar_dados_professor(dados or DadosProfessor())
@@ -821,6 +843,7 @@ class AtualizarProfessor:
         atual = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
         if atual is None:
             raise ValueError("Professor não encontrado para o tenant.")
+        telefone = _e164_ou_erro(telefone, campo="Telefone")
         if telefone != atual.telefone:
             existente = await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone)
             if existente is not None and existente.id != professor_id:

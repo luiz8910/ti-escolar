@@ -400,6 +400,10 @@ class RegistroAuditoriaSaida(BaseModel):
     ator: str  # "usuario" | "llm" | "sistema"
     ator_id: str = ""
     ator_nome: str = ""
+    # Id do usuário quando ele **ainda tem conta** — é o que autoriza o painel a linkar
+    # para o perfil. Vazio para LLM/sistema e para conta que não existe mais.
+    ator_perfil_id: str = ""
+
     acao: str
     descricao: str = ""
     metadados: dict = {}
@@ -544,6 +548,8 @@ class ProfessorEntrada(BaseModel):
     educacao_fisica: bool = False
     # `titular=False` = eventual, a lista de quem cobre falta (§I1).
     titular: bool = True
+    # Vínculo vivo com a escola; desligado, o número deixa de ser reconhecido no WhatsApp.
+    ativo: bool = True
 
 
 class ProfessorAtualizar(BaseModel):
@@ -563,7 +569,8 @@ class ProfessorAtualizar(BaseModel):
     educacao_fisica: bool = False
     # `titular=False` = eventual, a lista de quem cobre falta (§I1).
     titular: bool = True
-
+    # Vínculo vivo com a escola; desligado, o número deixa de ser reconhecido no WhatsApp.
+    ativo: bool = True
 
 
 class ProfessorSaida(BaseModel):
@@ -580,6 +587,7 @@ class ProfessorSaida(BaseModel):
     email: str = ""
     educacao_fisica: bool = False
     titular: bool = True
+    ativo: bool = True
     tem_acesso: bool = False
 
 
@@ -809,6 +817,13 @@ class ImpressaoSaida(BaseModel):
     frente_verso: bool
     observacao: str = ""
     status: str
+    # "portal" | "whatsapp" — a fila mostra a origem porque o pedido vindo do WhatsApp
+    # teve o número de cópias **inferido da legenda**, não preenchido num formulário.
+    origem: str = "portal"
+    # Verdadeiro quando os bytes estão com a escola e há o que baixar.
+    tem_arquivo: bool = False
+    mime: str = ""
+    tamanho: int = 0
     criado_em: datetime
     atualizado_em: datetime | None = None
 

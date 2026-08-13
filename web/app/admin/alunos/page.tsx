@@ -35,10 +35,12 @@ import { FichaMatricula } from "@/components/admin/FichaMatricula";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Field } from "@/components/ui/form";
+import { CampoTelefone } from "@/components/ui/campos";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon } from "@/components/ui/icons";
+import { formatarTelefone } from "@/lib/mascaras";
 import {
   Paginacao,
   salvarTamanhoPreferido,
@@ -416,7 +418,7 @@ function ImportarAlunosModal({
                       {l.responsaveis.length === 0
                         ? "—"
                         : l.responsaveis
-                            .map((r) => `${r.nome}${r.telefone ? ` (${r.telefone})` : ""}`)
+                            .map((r) => `${r.nome}${r.telefone ? ` (${formatarTelefone(r.telefone)})` : ""}`)
                             .join(", ")}
                     </Td>
                     <Td>
@@ -884,7 +886,7 @@ function ResponsaveisModal({
                   </span>
                 )}
               </span>
-              <span className="font-mono text-xs text-n-500">{p.telefone}</span>
+              <span className="font-mono text-xs text-n-500">{formatarTelefone(p.telefone)}</span>
               <button
                 onClick={() => desvincular(p)}
                 className="text-xs font-semibold text-danger hover:underline"
@@ -903,7 +905,7 @@ function ResponsaveisModal({
             <option value="">Vincular responsável cadastrado…</option>
             {naoVinculados.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.nome} — {p.telefone}
+                {p.nome} — {formatarTelefone(p.telefone)}
               </option>
             ))}
           </Select>
@@ -1000,12 +1002,11 @@ function NovoResponsavelLegal({
           onChange={(e) => setNome(e.target.value)}
           placeholder="Nome completo"
         />
-        <Input
+        <CampoTelefone
           className="w-44"
           mono
           value={telefone}
-          onChange={(e) => setTelefone(e.target.value)}
-          placeholder="+5515999990000"
+          onChange={setTelefone}
         />
       </div>
       <CamposResponsavel dados={dados} onChange={setDados} idPrefixo="guarda" />

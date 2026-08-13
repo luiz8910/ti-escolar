@@ -139,7 +139,8 @@ ti-escolar/
   `Documento`, `Conhecimento` (FAQ/aviso/procedimento), `MessageTemplate`, `Broadcast`/Campanha,
   `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`,
   `Sala` (turma) + associação `sala_contatos`, `Professor` (vinculado à série por
-  `Sala.professor_id`), `FonteConhecimento` (documento da escola),
+  `Sala.professor_id`; `ativo` marca o vínculo vivo — desligado, o número deixa de ser
+  reconhecido no inbound), `FonteConhecimento` (documento da escola),
   `PromptTenant` (system prompt da escola), `ResumoEscola` (visão agregada do super admin),
   `SolicitacaoInterna` (canal professor→escola), `MensagemMediada` (canal pai↔professor),
   `CotaImpressao` (franquia mensal de impressão), `AvisoFalta` (falta de professor +
@@ -165,12 +166,16 @@ ti-escolar/
   `0033_usuario_cargo_hierarquia` →
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
-  `0037_conversa_sessao` → `0040_templates_catalogo`.
-  ⚠️ **O salto 0037 → 0040 é o buraco reservado para duas migrations em voo**
-  (`0038_impressao_whatsapp`, PR #56; e a de anti-spam de documentos). O número é rótulo:
-  quem define o grafo é o `down_revision`, que segue apontando para o head da `main`. Quem
-  mergear depois **re-aponta**. O CI passou a recusar mais de um head, então o esquecimento
-  falha o build em vez de quebrar o deploy.
+  `0037_conversa_sessao` → `0038_impressao_whatsapp` → `0040_templates_catalogo`.
+  ⚠️ **O `0039` não existe** — o buraco era para a migration de anti-spam de documentos
+  (`0038_anti_spam_documentos`), que foi escrita mas **nunca chegou à `main`**: o PR #55
+  foi mergeado numa branch de feature que já tinha ido para a `main` por squash, e o
+  trabalho ficou órfão em `feat/documentos-busca-preview-ocr`. O número é rótulo: quem
+  define o grafo é o
+  `down_revision`. `0038` e `0040` foram escritas em paralelo, ambas apontando para o
+  `0037`, e a segunda a mergear (`0040`) **re-apontou** para a primeira. O CI passou a
+  recusar mais de um head, então o esquecimento falha o build em vez de quebrar o deploy —
+  que ali significa o container não subir, porque o `alembic upgrade head` roda no `CMD`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -315,6 +320,11 @@ ti-escolar/
   - **Grade de horário em dois formatos** (decisão B do plano de 10/08), sobre a mesma
     coluna JSON: `turno` (entrada, saída e intervalo) e `aulas` (bloco por dia/horário,
     com o **intervalo como bloco** — tratá-lo à parte faria a carga horária ignorá-lo).
+    A disciplina do bloco escolhe de um **catálogo do ensino fundamental**
+    (`DISCIPLINAS_FUNDAMENTAL`, em `web/lib/admin.ts`) — inclusive Educação Física. É
+    `datalist` e **não** `select`: escola tem "Robótica", "Xadrez", "Reforço", e uma
+    lista fechada exigiria um deploy nosso para cada uma. O campo gravado segue sendo o
+    `rotulo` livre.
     Validação em `app/application/grade_horario.py`, compartilhada por painel e seed:
     recusa hora fora de formato, fim antes do início, intervalo fora do turno e **aulas
     sobrepostas no mesmo dia**. Como o formato gravado é o mesmo, descartar um deles
@@ -399,6 +409,11 @@ ti-escolar/
     `ListarEventuaisDisponiveis` (`GET /professores/tenant/{id}/eventuais`) devolve os
     eventuais **com telefone** — quem não tem número não é chamável, e listá-lo faria a
     secretaria "convocar" quem não recebe. A escolha de quem chamar segue humana.
+  - **`ativo` é o vínculo vivo com a escola** (migration `0038_impressao_whatsapp`).
+    Desligado, o professor sai das chamadas de eventual e **o número dele deixa de ser
+    reconhecido no inbound** — deixa de mandar arquivo direto para a fila de impressão
+    (§6g/B1). Não é o mesmo que remover: o cadastro sustenta o histórico da fila e o
+    relatório mensal de cópias.
   - **`telefone` é o número da escola** (mural, recados, chamada de eventual);
     **`telefone_2` é emergência e não recebe disparo nenhum** — dois números ativos no
     canal entregariam a mesma mensagem duas vezes. A tela diz isso em texto.
@@ -409,6 +424,22 @@ ti-escolar/
     verificadores conferidos e sequências repetidas recusadas, datas em ISO aceitando
     `DD/MM/AAAA`, e-mail e telefone em E.164). O módulo é compartilhado — responsáveis e
     alunos usam o mesmo.
+  - **O telefone principal também é normalizado** desde 12/ago/2026. Ele escapava:
+    `telefone_2` e `telefone_trabalho` passavam por `_e164_ou_erro`, mas o número que
+    **é a chave da conversa** era gravado como foi digitado. "(15) 99999-0000" no banco
+    faz o inbound não reconhecer a pessoa (o webhook entrega o remetente em E.164), a
+    Graph API recusar o envio, e a checagem de duplicidade comparar formatos diferentes
+    do mesmo número. A normalização vem **antes** da checagem, senão a mesma família
+    entra duas vezes. Vazio segue aceito: professor sem número existe, e responsável sem
+    telefone é o que a cobertura de contatos (§6c-ter) acusa.
+  - **Máscara é conforto de digitação, não contrato de dado** (`web/lib/mascaras.ts` +
+    `web/components/ui/campos.tsx`): CPF, telefone, RA e data ganham formato na tela,
+    mas quem decide o que é gravado continua sendo o back-end. A **data deixou de ser
+    `<input type="date">`** — ele desenha no formato do *sistema operacional*, e numa
+    máquina em inglês a secretaria via `mm/dd/aaaa`; 03/04 vira 3 de abril ou 4 de março
+    dependendo de quem olha, e data de nascimento trocada é matrícula errada. O RA fica
+    **sem agrupamento** de propósito: o formato varia por estado, e pontuar no molde
+    errado é pior do que não pontuar.
 - **Vínculo professor ↔ série:** o relacionamento mora na **série**, via
   **`Sala.professor_id`** (FK `salas.professor_id` → `professores.id`, `ON DELETE SET NULL`).
   Assim uma **série tem no máximo um professor**, e um **professor pode conduzir várias séries**
@@ -581,6 +612,37 @@ LLM novo:** reusam o RAG existente (que já chama o `LLMProvider`).
   (admin: `/api/admin/impressao`) e submissão pelo próprio professor em
   `/api/professor/impressao`. Migration `0014_solicitacoes_impressao`. Painel
   `web/app/admin/impressao/`.
+  - **O caminho principal virou o WhatsApp** (12/ago/2026, migration
+    `0038_impressao_whatsapp`). O portal exige abrir o navegador, lembrar a senha e
+    preencher um formulário para mandar a mesma lista de chamada que já está no celular.
+    Agora o professor manda o arquivo **para o número da escola** e ele cai na fila.
+  - **Quem decide é o cadastro:** `ProcessarInboundMeta` consulta
+    `ProfessorRepository.por_telefone` e, achando um professor **ativo**, desvia a
+    mensagem — mídia vira `SolicitacaoImpressao`, texto recebe orientação. **Nada disso
+    passa pela LLM**: o assistente é dos responsáveis, e mandar quem dá aula para ele o
+    faria ouvir sobre matrícula e horário de secretaria, cobrando inferência por isso.
+    O contador `ResultadoInboundMeta.impressoes` fica à parte de `respondidas`
+    justamente para esse fato aparecer no painel de logs (§16).
+  - **`Professor.ativo` nasceu aqui** e não é enfeite: sem ele, "cadastrado" e "trabalha
+    aqui" são a mesma coisa, e quem saiu seguiria mandando material direto para a
+    impressora. Apagar o cadastro não substitui — a fila e o relatório mensal dependem
+    dele para o histórico.
+  - **Os bytes ficam com a escola** (`chave_storage` → `ArquivoStorage`, §6k): fila sem
+    arquivo não imprime. Saem por `GET /impressao/{id}/arquivo`, autenticado e escopado
+    por tenant, **nunca por URL pública**. `media_id` deduplica a reentrega do webhook —
+    sem ele a Meta faria a secretaria imprimir duas vezes e debitaria a franquia em dobro.
+  - **Cópias, cor e frente-e-verso saem da legenda por heurística** (`interpretar_legenda`),
+    não por LLM — mesma escolha de `sugerir_categoria` (§6k). Sem número explícito o
+    pedido nasce com **1 cópia e a confirmação diz isso**, em vez de inventar tiragem; e
+    número acima de `COPIAS_MAXIMAS_INFERIDAS` (500) é descartado, porque "Planejamento
+    2026" na legenda não é pedido de 2.026 folhas. A fila marca `origem=whatsapp` para a
+    secretaria saber que aquele número foi lido, não preenchido.
+  - **Estourar a franquia avisa, não recusa** (`ConsultarSaldoImpressao` +
+    `SaldoImpressao`): um bot barrando a impressão trava a aula, e quem decide é a
+    secretaria. O saldo é **derivado** das solicitações do mês, nunca um contador
+    guardado — um contador divergiria da fila no primeiro cancelamento. É apurado
+    **depois** de gravar, senão a resposta mostraria o saldo anterior a quem está no
+    limite. Cobertura: `tests/test_impressao_whatsapp.py`.
 - **A1 · Mural do professor (`Recado` + `LeituraRecado`):** a secretaria publica recados; o
   professor tem **login próprio** e **confirma a leitura** ("ticado"). A secretaria vê quem leu /
   quem não leu e **re-notifica por WhatsApp** os não-lidos (`ReNotificarRecadoNaoLido` via
@@ -816,16 +878,55 @@ resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro
   consulta por página); o campo persistido virou fallback histórico.
 - **Painel:** `web/app/admin/atendimentos/` (fila Na fila / Meus / Resolvidos, **refresh
   automático** — 20 s na lista, 10 s na conversa aberta, pausado com a aba escondida e em
-  falha silenciosa, sem toast —, motivo já
+  falha silenciosa, sem toast —, **rolagem que acompanha a conversa** e **aviso sonoro**
+  quando o responsável escreve, motivo já
   resumido pelo assistente, tempo de espera, selo de fora do expediente, contador da janela
   de 24h e a thread completa com caixa de resposta) e **badge de contagem no `Sidebar`**
   (polling de 20s em `/pendentes`) — é a notificação in-app. Expediente editável no
   cadastro de escola (`components/admin/CamposExpediente.tsx`).
+- **A conversa aberta se comporta como conversa** (12/ago/2026). Duas correções na
+  mesma tela:
+  - **Rolagem só quando a leitura está no fim.** A cada 10 s o polling traz mensagem
+    nova; rolar à força arrancaria do lugar quem subiu para reler o que o responsável
+    disse. Abrir uma conversa cai no fim direto, sem animação.
+  - **Aviso sonoro** (`web/lib/som.ts`), sintetizado em Web Audio — dois toques curtos,
+    ganho baixo, cauda de 0,22 s. Toca **só** quando cresce o número de mensagens *do
+    responsável*, nunca ao abrir a conversa (ali toda mensagem é "nova" para o
+    componente) nem quando a própria atendente envia. **Desligável**, com a preferência
+    por navegador: som que não se desliga no produto é desligado no sistema operacional,
+    e aí nenhum aviso chega — o oposto do pedido.
 - **Cobertura:** `tests/test_atendimento_humano.py` (28 testes: expediente e a armadilha do
   "amanhã" no sábado, as duas travas, oferta vencida, idempotência, trava do atendente,
   janela de 24h com e sem template, silêncio do assistente, isolamento entre escolas).
 - **[Roadmap]** notificar o atendente por WhatsApp/e-mail (exige `Usuario.telefone`);
   feriados no expediente.
+
+### 6l. Saída antecipada do aluno — a exceção declarada à regra de perguntar antes
+
+O responsável escreve "preciso buscar minha filha às 11h". Isso **sempre** exige decisão
+de gente: a escola precisa saber quem retira a criança e autorizar. E é sensível ao
+relógio — perguntar "quer que eu chame alguém da secretaria?" gastaria justamente os
+minutos que importam, para uma resposta que seria sempre "sim".
+
+Por isso a ferramenta `registrar_saida_antecipada` **abre o chamado direto**, sem oferta e
+sem esperar as duas respostas mínimas (§6j). A exceção é do domínio, não do prompt:
+`EscalarParaSecretaria` ganhou `abertura_direta`, distinto de `pedido_explicito` —
+naquele quem pede é o responsável, neste é a **regra da escola**. Deixá-la só no texto do
+prompt significaria que o modelo pode ignorá-la, e a saída antecipada voltaria a ser uma
+oferta.
+
+- **O que não se dispensa são dois dados**: o **nome do aluno**, sempre; e o **nome de
+  quem está pedindo**, quando `ContatoRepository.por_telefone` não reconhece o número.
+  Sem eles o card chegaria como "alguém quer buscar alguém", e a secretaria teria de
+  reabrir a conversa para perguntar o que o assistente já poderia ter perguntado. Faltando
+  um deles, a ferramenta **não abre nada** — devolve ao modelo a orientação de perguntar.
+- **Quem já está cadastrado não é interrogado sobre o próprio nome**: seria a escola
+  fingindo não conhecer a família. O nome sai do `Contato`.
+- O `motivo` do atendimento nasce **estruturado** (`aluno · responsável · horário ·
+  motivo`), porque é o que a secretaria lê no card antes de abrir a conversa.
+- Depois de aberto, o assistente **cala** (§6j): o responsável ansioso que reescreve não
+  vira um segundo card.
+- Cobertura: `tests/test_atendimento_humano.py` (6 testes de saída antecipada).
 
 ### 6k. Documentos recebidos dos responsáveis pelo WhatsApp
 
@@ -1536,6 +1637,19 @@ sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escop
   `broadcast.grupo.enviar`). Casos de uso `RegistrarAuditoria`/`ListarAuditoria`
   (`app/application/auditoria_use_cases.py`); auditar é **tolerante a falhas** (nunca derruba
   a ação auditada). Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
+  - **O ator é reidentificado na leitura** (12/ago/2026). `RegistroAuditoria.ator_nome` é
+    um retrato do momento da ação e virou **fallback histórico**: `ListarAuditoria` recebe
+    o `UsuarioRepository` e resolve o nome atual **em lote** (`por_ids`, uma consulta por
+    página). Sem isso, um nome corrigido depois faria a mesma pessoa aparecer com dois
+    nomes no log, e registro anterior ao campo ficaria anônimo para sempre.
+  - **`ator_perfil_id` (não persistido) é o que autoriza o link** para `/admin/usuarios`.
+    Só quem **ainda tem conta** o recebe: linkar para uma conta que não existe mais
+    entregaria um 404 no lugar da resposta, e para LLM/sistema não há perfil nenhum. O
+    `ator_id` é texto livre na porta (a LLM guarda telefone ali), então um valor que não
+    é UUID simplesmente não tem perfil — não é erro.
+  - **[Roadmap]** cobertura: as mutações de cadastro (alunos, responsáveis, professores,
+    turmas) ainda **não** são auditadas, então a tela mostra pouco do que a secretaria
+    faz no dia a dia.
   - ✅ **Ações da LLM auditadas no inbound real** (10/ago/2026): o inbound passou a usar
     `AtenderConversa`, que grava `llm.resposta` (pergunta/resposta resumidas, fontes,
     documentos) com `ator="llm"`. As ações da secretaria na fila de atendimento humano
@@ -1797,7 +1911,33 @@ São **duas camadas, separadas pela natureza do risco** — `.github/workflows/l
   movido ou exposto (entidades, rotas, migrations, casos de uso de ficha/matrícula/
   importação/exportação/inbound/conhecimento, política e termos). Comenta os achados no PR
   com `arquivo:linha` e artigo da lei; **não bloqueia o merge** e não substitui parecer
-  jurídico. Exige o secret `ANTHROPIC_API_KEY` — sem ele o job avisa e passa.
+  jurídico. Exige o secret `OPENAI_API_KEY` — sem ele o job avisa e passa, e desde
+  12/ago/2026 o aviso também vai para o resumo do run: o secret **nunca existiu**, e como
+  os passos são condicionais o check ficava **verde sem auditar nada**. Um warning no fundo
+  do log não é sinal.
+  - **O executor é a Codex CLI** (`codex exec`), trocada em 12/ago/2026 — antes era o
+    Claude Code, que só autentica contra Anthropic/Bedrock/Vertex e **não lê
+    `OPENAI_API_KEY`**: a variável não existe no binário. Trocar de provedor aqui é trocar
+    o executor, não o nome da env.
+  - **Roda sem o sandbox da Codex** (`--dangerously-bypass-approvals-and-sandbox`), e é
+    decisão consciente. O bubblewrap não sobe em runner hospedado — cria namespace de rede
+    e morre em `loopback: Failed RTM_NEWADDR`, idêntico com o bwrap embutido no npm e com o
+    da distro instalado por apt. Meio-morto é pior que ausente: o agente roda, não lê nada
+    e **publica um relatório dizendo que não conseguiu** — foi o que saiu no PR #64 antes
+    de virmos. O flag é documentado para ambiente já isolado, que é o caso (runner efêmero),
+    e mantém a proporção: o `npm install -g` do passo anterior já executa script de terceiro
+    sem sandbox no mesmo runner. **O "somente leitura" passa a ser sustentado pelo mandato
+    no prompt, não pelo SO** — e precisa ser revisto se um dia isto rodar em PR de fork,
+    quando o diff passa a ser texto de estranho.
+  - **O prompt continua sendo o corpo de `.claude/agents/lgpd-auditor.md`**, que segue
+    valendo para o Claude Code em uso local (`Agent`/`--agent`). O workflow descarta o
+    frontmatter (`model`, `tools`), que é sintaxe do Claude Code: na Codex o modelo vem do
+    `-m` e o acesso a arquivo vem do sandbox. **Mexeu no frontmatter, não mudou o CI.**
+  - O diff é **congelado em `diff-do-pr.patch`** antes da chamada, para o que se audita ser
+    o que o passo mediu, e não o que o agente conseguiu reconstruir com `git`.
+  - **A OpenAI passa a ser operadora sobre o diff** — que pode carregar dado pessoal real
+    se alguém commitar fixture com CPF ou laudo. Entra no registro de subprocessadores;
+    **exige validação jurídica**, e foi o próprio auditor quem levantou.
 - **Configuração, a cada deploy** — `scripts/postura_ambiente.py` mede o **ambiente no ar**.
   O código é o mesmo em homolog e em produção; o que difere é a config, e ela muda **por
   fora do git** (alguém edita uma env var no painel do Render), por isso há também um

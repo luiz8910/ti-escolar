@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   atualizarStatusImpressao,
+  baixarArquivoImpressao,
   criarImpressao,
   exigeEscolhaDeEscola,
   getSessao,
@@ -79,6 +80,23 @@ export default function FilaImpressao() {
     }
   }
 
+  async function baixar(s: Impressao) {
+    // O arquivo não tem URL pública: é preciso buscar com o token e abrir o blob. O
+    // object URL é revogado logo depois, senão os bytes ficam presos na aba até o
+    // recarregamento — e a secretaria deixa esta tela aberta o dia inteiro.
+    try {
+      const blob = await baixarArquivoImpressao(s.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = s.arquivo_nome || "impressao";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (err) {
+      toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao baixar." });
+    }
+  }
+
   async function remover(id: string) {
     try {
       await removerImpressao(id);
@@ -144,6 +162,11 @@ export default function FilaImpressao() {
                         <span className="inline-flex items-center gap-1.5">
                           <PrintIcon size={14} /> {s.arquivo_nome}
                         </span>
+                        {s.origem === "whatsapp" && (
+                          <Badge tone="brand" className="ml-1.5 align-middle">
+                            WhatsApp
+                          </Badge>
+                        )}
                         {s.observacao && (
                           <div className="mt-0.5 text-xs text-n-400">{s.observacao}</div>
                         )}
@@ -152,12 +175,28 @@ export default function FilaImpressao() {
                       <Td className="text-xs text-n-600">
                         {s.copias} cópia(s) · {s.colorido ? "Colorido" : "P&B"} ·{" "}
                         {s.frente_verso ? "Frente e verso" : "Só frente"}
+                        {s.origem === "whatsapp" && (
+                          // Quem veio do WhatsApp teve a quantidade **lida da legenda**.
+                          // A secretaria precisa saber disso antes de mandar 200 folhas.
+                          <div className="mt-0.5 text-[11px] text-n-400">
+                            Lido da legenda — confira antes de imprimir.
+                          </div>
+                        )}
                       </Td>
                       <Td>
                         <Badge tone={STATUS_TONE[s.status]}>{STATUS_LABEL[s.status]}</Badge>
                       </Td>
                       <Td className="text-right">
                         <div className="flex flex-wrap justify-end gap-1.5">
+                          {s.tem_arquivo && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => baixar(s)}
+                            >
+                              Baixar
+                            </Button>
+                          )}
                           {s.status === "pendente" && (
                             <Button
                               size="sm"

@@ -22,11 +22,13 @@ from app.domain.entities import (
     Contato,
     DestinatarioBroadcast,
     MessageTemplate,
+    Papel,
     RespostaLLM,
     StatusEntrega,
     StatusTemplate,
     TipoConhecimento,
     TrechoConhecimento,
+    Usuario,
 )
 from tests.fakes import (
     FakeAuditLogRepo,
@@ -233,3 +235,128 @@ async def test_obter_broadcast_isola_por_tenant():
         broadcasts=repo, contatos=FakeContatoRepo(), templates=FakeTemplateRepo(template)
     ).executar(tenant_id=OUTRO_TENANT, broadcast_id=broadcast.id)
     assert detalhe is None
+
+
+# --------------------------------------------------------------------------- #
+# Identificação do ator: nome atual + link para o perfil
+# --------------------------------------------------------------------------- #
+class FakeUsuarioRepoAuditoria:
+    """Só o que a auditoria usa da porta: resolver vários usuários de uma vez."""
+
+    def __init__(self, usuarios: list[Usuario]) -> None:
+        self.usuarios = list(usuarios)
+        self.consultas = 0
+
+    async def por_ids(self, ids):
+        self.consultas += 1
+        pedidos = {str(i) for i in ids}
+        return [u for u in self.usuarios if str(u.id) in pedidos]
+
+
+def _usuario(nome: str) -> Usuario:
+    return Usuario(
+        nome=nome,
+        email=f"{nome.lower()}@escola.test",
+        senha_hash="x",
+        papel=Papel.TENANT_ADMIN,
+        tenant_id=TENANT,
+    )
+
+
+async def test_ator_e_reidentificado_pelo_cadastro_atual():
+    """O nome gravado é retrato do momento; quem lê o log quer a pessoa de hoje."""
+    ana = _usuario("Ana")
+    repo = FakeAuditLogRepo()
+    await RegistrarAuditoria(auditoria=repo).executar(
+        ator=AtorAuditoria.USUARIO,
+        acao="login",
+        tenant_id=TENANT,
+        ator_id=str(ana.id),
+        ator_nome="Ana Souza",  # sobrenome de solteira, corrigido depois no cadastro
+    )
+    ana.nome = "Ana Souza Prado"
+
+    registros = (
+        await ListarAuditoria(
+            auditoria=repo, usuarios=FakeUsuarioRepoAuditoria([ana])
+        ).executar(tenant_id=TENANT)
+    ).itens
+
+    assert registros[0].ator_nome == "Ana Souza Prado"
+    assert registros[0].ator_perfil_id == str(ana.id)
+
+
+async def test_ator_sem_conta_nao_ganha_link():
+    """Link para uma conta que não existe mais é pior do que texto puro."""
+    repo = FakeAuditLogRepo()
+    await RegistrarAuditoria(auditoria=repo).executar(
+        ator=AtorAuditoria.USUARIO,
+        acao="login",
+        tenant_id=TENANT,
+        ator_id=str(uuid.uuid4()),
+        ator_nome="Quem Saiu",
+    )
+
+    registros = (
+        await ListarAuditoria(
+            auditoria=repo, usuarios=FakeUsuarioRepoAuditoria([])
+        ).executar(tenant_id=TENANT)
+    ).itens
+
+    # O nome gravado sobrevive como fallback histórico; o link, não.
+    assert registros[0].ator_nome == "Quem Saiu"
+    assert registros[0].ator_perfil_id == ""
+
+
+async def test_llm_nao_vira_perfil_e_nao_quebra_a_resolucao():
+    """A LLM guarda **telefone** em `ator_id`: não é UUID, e isso não é erro."""
+    repo = FakeAuditLogRepo()
+    await RegistrarAuditoria(auditoria=repo).executar(
+        ator=AtorAuditoria.LLM,
+        acao="llm.resposta",
+        tenant_id=TENANT,
+        ator_id="+5515999998888",
+        ator_nome="Assistente",
+    )
+
+    usuarios = FakeUsuarioRepoAuditoria([])
+    registros = (
+        await ListarAuditoria(auditoria=repo, usuarios=usuarios).executar(tenant_id=TENANT)
+    ).itens
+
+    assert registros[0].ator_perfil_id == ""
+    assert usuarios.consultas == 0  # nem chegou a consultar o cadastro
+
+
+async def test_atores_de_uma_pagina_sao_resolvidos_em_uma_consulta_so():
+    """Uma página com vários atores não pode virar uma ida ao banco por linha."""
+    ana, bruno = _usuario("Ana"), _usuario("Bruno")
+    repo = FakeAuditLogRepo()
+    registrar = RegistrarAuditoria(auditoria=repo)
+    for autor in (ana, bruno, ana, bruno):
+        await registrar.executar(
+            ator=AtorAuditoria.USUARIO,
+            acao="login",
+            tenant_id=TENANT,
+            ator_id=str(autor.id),
+        )
+
+    usuarios = FakeUsuarioRepoAuditoria([ana, bruno])
+    registros = (
+        await ListarAuditoria(auditoria=repo, usuarios=usuarios).executar(tenant_id=TENANT)
+    ).itens
+
+    assert usuarios.consultas == 1
+    assert {r.ator_nome for r in registros} == {"Ana", "Bruno"}
+
+
+async def test_sem_repositorio_de_usuarios_a_listagem_segue_funcionando():
+    """A dependência é opcional: quem só quer o log cru não precisa passá-la."""
+    repo = FakeAuditLogRepo()
+    await RegistrarAuditoria(auditoria=repo).executar(
+        ator=AtorAuditoria.USUARIO, acao="login", tenant_id=TENANT, ator_nome="Ana"
+    )
+
+    registros = (await ListarAuditoria(auditoria=repo).executar(tenant_id=TENANT)).itens
+    assert registros[0].ator_nome == "Ana"
+    assert registros[0].ator_perfil_id == ""

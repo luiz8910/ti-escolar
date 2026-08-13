@@ -24,6 +24,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Field, Select, Textarea } from "@/components/ui/form";
+import { CampoData } from "@/components/ui/campos";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import {
@@ -748,7 +749,7 @@ function LicencaModal({
           </Select>
         </Field>
         <Field label="Expira em">
-          <Input type="date" value={expira} onChange={(e) => setExpira(e.target.value)} />
+          <CampoData value={expira} onChange={setExpira} />
         </Field>
         <div className="flex flex-wrap gap-3">
           <div className="min-w-[140px] flex-1">

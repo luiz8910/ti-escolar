@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { BadgeContador, type Pendencias } from "../admin/Notificacoes";
 import { cn } from "../ui/cn";
 import {
@@ -63,6 +63,17 @@ const HISTORICO: NavItem[] = [
   { href: "/admin/historico/conversas", label: "Conversas", icon: ChatBubbleIcon },
   { href: "/admin/historico/disparos", label: "Mensagens em massa", icon: BellIcon },
   { href: "/admin/historico/auditoria", label: "Auditoria", icon: FileIcon },
+];
+
+// Destinos só do super admin — moram no JSX, mas entram aqui porque o realce escolhe o
+// item pelo caminho mais específico e precisa enxergar todos os candidatos.
+const SUPER_ADMIN_HREFS = ["/admin/escolas", "/admin/seguranca", "/admin/logs"];
+
+const TODOS_OS_DESTINOS = [
+  ...PRINCIPAL.map((i) => i.href),
+  ...COMUNICACAO.map((i) => i.href),
+  ...HISTORICO.map((i) => i.href),
+  ...SUPER_ADMIN_HREFS,
 ];
 
 /** Marca TI-Escolar. */
@@ -147,8 +158,20 @@ export function Sidebar({
   onClose?: () => void;
 }) {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
+
+  // Realce por **caminho mais específico**, não por prefixo. Com `startsWith` cru,
+  // /admin/impressao/relatorio acendia "Cotas & relatório" *e* "Fila de impressão", porque
+  // um href é prefixo do outro. Aqui vence o destino mais longo que casa com a rota — e a
+  // comparação exige a barra, senão /admin/turmas acenderia em /admin/turmas-antigas.
+  const destinoAtual = useMemo(() => {
+    const casa = (href: string) =>
+      href === "/admin"
+        ? pathname === "/admin"
+        : pathname === href || pathname.startsWith(`${href}/`);
+    return TODOS_OS_DESTINOS.filter(casa).sort((a, b) => b.length - a.length)[0] ?? "";
+  }, [pathname]);
+
+  const isActive = (href: string) => href === destinoAtual;
 
   // Fecha o drawer com Esc e trava o scroll do body enquanto aberto (só mobile).
   useEffect(() => {

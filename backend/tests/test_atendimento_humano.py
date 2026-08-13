@@ -237,6 +237,7 @@ async def test_insistir_nao_cria_tres_cards():
             respostas_anteriores=3,
         )
     assert len(repo.itens) == 1
+    # A segunda mensagem nem chegou ao modelo: a conversa já estava com a secretaria.
 
 
 # --------------------------------------------------------------------------- #
@@ -739,3 +740,170 @@ async def test_sem_cadastro_o_telefone_permanece_e_a_lista_nao_quebra():
 
     assert pagina.itens[0].contato_nome == ""
     assert pagina.itens[0].contato == CONTATO
+
+
+# --------------------------------------------------------------------------- #
+# §6l · Saída antecipada — a exceção declarada à regra "perguntar antes"
+# --------------------------------------------------------------------------- #
+def _atender_saida(repo, respostas, *, contatos=None):
+    """`AtenderConversa` com a mesa e o cadastro de contatos, como em produção."""
+    return AtenderConversa(
+        conversas=FakeConversaRepo(),
+        embedder=fake_embedder(),
+        store=FakeVectorStore(),
+        llm=FakeLLM(respostas),
+        documentos=RecuperarEEnviarDocumento(
+            source=FakeDocumentSource([]), canal=FakeChannel()
+        ),
+        mesa=_mesa(repo),
+        contatos=contatos if contatos is not None else FakeContatoRepo(),
+    )
+
+
+def _chamada_saida(**argumentos) -> RespostaLLM:
+    return RespostaLLM(
+        chamadas=[
+            ChamadaFerramenta(
+                id="s1", nome="registrar_saida_antecipada", argumentos=argumentos
+            )
+        ]
+    )
+
+
+async def test_saida_antecipada_abre_o_chamado_na_primeira_mensagem():
+    """A exceção do §6l: não passa pela oferta nem pela trava das duas respostas.
+
+    O assunto sempre exige decisão de gente e é sensível ao relógio — perguntar "quer que
+    eu chame alguém?" gastaria os minutos que importam para uma resposta sempre "sim".
+    """
+    repo = FakeAtendimentoHumanoRepo()
+    contatos = FakeContatoRepo()
+    await contatos.criar(Contato(tenant_id=TENANT, nome="Maria Souza", telefone=CONTATO))
+    uc = _atender_saida(
+        repo,
+        [
+            _chamada_saida(nome_aluno="Ana Souza", horario="11h", motivo="consulta"),
+            RespostaLLM(texto="Registrei o pedido na secretaria."),
+        ],
+        contatos=contatos,
+    )
+
+    await uc.executar(
+        tenant_id=TENANT, contato=CONTATO, texto="preciso buscar minha filha às 11h"
+    )
+
+    [atendimento] = list(repo.itens.values())
+    assert atendimento.status is StatusAtendimentoHumano.ABERTO
+    # O card precisa se explicar sem que a secretaria abra a conversa.
+    assert "Ana Souza" in atendimento.motivo
+    assert "Maria Souza" in atendimento.motivo
+    assert "11h" in atendimento.motivo
+
+
+async def test_saida_antecipada_pergunta_o_nome_do_aluno_quando_falta():
+    """Sem o nome do aluno o card chegaria como "alguém quer buscar alguém"."""
+    repo = FakeAtendimentoHumanoRepo()
+    uc = _atender_saida(
+        repo,
+        [
+            _chamada_saida(nome_aluno=""),
+            RespostaLLM(texto="Qual é o nome do aluno?"),
+        ],
+    )
+
+    resposta = await uc.executar(
+        tenant_id=TENANT, contato=CONTATO, texto="posso buscar mais cedo hoje?"
+    )
+
+    assert repo.itens == {}  # nada foi aberto
+    assert resposta.texto == "Qual é o nome do aluno?"
+
+
+async def test_numero_desconhecido_pede_o_nome_de_quem_esta_pedindo():
+    """Cadastro vazio: a escola não sabe quem está do outro lado, e precisa saber."""
+    repo = FakeAtendimentoHumanoRepo()
+    uc = _atender_saida(
+        repo,
+        [
+            _chamada_saida(nome_aluno="Ana Souza"),
+            RespostaLLM(texto="Qual o seu nome completo?"),
+        ],
+        contatos=FakeContatoRepo(),
+    )
+
+    resposta = await uc.executar(
+        tenant_id=TENANT, contato=CONTATO, texto="vou buscar a Ana mais cedo"
+    )
+
+    assert repo.itens == {}
+    assert resposta.texto == "Qual o seu nome completo?"
+
+
+async def test_numero_desconhecido_abre_quando_o_nome_e_informado():
+    repo = FakeAtendimentoHumanoRepo()
+    uc = _atender_saida(
+        repo,
+        [
+            _chamada_saida(nome_aluno="Ana Souza", nome_responsavel="Tia Cláudia"),
+            RespostaLLM(texto="Pronto, avisei a secretaria."),
+        ],
+        contatos=FakeContatoRepo(),
+    )
+
+    await uc.executar(tenant_id=TENANT, contato=CONTATO, texto="sou a tia da Ana")
+
+    [atendimento] = list(repo.itens.values())
+    assert "Tia Cláudia" in atendimento.motivo
+
+
+async def test_numero_cadastrado_nao_e_interrogado_sobre_o_proprio_nome():
+    """Pedir o nome a quem já está cadastrado é a escola fingir não conhecer a família."""
+    repo = FakeAtendimentoHumanoRepo()
+    contatos = FakeContatoRepo()
+    await contatos.criar(Contato(tenant_id=TENANT, nome="Maria Souza", telefone=CONTATO))
+    uc = _atender_saida(
+        repo,
+        [
+            _chamada_saida(nome_aluno="Ana Souza"),
+            RespostaLLM(texto="Registrado."),
+        ],
+        contatos=contatos,
+    )
+
+    await uc.executar(tenant_id=TENANT, contato=CONTATO, texto="vou buscar a Ana às 11h")
+
+    [atendimento] = list(repo.itens.values())
+    assert "Maria Souza" in atendimento.motivo
+
+
+async def test_insistir_no_pedido_nao_vira_um_segundo_card():
+    """Com o chamado aberto, o assistente cala (§6j) e a secretaria vê um caso só.
+
+    O responsável ansioso reescreve — "e aí?", "deu certo?" —, e cada mensagem dessas
+    viraria trabalho novo para a mesma pessoa se a conversa continuasse sendo atendida
+    pelo assistente.
+    """
+    repo = FakeAtendimentoHumanoRepo()
+    conversas = FakeConversaRepo()
+    contatos = FakeContatoRepo()
+    await contatos.criar(Contato(tenant_id=TENANT, nome="Maria", telefone=CONTATO))
+
+    def uc(respostas):
+        return AtenderConversa(
+            conversas=conversas,
+            embedder=fake_embedder(),
+            store=FakeVectorStore(),
+            llm=FakeLLM(respostas),
+            documentos=RecuperarEEnviarDocumento(
+                source=FakeDocumentSource([]), canal=FakeChannel()
+            ),
+            mesa=_mesa(repo),
+            contatos=contatos,
+        )
+
+    for _ in range(2):
+        await uc(
+            [_chamada_saida(nome_aluno="Ana"), RespostaLLM(texto="ok")]
+        ).executar(tenant_id=TENANT, contato=CONTATO, texto="buscar mais cedo")
+
+    assert len(repo.itens) == 1

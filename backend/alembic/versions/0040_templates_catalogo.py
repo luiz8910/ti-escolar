@@ -24,21 +24,19 @@ compartilhado. Em produção a tabela está vazia (nenhum template foi cadastrad
 modo que na prática isto só arruma bancos de desenvolvimento — sem ele, o template do seed
 continuaria preso ao tenant demo e invisível para qualquer outra escola.
 
-⚠️ **Numerada 0040 com `down_revision` em 0037, e isso é intencional.** Há hoje três
-migrations em voo, todas encadeadas na 0037: `0038_impressao_whatsapp` (PR #56),
-`0039`/`0038_anti_spam_docs` (branch `feat/documentos-busca-preview-ocr`) e esta. O número
-reserva o lugar na ordem esperada de merge; **o que define o grafo é o `down_revision`**, e
-ele precisa continuar apontando para o head da `main` enquanto as outras não entrarem —
-apontar para uma revisão que ainda não existe faria `alembic upgrade head` falhar no CI
-desta branch.
+⚠️ **Numerada 0040, mas encadeada na 0038 — e o `0039` nunca existiu.** Escrita em paralelo
+com a `0038_impressao_whatsapp` (PR #56), ambas apontando para a `0037`; o número reservava
+lugar numa ordem de merge que previa ainda a migration de anti-spam de documentos, que ficou
+órfã fora da `main`. Como a 0038 mergeou primeiro, esta re-apontou para ela. **O que define
+o grafo é o `down_revision`, não o nome do arquivo** — renumerar não conserta nada, e o vão
+no 0039 é inofensivo.
 
-**Ao mergear:** se alguma das outras já estiver na `main`, re-aponte o `down_revision` desta
-para o head novo antes do merge. O CI recusa mais de um head (`alembic heads`), então o
-esquecimento falha o build em vez de quebrar o deploy — que é exatamente o que a regra de
-cadeia linear do CLAUDE.md §6 existe para evitar.
+O CI recusa mais de um head (`alembic heads`), então o esquecimento falha o build em vez de
+quebrar o deploy — que aqui significa o container não subir, porque o `alembic upgrade head`
+roda no `CMD`. É o que a regra de cadeia linear do CLAUDE.md §6 existe para evitar.
 
 Revision ID: 0040_templates_catalogo
-Revises: 0037_conversa_sessao
+Revises: 0038_impressao_whatsapp
 Create Date: 2026-08-12
 """
 
@@ -51,7 +49,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0040_templates_catalogo"
-down_revision: str | None = "0037_conversa_sessao"
+down_revision: str | None = "0038_impressao_whatsapp"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

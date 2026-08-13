@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -195,7 +196,19 @@ function Registro({ registro }: { registro: RegistroAuditoria }) {
         <span className="font-mono text-[11px] text-n-400">{formatar(registro.criado_em)}</span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-n-500">
-        {registro.ator_nome && <span>{registro.ator_nome}</span>}
+        {/* O nome só vira link quando a pessoa ainda tem conta. Auditar é poder ir de
+            "quem fez isso?" a cargo e situação em um clique — mas um link para uma conta
+            que não existe mais entregaria um 404 no lugar da resposta. */}
+        {registro.ator_perfil_id ? (
+          <Link
+            href={`/admin/usuarios?u=${registro.ator_perfil_id}`}
+            className="font-semibold text-brand-600 hover:underline"
+          >
+            {registro.ator_nome || "usuário"}
+          </Link>
+        ) : (
+          registro.ator_nome && <span>{registro.ator_nome}</span>
+        )}
         <span className="rounded bg-n-50 px-1.5 py-0.5 font-mono text-[10.5px] text-n-500">
           {registro.acao}
         </span>
