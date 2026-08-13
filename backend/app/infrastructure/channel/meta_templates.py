@@ -1,0 +1,218 @@
+"""Gestão de templates na Meta — WhatsApp Business Management API.
+
+Implementa a porta ``CatalogoTemplates`` sobre ``/{waba_id}/message_templates``. Exige o
+escopo ``whatsapp_business_management`` no token de usuário do sistema (o de envio,
+``whatsapp_business_messaging``, **não** serve aqui — e o sintoma de faltar é um 400 cujo
+texto não menciona escopo nenhum, por isso ``_erro_legivel`` extrai a mensagem da Meta).
+
+Ao contrário do envio, aqui **não há multi-tenant**: a WABA é uma só (§9e), então o id vem
+da configuração e não do tenant.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import httpx
+
+from app.domain.entities import (
+    CategoriaTemplate,
+    MessageTemplate,
+    StatusTemplate,
+    TemplateRemoto,
+)
+
+logger = logging.getLogger("channel.meta.templates")
+
+_BASE = "https://graph.facebook.com/v21.0"
+
+# A Meta tem mais estados do que o nosso enum, e o que importa para nós é uma pergunta só:
+# **dá para enviar?**. PAUSED e DISABLED são templates que foram aprovados e depois caíram
+# por qualidade — enviar com eles falha. Mapeá-los para APROVADO deixaria o painel
+# convidando a secretaria a um disparo que morre na Graph API, então caem em REJEITADO,
+# que é o estado que a tela já sabe explicar. O motivo real vai em ``motivo_rejeicao``.
+_STATUS = {
+    "APPROVED": StatusTemplate.APROVADO,
+    "PENDING": StatusTemplate.PENDENTE,
+    "IN_APPEAL": StatusTemplate.PENDENTE,
+    "PENDING_DELETION": StatusTemplate.PENDENTE,
+    "REJECTED": StatusTemplate.REJEITADO,
+    "PAUSED": StatusTemplate.REJEITADO,
+    "DISABLED": StatusTemplate.REJEITADO,
+}
+
+_MOTIVO_IMPLICITO = {
+    "PAUSED": "Pausado pela Meta por qualidade — não pode ser enviado até ser reativado.",
+    "DISABLED": "Desativado pela Meta por qualidade — precisa ser recriado.",
+}
+
+
+def status_da_meta(bruto: str) -> StatusTemplate:
+    """Traduz o status da Meta. Desconhecido vira PENDENTE, nunca APROVADO.
+
+    Falhar fechado importa: um status novo que a gente não conheça sendo lido como
+    aprovado liberaria disparo com template que a Meta não aceita.
+    """
+    return _STATUS.get((bruto or "").upper(), StatusTemplate.PENDENTE)
+
+
+def motivo_da_meta(*, status_bruto: str, motivo: str | None) -> str:
+    motivo = (motivo or "").strip()
+    if motivo and motivo.upper() != "NONE":
+        return motivo
+    return _MOTIVO_IMPLICITO.get((status_bruto or "").upper(), "")
+
+
+def categoria_da_meta(bruto: str) -> CategoriaTemplate:
+    try:
+        return CategoriaTemplate((bruto or "").lower())
+    except ValueError:
+        return CategoriaTemplate.UTILITY
+
+
+class CatalogoTemplatesIndisponivel(RuntimeError):
+    """Erro de configuração, levantado no uso — não no boot."""
+
+
+class MetaCatalogoTemplates:
+    def __init__(self, *, waba_id: str, access_token: str) -> None:
+        self._waba_id = waba_id
+        self._headers = {"Authorization": f"Bearer {access_token}"}
+
+    @property
+    def _url(self) -> str:
+        return f"{_BASE}/{self._waba_id}/message_templates"
+
+    @staticmethod
+    def _erro_legivel(exc: httpx.HTTPStatusError) -> str:
+        """A Graph API responde 400 com o motivo real dentro do corpo.
+
+        Deixar subir o ``HTTPStatusError`` cru daria à secretaria um "Client error '400'",
+        que não diz se o nome já existe, se faltou exemplo ou se o token não tem escopo.
+        """
+        try:
+            erro = exc.response.json().get("error", {})
+        except Exception:  # noqa: BLE001 - corpo não-JSON: cai no texto bruto
+            return exc.response.text[:300]
+        partes = [
+            erro.get("error_user_msg"),
+            erro.get("error_user_title"),
+            erro.get("message"),
+        ]
+        return next((p for p in partes if p), exc.response.text[:300])
+
+    def _componentes(self, template: MessageTemplate) -> list[dict]:
+        corpo: dict = {"type": "BODY", "text": template.corpo}
+        if template.exemplos:
+            # ``body_text`` é uma lista de listas: um conjunto de exemplos por variação.
+            corpo["example"] = {"body_text": [list(template.exemplos)]}
+        return [corpo]
+
+    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+        payload = {
+            "name": template.nome,
+            "language": template.idioma,
+            "category": template.categoria.value.upper(),
+            "components": self._componentes(template),
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(self._url, headers=self._headers, json=payload)
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                motivo = self._erro_legivel(exc)
+                logger.warning("Meta recusou o template %r: %s", template.nome, motivo)
+                raise CatalogoTemplatesIndisponivel(
+                    f"A Meta recusou o template: {motivo}"
+                ) from exc
+            data = resp.json()
+
+        status_bruto = data.get("status", "PENDING")
+        return TemplateRemoto(
+            nome=template.nome,
+            idioma=template.idioma,
+            status=status_da_meta(status_bruto),
+            categoria=categoria_da_meta(data.get("category", template.categoria.value)),
+            meta_template_id=str(data.get("id", "")),
+            motivo_rejeicao=motivo_da_meta(status_bruto=status_bruto, motivo=None),
+        )
+
+    async def listar(self) -> list[TemplateRemoto]:
+        params = {
+            "fields": "id,name,language,status,category,rejected_reason",
+            "limit": "200",
+        }
+        remotos: list[TemplateRemoto] = []
+        url: str | None = self._url
+        async with httpx.AsyncClient(timeout=30) as client:
+            while url:
+                resp = await client.get(url, headers=self._headers, params=params)
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise CatalogoTemplatesIndisponivel(
+                        f"Não foi possível listar os templates na Meta: {self._erro_legivel(exc)}"
+                    ) from exc
+                corpo = resp.json()
+                for item in corpo.get("data", []):
+                    bruto = item.get("status", "")
+                    remotos.append(
+                        TemplateRemoto(
+                            nome=item.get("name", ""),
+                            idioma=item.get("language", ""),
+                            status=status_da_meta(bruto),
+                            categoria=categoria_da_meta(item.get("category", "")),
+                            meta_template_id=str(item.get("id", "")),
+                            motivo_rejeicao=motivo_da_meta(
+                                status_bruto=bruto, motivo=item.get("rejected_reason")
+                            ),
+                        )
+                    )
+                # A paginação já carrega os filtros no ``next``; repetir ``params`` aqui
+                # duplicaria o cursor e traria a mesma página para sempre.
+                url = corpo.get("paging", {}).get("next")
+                params = {}
+        return remotos
+
+    async def remover(self, *, nome: str) -> bool:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.delete(
+                self._url, headers=self._headers, params={"name": nome}
+            )
+            if resp.status_code == 404:
+                # Já não existe lá: para quem chamou, o efeito desejado está satisfeito.
+                return False
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise CatalogoTemplatesIndisponivel(
+                    f"Não foi possível remover o template na Meta: {self._erro_legivel(exc)}"
+                ) from exc
+        return True
+
+
+class CatalogoTemplatesAusente:
+    """Stub para quando o canal efetivo é ``demo`` ou falta a WABA configurada.
+
+    Falha **no uso**, com a causa dita por extenso, em vez de no boot: o resto do produto
+    não depende de gerir template, e derrubar a aplicação inteira por causa de uma env
+    faltando repetiria o erro que ``canal_efetivo`` (§9c) existe para acusar.
+    """
+
+    def __init__(self, motivo: str) -> None:
+        self._motivo = motivo
+
+    def _falhar(self) -> None:
+        raise CatalogoTemplatesIndisponivel(self._motivo)
+
+    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+        self._falhar()
+        raise AssertionError("inalcançável")  # pragma: no cover
+
+    async def listar(self) -> list[TemplateRemoto]:
+        self._falhar()
+        raise AssertionError("inalcançável")  # pragma: no cover
+
+    async def remover(self, *, nome: str) -> bool:
+        self._falhar()
+        raise AssertionError("inalcançável")  # pragma: no cover

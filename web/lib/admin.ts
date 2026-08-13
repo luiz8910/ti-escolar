@@ -2541,3 +2541,102 @@ export async function salvarFicha(alunoId: string, campos: CamposFicha): Promise
   });
   return jsonOuErro(resp, "salvar a ficha");
 }
+
+// ======================= Catálogo de templates (HSM) ======================= //
+// Fora da janela de 24h só sai template aprovado pela Meta. **Global** = catálogo
+// compartilhado (o nome da escola vai como parâmetro), e só o super admin mexe, porque a
+// WABA é ativo comum a todas as escolas. **Da escola** = específico, com o nome prefixado
+// pelo slug para não colidir na WABA.
+export interface TemplateMensagem {
+  id: string;
+  tenant_id: string | null;
+  escopo: "global" | "escola";
+  nome: string;
+  categoria: string;
+  idioma: string;
+  corpo: string;
+  status: string;
+  utilizavel: boolean;
+  meta_template_id: string;
+  motivo_rejeicao: string;
+  exemplos: string[];
+  criado_em: string;
+  atualizado_em: string | null;
+}
+
+export interface SincronizacaoTemplates {
+  verificados: number;
+  atualizados: number;
+  desconhecidos: number;
+}
+
+export async function listarTemplates(): Promise<TemplateMensagem[]> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/templates?tenant_id=${tenantEmFoco()}`,
+    { headers: authHeaders() }
+  );
+  return jsonOuErro(resp, "listar templates");
+}
+
+export async function criarTemplate(dados: {
+  nome: string;
+  corpo: string;
+  categoria: string;
+  exemplos: string[];
+  /** `true` cria no catálogo compartilhado (exige super admin). */
+  global: boolean;
+}): Promise<TemplateMensagem> {
+  const resp = await apiFetch(`${API_URL}/api/admin/templates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tenant_id: dados.global ? null : tenantEmFoco(),
+      nome: dados.nome,
+      corpo: dados.corpo,
+      categoria: dados.categoria,
+      exemplos: dados.exemplos,
+    }),
+  });
+  return jsonOuErro(resp, "criar template");
+}
+
+export async function removerTemplate(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/templates/${id}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!resp.ok) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover template`);
+  }
+}
+
+export async function sincronizarTemplates(): Promise<SincronizacaoTemplates> {
+  const resp = await apiFetch(`${API_URL}/api/admin/templates/sincronizar`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "sincronizar templates com a Meta");
+}
+
+/** Os `{{n}}` do corpo, distintos e em ordem — para pedir um exemplo de cada. */
+export function placeholdersDoCorpo(corpo: string): number[] {
+  const achados = [...(corpo ?? "").matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
+  return [...new Set(achados)].sort((a, b) => a - b);
+}
+
+/** Espelha as regras do back-end para avisar **antes** de gastar uma submissão. */
+export function problemaNoCorpoDoTemplate(corpo: string): string | null {
+  const texto = (corpo ?? "").trim();
+  if (!texto) return "O corpo é obrigatório.";
+  const numeros = placeholdersDoCorpo(texto);
+  if (numeros.length === 0) return null;
+  if (!texto.replace(/\{\{\d+\}\}/g, "").trim())
+    return "O corpo não pode ser apenas variáveis — a Meta recusa template genérico.";
+  if (texto.startsWith("{{") || texto.endsWith("}}"))
+    return "O corpo não pode começar nem terminar com uma variável (regra da Meta).";
+  const esperado = Array.from({ length: numeros.length }, (_, i) => i + 1);
+  if (numeros.join(",") !== esperado.join(","))
+    return `As variáveis precisam ser numeradas em sequência a partir de {{1}}.`;
+  return null;
+}

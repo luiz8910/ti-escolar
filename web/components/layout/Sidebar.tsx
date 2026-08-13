@@ -50,6 +50,7 @@ const COMUNICACAO: NavItem[] = [
   { href: "/admin/atendimentos", label: "Atendimentos", icon: ChatBubbleIcon },
   { href: "/admin/documentos", label: "Documentos recebidos", icon: FileIcon },
   { href: "/admin/respostas-rapidas", label: "Respostas rápidas", icon: SparkIcon },
+  { href: "/admin/templates", label: "Templates de mensagem", icon: BellIcon },
   { href: "/admin/avisos", label: "Avisos do dia", icon: BellIcon },
   { href: "/admin/mural", label: "Mural do professor", icon: TeacherIcon },
   { href: "/admin/solicitacoes", label: "Canal do professor", icon: ChatBubbleIcon },

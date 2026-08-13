@@ -111,10 +111,22 @@ class Settings(BaseSettings):
     documento_retencao_dias: int = 365
 
     # Atendimento humano (§6j)
-    # Nome do template **aprovado na Meta** usado para reabrir uma conversa cuja janela de
-    # 24h expirou (a secretaria só viu o recado no dia seguinte). Vazio = sem retomada: o
-    # painel recusa a resposta com erro explícito, em vez de deixá-la sumir na Graph API.
-    template_retomada_atendimento: str = ""
+    # Nome do template usado para reabrir uma conversa cuja janela de 24h expirou (a
+    # secretaria só viu o recado no dia seguinte).
+    #
+    # **O default deixou de ser vazio em 12/ago/2026.** O vazio existia como trava: sem
+    # catálogo, nada no sistema sabia se o template estava aprovado na Meta, e disparar
+    # contra um template inexistente morre na Graph API — a secretaria acreditaria ter
+    # respondido alguém que nunca recebeu nada. Quem segurava isso era esta env, que
+    # precisava ser preenchida à mão no Render, escola por deploy.
+    #
+    # Com o catálogo (§9a-bis) a trava mudou de lugar e ficou melhor: quem responde "dá
+    # para enviar?" é o **status do template**, que vem da própria Meta pelo webhook ou
+    # pela sincronização. `_template_de_retomada` já exige `StatusTemplate.APROVADO`, então
+    # o modo de falha seguro está garantido sem depender de alguém lembrar de uma variável
+    # de ambiente. Preencher continua possível — serve para apontar outro nome ou para
+    # desligar a retomada (valor vazio).
+    template_retomada_atendimento: str = "retomada_atendimento"
 
     # Licenciamento / avisos por e-mail
     # Janela (em dias) para avisar que a licença anual está perto de vencer.

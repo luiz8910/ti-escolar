@@ -166,7 +166,16 @@ ti-escolar/
   `0033_usuario_cargo_hierarquia` →
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
-  `0037_conversa_sessao` → `0038_impressao_whatsapp`.
+  `0037_conversa_sessao` → `0038_impressao_whatsapp` → `0040_templates_catalogo`.
+  ⚠️ **O `0039` não existe** — o buraco era para a migration de anti-spam de documentos
+  (`0038_anti_spam_documentos`), que foi escrita mas **nunca chegou à `main`**: o PR #55
+  foi mergeado numa branch de feature que já tinha ido para a `main` por squash, e o
+  trabalho ficou órfão em `feat/documentos-busca-preview-ocr`. O número é rótulo: quem
+  define o grafo é o
+  `down_revision`. `0038` e `0040` foram escritas em paralelo, ambas apontando para o
+  `0037`, e a segunda a mergear (`0040`) **re-apontou** para a primeira. O CI passou a
+  recusar mais de um head, então o esquecimento falha o build em vez de quebrar o deploy —
+  que ali significa o container não subir, porque o `alembic upgrade head` roda no `CMD`.
   ⚠️ **O id da revisão cabe em 32 caracteres** — `alembic_version.version_num` é
   `VARCHAR(32)`. Estourar dá `StringDataRightTruncation` **só na hora de aplicar**, nunca
   ao escrever, e três migrations do projeto estão em exatamente 32. Conte antes.
@@ -847,6 +856,12 @@ resposta saindo pelo mesmo número da escola. Quem muda é quem escreve do outro
   aprovado, o painel **recusa com erro explícito** em vez de deixar a mensagem sumir na
   Graph API. O seed cria `retomada_atendimento` como **pendente** de propósito: enquanto a
   Meta não aprovar, o comportamento honesto é recusar.
+  - **O default da env deixou de ser vazio** em 12/ago/2026 (agora
+    `"retomada_atendimento"`). O vazio era a trava de "não sabemos se está aprovado", e
+    custava um preenchimento manual no Render a cada deploy. Com o catálogo (§9a-bis) quem
+    responde "dá para enviar?" é o **status do template**, que vem da Meta pelo webhook ou
+    pela sincronização — e `_template_de_retomada` já exige `APROVADO`. A trava ficou no
+    lugar certo: um fato verificado, não uma variável que alguém precisa lembrar.
 - **Casos de uso** em `app/application/atendimento_humano_use_cases.py`
   (`OferecerAtendimentoHumano`, `EscalarParaSecretaria`, `RegistrarRetornoDoResponsavel`,
   `ListarAtendimentos`, `ContarAtendimentosPendentes`, `Assumir`/`Responder`/`Resolver`/
@@ -1020,6 +1035,52 @@ Disparo de notificações/avisos a pais/responsáveis. Pontos obrigatórios de p
 - **Consentimento e status:** registrar **opt-in/opt-out**, respeitar a **janela de 24h**, e atualizar
   **status de entrega** (`sent` / `delivered` / `read` / `failed`) a partir dos **webhooks** da Meta.
 
+### 9a-bis. Catálogo de templates (criação no painel + submissão à Meta)
+
+Criar template era passo manual no WhatsApp Manager **mais** `INSERT` na tabela `templates`.
+Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanha, pela
+**WhatsApp Business Management API** (`/{waba_id}/message_templates`).
+
+- **Dois escopos, e o global é o caso comum.** `MessageTemplate.tenant_id` **nulo = global**:
+  templates moram na **WABA**, que é uma só para todas as escolas (§9e), e o nome é único
+  nela. Um `aviso_geral` por escola seriam N revisões da Meta para o mesmo texto e — pior — N
+  chances de rejeição num ativo compartilhado. Então o padrão é **um texto com o nome da
+  escola em `{{1}}`**, e o escopo por escola fica para o que é mesmo específico dela, com o
+  nome **prefixado pelo slug** (`rosacury_festa_junina`) para não colidir na WABA. Global só o
+  super admin cria/remove; da escola, o admin dela.
+- **Porta `CatalogoTemplates`** (`submeter`/`listar`/`remover`), separada de `MessageChannel`
+  porque é **outra API e outro escopo de token**: enviar usa `whatsapp_business_messaging` em
+  `/{phone_number_id}/messages`; gerir template usa `whatsapp_business_management` em
+  `/{waba_id}/message_templates`. Adaptador `MetaCatalogoTemplates`
+  (`app/infrastructure/channel/meta_templates.py`) + `CatalogoTemplatesAusente`, que falha
+  **no uso** com a causa por extenso (canal em demo, ou `META_WABA_ID` vazia) em vez de
+  derrubar o boot.
+- **Submeter não é aprovar.** O `POST` devolve `PENDING`; quem muda para aprovado é o webhook
+  `message_template_status_update` (§9c). `SincronizarTemplates` é a **rede de segurança**:
+  webhook perdido é indistinguível de revisão em curso, e sem reconciliação alguém esperaria
+  para sempre por uma aprovação que já saiu. Template que existe na Meta e não no catálogo é
+  **contado, não importado** — sem saber se é global ou de uma escola, o palpite erraria o
+  isolamento.
+- **Validação local antes de gastar uma submissão** (`app/application/validacao_template.py`).
+  Não é preciosismo: **rejeição conta contra a WABA compartilhada**, então uma escola que
+  apanhe três vezes respinga em todas. Recusa corpo que começa ou termina em variável (a
+  recusa que já levamos no `retomada_atendimento`), corpo que é só variável (a Meta o proíbe
+  justamente para impedir template genérico), numeração fora de sequência (os parâmetros são
+  posicionais), falta de exemplo (obrigatório quando há variável) e `authentication`.
+- **Estados da Meta além do nosso enum:** `PAUSED`/`DISABLED` são aprovados-e-caídos-por-
+  qualidade e **enviar com eles falha**, então mapeiam para `rejeitado` — com o motivo no
+  `motivo_rejeicao` — em vez de `aprovado`. Status desconhecido vira `pendente`, nunca
+  `aprovado`: falhar fechado evita liberar disparo com template que a Graph API recusa.
+- **Reclassificação é registrada em `warning`:** a Meta pode virar `utility` em `marketing`, o
+  que **muda o preço do disparo** — sem o log, isso só aparece na fatura.
+- **Rotas** `app/interfaces/api/templates.py` (`/api/admin/templates`): listar, obter, criar,
+  remover e `POST /sincronizar` (super admin). Migration `0040_templates_catalogo`
+  (`tenant_id` anulável, `meta_template_id`, `motivo_rejeicao`, `exemplos`, UNIQUE
+  `(nome, idioma)` espelhando a WABA). Cobertura: `tests/test_templates.py` (30 testes).
+- **[Roadmap]** o disparo a grupo ainda usa o `DEMO_TEMPLATE_ID` cravado em
+  `web/lib/admin.ts`; com o catálogo existindo, o passo natural é **escolher o template na
+  tela de disparo**.
+
 ### 9b. Confirmação de recebimento (não-entrega reativa)
 
 Análogo à "confirmação de recebimento" de e-mail: depois de um broadcast, aponta quais
@@ -1055,12 +1116,16 @@ foi **removida do código em 27/jul/2026** quando a verificação foi aprovada �
   Cobre texto livre (só dentro da janela de 24h), **template** (`nome` + `idioma` + parâmetros
   de body) e documento. Cota e throttling ficam nos casos de uso, não no adaptador.
 - **Webhook** (`app/interfaces/api/webhook.py`, `/api/webhook/meta`): o `GET` responde ao
-  handshake (`hub.challenge`) conferindo o `hub.verify_token`. O `POST` trata os **dois**
+  handshake (`hub.challenge`) conferindo o `hub.verify_token`. O `POST` trata os **três**
   caminhos que a Meta empacota no mesmo envelope: os **status de entrega**, aplicados aos
-  destinatários dos broadcasts via `RegistrarStatusEntrega`; e as **mensagens recebidas**,
+  destinatários dos broadcasts via `RegistrarStatusEntrega`; as **mensagens recebidas**,
   roteadas para o chatbot por `ProcessarInboundMeta` — a escola sai do
   `value.metadata.phone_number_id` e a resposta é **enviada ativamente** por uma nova chamada à
-  API (a Meta não aceita resposta no corpo do webhook). Ver §9e.1.
+  API (a Meta não aceita resposta no corpo do webhook); e a **revisão de template**
+  (`message_template_status_update` / `template_category_update`), aplicada ao catálogo por
+  `AtualizarStatusTemplateMeta` (§9a-bis). Esta última é a **única leitura do produto que
+  ignora `tenant_id`** — templates são da WABA e o evento não traz escola nenhuma —, e pode
+  fazê-lo porque o remetente já foi provado pela assinatura HMAC. Ver §9e.1.
 - **Autenticidade do webhook:** todo `POST` é validado pelo **`X-Hub-Signature-256`**
   (HMAC-SHA256 do **corpo bruto** com o app secret, comparação em tempo constante — só stdlib,
   `app/infrastructure/security.py · validar_assinatura_meta`) quando
@@ -1368,7 +1433,15 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - [x] **Autenticação JWT/sessão:** `POST /api/admin/login` emite um JWT (HS256, stdlib) e as
   rotas admin exigem `Authorization: Bearer`; o painel guarda o token (não a senha) no
   `localStorage`. Ver §6a.
-- [ ] Endpoint para listar/gerenciar **templates** (o painel ainda usa o template do seed).
+- [x] **Catálogo de templates** (12/ago/2026): criar no painel, **submeter à Meta** pela
+  Business Management API, e o webhook `message_template_status_update` fechando o ciclo.
+  Escopo **global** (catálogo compartilhado, super admin) + **por escola** (nome prefixado
+  pelo slug). Ver §9a-bis (`app/application/templates_use_cases.py`,
+  `web/app/admin/templates/`).
+  - [ ] **Escolher o template na tela de disparo** — o envio a grupo ainda usa o
+    `DEMO_TEMPLATE_ID` cravado em `web/lib/admin.ts`.
+  - [ ] **Assinar `message_template_status_update` no console da Meta** — sem isso o status
+    só muda pelo botão "Sincronizar". Ver `docs/producao-whatsapp.md` §5.
 - [x] **Transferência de responsáveis** (Onda 2 · F1) Progressão de série na virada de ano:
   os alunos ativos são promovidos para a série seguinte (ou marcados como ex-alunos na
   última série) e os responsáveis são inativados **apenas quando todos os seus alunos já são
@@ -1450,10 +1523,11 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   filtro na tela é conveniência, não segurança.
 - [ ] **Notificar o atendente por WhatsApp/e-mail** — hoje a notificação é in-app (badge com
   polling na sidebar). Exige um telefone no `Usuario`.
-- [ ] **Aprovar o template `retomada_atendimento` na Meta** e preencher
-  `TEMPLATE_RETOMADA_ATENDIMENTO`: sem ele, conversa com mais de 24h não pode ser
-  respondida (o painel recusa com erro explícito, §A9). É um passo manual no WhatsApp
-  Manager.
+- [x] **Template `retomada_atendimento` aprovado na Meta** (conferido em 12/ago/2026:
+  "Ativo — Qualidade pendente", que é o estado normal de aprovado que ainda não enviou o
+  bastante para ter nota). Já não é preciso preencher `TEMPLATE_RETOMADA_ATENDIMENTO` no
+  Render — virou o default —, mas o **status precisa chegar ao catálogo**, pelo webhook ou
+  pelo botão "Sincronizar com a Meta" (§9a-bis).
 
 **Documentos dos pais** _(ver §6k)_
 - [x] **Receber documento pelo WhatsApp** (imagem e PDF): baixado da Graph API, guardado na

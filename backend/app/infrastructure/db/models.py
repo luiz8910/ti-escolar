@@ -185,14 +185,33 @@ class TemplateORM(Base):
     __tablename__ = "templates"
 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
+    # NULO = template **global** (catálogo compartilhado entre as escolas). Ver
+    # `MessageTemplate`: templates moram na WABA, que é uma só, então o caso comum é um
+    # texto único com o nome da escola como parâmetro.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=True
     )
     nome: Mapped[str] = mapped_column(String(200))
     categoria: Mapped[str] = mapped_column(String(30))
     idioma: Mapped[str] = mapped_column(String(10))
     corpo: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20))
+    # Id do template na Meta — a chave que o webhook de status devolve.
+    meta_template_id: Mapped[str] = mapped_column(
+        String(64), default="", server_default="", index=True
+    )
+    motivo_rejeicao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Amostras dos {{n}} exigidas na submissão; não vão ao responsável.
+    exemplos: Mapped[list] = mapped_column(JSON, default=list)
+    criado_em: Mapped[datetime] = mapped_column(nullable=True)
+    atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        # (nome, idioma) é único **na WABA**, e a nossa WABA é uma só. Espelhar isso aqui
+        # transforma um erro genérico da Graph API, descoberto só na submissão, em uma
+        # recusa local com mensagem em português.
+        UniqueConstraint("nome", "idioma", name="uq_template_nome_idioma"),
+    )
 
 
 class BroadcastORM(Base):

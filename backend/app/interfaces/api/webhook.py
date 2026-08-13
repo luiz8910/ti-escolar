@@ -25,11 +25,16 @@ import logging
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.application.inbound_use_cases import ProcessarInboundMeta
+from app.application.templates_use_cases import AtualizarStatusTemplateMeta
 from app.application.use_cases import RegistrarStatusEntrega
 from app.config import get_settings
-from app.infrastructure.db.repositories import SqlBroadcastRepository
+from app.infrastructure.db.repositories import SqlBroadcastRepository, SqlTemplateRepository
 from app.infrastructure.security import validar_assinatura_meta
-from app.interfaces.deps import get_broadcast_repo, get_processar_inbound_meta
+from app.interfaces.deps import (
+    get_broadcast_repo,
+    get_processar_inbound_meta,
+    get_template_repo,
+)
 
 logger = logging.getLogger("webhook.meta")
 router = APIRouter(prefix="/api/webhook/meta", tags=["webhook"])
@@ -51,6 +56,7 @@ async def receber_evento(
     request: Request,
     broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
     inbound: ProcessarInboundMeta = Depends(get_processar_inbound_meta),
+    templates: SqlTemplateRepository = Depends(get_template_repo),
 ) -> Response | dict:
     settings = get_settings()
     # Lê os BYTES BRUTOS: o HMAC é calculado sobre eles, antes de qualquer parse. Fazer
@@ -76,16 +82,25 @@ async def receber_evento(
     # Aplica os status de entrega aos destinatários (sent/delivered/read/failed).
     atualizados = await RegistrarStatusEntrega(broadcasts=broadcasts).executar(payload=payload)
 
+    # Revisão de template concluída (aprovado/rejeitado) ou categoria reclassificada. É o
+    # que fecha o ciclo de submissão sem polling — a revisão da Meta é assíncrona e este
+    # evento é o único aviso de que ela terminou.
+    templates_atualizados = await AtualizarStatusTemplateMeta(templates=templates).executar(
+        payload=payload
+    )
+
     # Mensagens recebidas → chatbot. Processado em linha, como o webhook anterior fazia: a
     # Meta reenvia o evento se o 200 demorar, e o cache de idempotência (por wamid) absorve
     # a reentrega. [Roadmap] fila/worker, para o 200 nunca depender da latência da LLM.
     inbound_resultado = await inbound.executar(payload=payload)
 
     logger.info(
-        "Evento Meta recebido: %s (%d status de entrega; inbound: %d recebidas, "
-        "%d respondidas, %d descartadas, %d repetidas, %d ignoradas, %d limitadas)",
+        "Evento Meta recebido: %s (%d status de entrega; %d templates; inbound: %d "
+        "recebidas, %d respondidas, %d descartadas, %d repetidas, %d ignoradas, "
+        "%d limitadas)",
         payload.get("object"),
         atualizados,
+        templates_atualizados,
         inbound_resultado.recebidas,
         inbound_resultado.respondidas,
         inbound_resultado.descartadas,
@@ -96,6 +111,7 @@ async def receber_evento(
     return {
         "status": "received",
         "status_atualizados": atualizados,
+        "templates_atualizados": templates_atualizados,
         "mensagens_recebidas": inbound_resultado.recebidas,
         "mensagens_respondidas": inbound_resultado.respondidas,
         "mensagens_descartadas": inbound_resultado.descartadas,

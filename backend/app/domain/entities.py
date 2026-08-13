@@ -1328,15 +1328,63 @@ class StatusTemplate(str, enum.Enum):
 
 @dataclass
 class MessageTemplate:
-    """Template (HSM) exigido pela Meta fora da janela de 24h."""
+    """Template (HSM) exigido pela Meta fora da janela de 24h.
 
-    tenant_id: UUID
+    **``tenant_id`` nulo = template global**, do catálogo compartilhado. Não é um detalhe
+    de modelagem: templates moram na **WABA**, que na nossa topologia é uma só para todas
+    as escolas (§9e), e o nome é único nela. Um ``aviso_geral`` por escola significaria N
+    revisões da Meta para o mesmo texto — e, pior, N chances de rejeição num ativo que
+    todas compartilham. Então o caso comum é um template global com o nome da escola em
+    ``{{1}}``, e o escopo por escola fica para o que é mesmo específico dela, com o nome
+    prefixado pelo slug (``rosacury_festa_junina``) para não colidir na WABA.
+    """
+
     nome: str
     categoria: CategoriaTemplate
     idioma: str
     corpo: str  # com placeholders {{1}}, {{2}}...
+    tenant_id: UUID | None = None
     id: UUID = field(default_factory=_new_id)
     status: StatusTemplate = StatusTemplate.RASCUNHO
+    # Id do template na Meta (devolvido na submissão). É a chave que o webhook de
+    # ``message_template_status_update`` manda de volta.
+    meta_template_id: str = ""
+    # Por que a Meta recusou — sem isso a tela mostra "rejeitado" e ninguém sabe o que
+    # corrigir, que é o estado em que se resubmete o mesmo erro.
+    motivo_rejeicao: str = ""
+    # Valores de exemplo para os placeholders. **Obrigatórios pela Meta** quando o corpo
+    # tem variáveis: a revisão é humana e sem amostra o template é recusado de saída.
+    exemplos: list[str] = field(default_factory=list)
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime | None = None
+
+    @property
+    def global_(self) -> bool:
+        return self.tenant_id is None
+
+    @property
+    def escopo(self) -> str:
+        return "global" if self.global_ else "escola"
+
+    @property
+    def utilizavel(self) -> bool:
+        """Só template aprovado pela Meta pode ser enviado — o resto a Graph API recusa."""
+        return self.status is StatusTemplate.APROVADO
+
+    def visivel_para(self, tenant_id: UUID) -> bool:
+        return self.global_ or self.tenant_id == tenant_id
+
+
+@dataclass(frozen=True)
+class TemplateRemoto:
+    """Como a Meta descreve um template — o retrato do lado de lá, para sincronizar."""
+
+    nome: str
+    idioma: str
+    status: StatusTemplate
+    categoria: CategoriaTemplate
+    meta_template_id: str = ""
+    motivo_rejeicao: str = ""
 
 
 class StatusEntrega(str, enum.Enum):
