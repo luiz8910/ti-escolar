@@ -7,7 +7,8 @@ name: LGPD — auditoria
 #                   LLM agrega: ler o diff no contexto da lei. Não bloqueia o merge.
 #
 #                   O executor é a **Codex CLI** (`codex exec`, chave `OPENAI_API_KEY`),
-#                   em sandbox `read-only`. O prompt continua vindo do corpo de
+#                   **sem o sandbox dela** — ele não sobe em runner hospedado; o porquê
+#                   está no passo que a invoca. O prompt continua vindo do corpo de
 #                   `.claude/agents/lgpd-auditor.md` — o arquivo é a fonte da verdade e
 #                   segue servindo ao Claude Code em uso local; o frontmatter dele
 #                   (`model`, `tools`) só vale ali, não aqui.
