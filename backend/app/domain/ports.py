@@ -410,6 +410,15 @@ class CatalogoTemplates(Protocol):
 
     async def remover(self, *, nome: str, meta_waba_id: str) -> bool: ...
 
+    async def descrever(self, *, meta_waba_id: str) -> str | None:
+        """Nome da conta na Meta, ou ``None`` se o id não corresponde a uma que possamos ver.
+
+        Serve para **confirmar** um id antes de gravá-lo (``AdotarContaDoWebhook``): sem
+        isso, adotar um id lido de um evento seria acreditar num campo cujo significado a
+        documentação não afirma. Aqui a resposta da própria Meta decide.
+        """
+        ...
+
 
 @runtime_checkable
 class BroadcastRepository(Protocol):

@@ -273,9 +273,9 @@ async def _seed() -> None:
         # conta**: sem ela o catálogo demo nasceria sem status em lugar nenhum, e o disparo
         # da vitrine seria recusado por "não aprovado nesta conta" — correto, e inútil para
         # demonstrar.
-        # **Reaproveita a conta que já existir.** A migration `0042` cria a conta em uso a
-        # partir de `META_WABA_ID`; criar outra aqui deixaria o ambiente com duas — uma
-        # delas com id inventado — e o catálogo demo apontando para a falsa.
+        # **Reaproveita a conta que já existir.** A migration `0042` cria a conta em uso;
+        # criar outra aqui deixaria o ambiente com duas e o catálogo demo apontando para a
+        # errada.
         conta_id = (
             await session.execute(select(WabaORM.id).order_by(WabaORM.criado_em).limit(1))
         ).scalar_one_or_none()
@@ -284,9 +284,11 @@ async def _seed() -> None:
             session.add(
                 WabaORM(
                     id=conta_id,
-                    meta_waba_id=settings.meta_waba_id or "000000000000000",
+                    # Sem id: o demo não fala com a Graph API, e inventar um número aqui
+                    # colocaria um id falso no banco de quem for ligar o canal depois.
+                    meta_waba_id="",
                     nome="WABA principal",
-                    meta_business_id=settings.meta_business_id or "",
+                    meta_business_id="",
                     ativo=True,
                     criado_em=datetime.now(timezone.utc),
                 )

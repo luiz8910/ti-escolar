@@ -20,10 +20,12 @@ Três mudanças:
    texto continua um só: replicar a linha inteira faria de editar um corpo o trabalho de
    manter N cópias em sincronia.
 
-**Migração de dados:** a conta atual é criada a partir de ``META_WABA_ID``; todas as
-escolas apontam para ela e todo status existente é copiado para lá — nenhuma aprovação é
-perdida. Sem a env, a linha nasce **inativa** e sem id: o estado fica visível no painel
-para ser corrigido, em vez de as aprovações sumirem sem aviso.
+**Migração de dados:** a conta atual nasce **sem o id da Meta** e recebe todas as escolas e
+todos os status existentes — nenhuma aprovação é perdida. O id não vem de variável de
+ambiente **de propósito**: ele é cadastro, e amarrá-lo ao ambiente reintroduziria a
+premissa de conta única que esta migration existe para desfazer. Ele chega por um dos dois
+caminhos, os dois visíveis: o painel (Administração → Contas WhatsApp) ou o primeiro evento
+do webhook, que carrega o id e é conferido contra a Graph API antes de ser gravado.
 
 Revision ID: 0042_wabas_multiplas
 Revises: 0041_anti_spam_documentos
@@ -32,7 +34,6 @@ Create Date: 2026-08-13
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import sqlalchemy as sa
@@ -103,14 +104,10 @@ def upgrade() -> None:
 def _migrar_conta_atual() -> None:
     """Cria a linha da conta em uso e move os status existentes para ela.
 
-    Roda mesmo sem ``META_WABA_ID``: o que não pode acontecer é o catálogo existente ficar
-    órfão de conta, porque aí todo template viraria "não submetido" e o produto passaria a
-    recusar disparos que hoje funcionam.
+    O que não pode acontecer é o catálogo existente ficar órfão de conta: aí todo template
+    viraria "não submetido" e o produto passaria a recusar disparos que hoje funcionam.
     """
     conexao = op.get_bind()
-
-    meta_waba_id = (os.environ.get("META_WABA_ID") or "").strip()
-    meta_business_id = (os.environ.get("META_BUSINESS_ID") or "").strip()
     waba_id = uuid.uuid4()
 
     conexao.execute(
@@ -120,12 +117,14 @@ def _migrar_conta_atual() -> None:
         ),
         {
             "id": waba_id,
-            "meta": meta_waba_id,
+            # Sem id: quem o preenche é o painel ou o primeiro evento do webhook. Ativa
+            # mesmo assim — a submissão sem id falha com a causa por extenso ("preencha o
+            # id em Administração → Contas WhatsApp"), que é melhor do que a conta sumir
+            # das telas por estar inativa.
+            "meta": "",
             "nome": "WABA principal",
-            "business": meta_business_id,
-            # Sem id na Meta não há onde submeter: a conta existe para não órfãos os
-            # templates, mas não deve receber replicação até alguém preencher o id.
-            "ativo": bool(meta_waba_id),
+            "business": "",
+            "ativo": True,
         },
     )
 

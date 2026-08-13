@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.templates_use_cases import AtualizarStatusTemplateMeta
+from app.application.waba_use_cases import AdotarContaDoWebhook
 from app.application.use_cases import RegistrarStatusEntrega
 from app.config import get_settings
 from app.infrastructure.db.repositories import (
@@ -37,6 +38,7 @@ from app.infrastructure.security import validar_assinatura_meta
 from app.interfaces.deps import (
     get_broadcast_repo,
     get_processar_inbound_meta,
+    get_adotar_conta,
     get_template_repo,
     get_waba_repo,
 )
@@ -63,6 +65,7 @@ async def receber_evento(
     inbound: ProcessarInboundMeta = Depends(get_processar_inbound_meta),
     templates: SqlTemplateRepository = Depends(get_template_repo),
     wabas: SqlWabaRepository = Depends(get_waba_repo),
+    adotar_conta: AdotarContaDoWebhook = Depends(get_adotar_conta),
 ) -> Response | dict:
     settings = get_settings()
     # Lê os BYTES BRUTOS: o HMAC é calculado sobre eles, antes de qualquer parse. Fazer
@@ -84,6 +87,12 @@ async def receber_evento(
     except json.JSONDecodeError:
         logger.warning("Webhook Meta recusado: corpo não é JSON válido")
         return Response(status_code=status.HTTP_400_BAD_REQUEST)
+
+    # A conta (WABA) do evento, quando ela ainda não tem id cadastrado. Roda **depois** da
+    # validação de assinatura, e por isso pode confiar que o remetente é a Meta — mas
+    # confirma o id contra a Graph API antes de gravar, porque a documentação não afirma
+    # que `entry[].id` é a WABA. Nada aqui interrompe o webhook.
+    await adotar_conta.executar(payload=payload)
 
     # Aplica os status de entrega aos destinatários (sent/delivered/read/failed).
     atualizados = await RegistrarStatusEntrega(broadcasts=broadcasts).executar(payload=payload)

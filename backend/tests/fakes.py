@@ -459,6 +459,9 @@ class FakeCatalogoTemplates:
         self.submetidos: list[MessageTemplate] = []
         self.contas_submetidas: list[str] = []
         self.removidos: list[str] = []
+        # id na Meta -> nome. `None` confirma qualquer id; um dicionário deixa o teste
+        # dizer quais existem de verdade do lado de lá.
+        self.contas_conhecidas: dict[str, str] | None = None
         self._status = status
         self._remotos = remotos or []
         self._erro = erro
@@ -488,6 +491,12 @@ class FakeCatalogoTemplates:
             raise self._erro
         self.removidos.append(nome)
         return True
+
+    async def descrever(self, *, meta_waba_id: str) -> str | None:
+        """Confirma o id na "Meta". ``contas_conhecidas=None`` = confirma qualquer um."""
+        if self.contas_conhecidas is None:
+            return "Conta confirmada"
+        return self.contas_conhecidas.get(meta_waba_id)
 
 
 class FakeAuditLogRepo:

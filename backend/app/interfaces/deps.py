@@ -20,6 +20,7 @@ from app.application.templates_use_cases import (
     SincronizarTemplates,
 )
 from app.application.tenant_use_cases import NotificarLicencasAVencer
+from app.application.waba_use_cases import AdotarContaDoWebhook
 from app.application.atendimento_humano_use_cases import (
     MesaDeAtendimento,
     ResponderAtendimento,
@@ -391,6 +392,16 @@ def get_replicar_templates(
 
 def get_waba_repo(session: AsyncSession = Depends(get_session)) -> SqlWabaRepository:
     return SqlWabaRepository(session)
+
+
+def get_adotar_conta(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> AdotarContaDoWebhook:
+    return AdotarContaDoWebhook(
+        wabas=SqlWabaRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+    )
 
 
 def get_audit_repo(session: AsyncSession = Depends(get_session)) -> SqlAuditLogRepository:
