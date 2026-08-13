@@ -64,6 +64,7 @@ from app.domain.entities import (
     TrechoConhecimento,
     TurnoConversa,
     Usuario,
+    Waba,
 )
 
 
@@ -339,6 +340,8 @@ class TemplateRepository(Protocol):
 
         O evento de status não traz escola nenhuma (templates são da WABA), então esta é
         a única chave que o webhook tem. Por isso ela ignora ``tenant_id`` de propósito.
+        O id é emitido **por WABA**, então ele identifica não só o texto como em qual
+        conta ele foi revisado.
         """
         ...
 
@@ -353,6 +356,32 @@ class TemplateRepository(Protocol):
 
 
 @runtime_checkable
+class WabaRepository(Protocol):
+    """As contas do WhatsApp Business em que as escolas operam (``Waba``).
+
+    Poucas linhas e raramente escritas — uma a cada lote de escolas —, mas é sobre esta
+    lista que a replicação de template global itera: um texto novo precisa ir para toda
+    conta ativa, senão as escolas de uma delas ficam sem catálogo.
+    """
+
+    async def listar(self, *, apenas_ativas: bool = False) -> list[Waba]: ...
+
+    async def obter(self, waba_id: UUID) -> Waba | None: ...
+
+    async def por_meta_id(self, meta_waba_id: str) -> Waba | None:
+        """A conta pelo id na Meta — como o webhook a identifica (``entry[].id``)."""
+        ...
+
+    async def salvar(self, waba: Waba) -> Waba: ...
+
+    async def remover(self, waba_id: UUID) -> bool: ...
+
+    async def total_escolas(self) -> dict[UUID, int]:
+        """Quantas escolas em cada conta — a ocupação contra o teto de números."""
+        ...
+
+
+@runtime_checkable
 class CatalogoTemplates(Protocol):
     """Gestão de templates na Meta (WhatsApp Business Management API).
 
@@ -360,9 +389,16 @@ class CatalogoTemplates(Protocol):
     ``whatsapp_business_messaging`` e fala com ``/{phone_number_id}/messages``; gerenciar
     template usa ``whatsapp_business_management`` e fala com ``/{waba_id}/message_templates``.
     Misturar as duas obrigaria todo canal a saber submeter template a revisão.
+
+    **A conta é parâmetro, não estado do adaptador.** O mesmo token administra todas as
+    WABAs do portfólio, e o que muda entre elas é só o nó da URL; fixar uma no construtor
+    faria o produto inteiro escrever numa conta só — que é como o catálogo nasceu, e o
+    motivo de a segunda WABA quebrá-lo.
     """
 
-    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+    async def submeter(
+        self, template: MessageTemplate, *, meta_waba_id: str
+    ) -> TemplateRemoto:
         """Cria o template na Meta e o põe em revisão (é o mesmo POST).
 
         A revisão é **assíncrona**: o retorno é o estado inicial (normalmente pendente),
@@ -370,9 +406,9 @@ class CatalogoTemplates(Protocol):
         """
         ...
 
-    async def listar(self) -> list[TemplateRemoto]: ...
+    async def listar(self, *, meta_waba_id: str) -> list[TemplateRemoto]: ...
 
-    async def remover(self, *, nome: str) -> bool: ...
+    async def remover(self, *, nome: str, meta_waba_id: str) -> bool: ...
 
 
 @runtime_checkable

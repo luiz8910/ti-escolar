@@ -214,6 +214,7 @@ class CriarEscola:
         whatsapp_numero: str = "",
         telefone_contato: str = "",
         meta_phone_number_id: str = "",
+        waba_id: UUID | None = None,
         expediente_dias: Sequence[int] | None = None,
         expediente_inicio: str | None = None,
         expediente_fim: str | None = None,
@@ -243,6 +244,7 @@ class CriarEscola:
                 slug=slug,
                 whatsapp_numero=numero,
                 meta_phone_number_id=meta_id,
+                waba_id=waba_id,
                 telefone_contato=contato,
                 expediente_dias=dias,
                 expediente_inicio=inicio,
@@ -284,6 +286,7 @@ class AtualizarEscola:
         whatsapp_numero: str = "",
         telefone_contato: str = "",
         meta_phone_number_id: str = "",
+        waba_id: UUID | None = None,
         expediente_dias: Sequence[int] | None = None,
         expediente_inicio: str | None = None,
         expediente_fim: str | None = None,
@@ -319,6 +322,7 @@ class AtualizarEscola:
         existente.slug = slug
         existente.whatsapp_numero = numero
         existente.meta_phone_number_id = meta_id
+        existente.waba_id = waba_id
         existente.telefone_contato = contato
         existente.expediente_dias = dias
         existente.expediente_inicio = inicio

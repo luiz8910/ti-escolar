@@ -48,7 +48,12 @@ from app.domain.entities import (
     Turno,
     Usuario,
 )
-from app.infrastructure.db.models import TemplateORM, TenantORM
+from app.infrastructure.db.models import (
+    TemplateORM,
+    TemplateWabaORM,
+    TenantORM,
+    WabaORM,
+)
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
@@ -79,6 +84,7 @@ from app.infrastructure.security import hash_senha
 
 # Tenant fixo para o demo (o front-end usa este id).
 DEMO_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+DEMO_WABA_ID = uuid.UUID("00000000-0000-0000-0000-0000000000b1")
 DEMO_TEMPLATE_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
 DEMO_TEMPLATE_RETOMADA_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a2")
 
@@ -263,10 +269,37 @@ async def _seed() -> None:
                     tenant_id=DEMO_TENANT_ID, tipo=tipo, titulo=titulo, conteudo=conteudo
                 )
 
-        # Template de aviso geral. **Global** (``tenant_id=None``): templates moram na
-        # WABA, que é uma só, então o nome da escola é parâmetro e não texto fixo. O corpo
-        # antigo assinava "Escola Demonstração" cravado — num catálogo compartilhado isso
-        # faria toda escola assinar como a de demonstração.
+        # Conta do WhatsApp Business da demonstração. Existe porque **template mora numa
+        # conta**: sem ela o catálogo demo nasceria sem status em lugar nenhum, e o disparo
+        # da vitrine seria recusado por "não aprovado nesta conta" — correto, e inútil para
+        # demonstrar.
+        # **Reaproveita a conta que já existir.** A migration `0042` cria a conta em uso a
+        # partir de `META_WABA_ID`; criar outra aqui deixaria o ambiente com duas — uma
+        # delas com id inventado — e o catálogo demo apontando para a falsa.
+        conta_id = (
+            await session.execute(select(WabaORM.id).order_by(WabaORM.criado_em).limit(1))
+        ).scalar_one_or_none()
+        if conta_id is None:
+            conta_id = DEMO_WABA_ID
+            session.add(
+                WabaORM(
+                    id=conta_id,
+                    meta_waba_id=settings.meta_waba_id or "000000000000000",
+                    nome="WABA principal",
+                    meta_business_id=settings.meta_business_id or "",
+                    ativo=True,
+                    criado_em=datetime.now(timezone.utc),
+                )
+            )
+            await session.flush()
+        escola_demo = await session.get(TenantORM, DEMO_TENANT_ID)
+        if escola_demo is not None and escola_demo.waba_id is None:
+            escola_demo.waba_id = conta_id
+
+        # Template de aviso geral. **Global** (``tenant_id=None``): o nome da escola é
+        # parâmetro e não texto fixo. O corpo antigo assinava "Escola Demonstração"
+        # cravado — num catálogo compartilhado isso faria toda escola assinar como a de
+        # demonstração.
         template = await session.get(TemplateORM, DEMO_TEMPLATE_ID)
         if template is None:
             session.add(
@@ -281,7 +314,15 @@ async def _seed() -> None:
                         "fale com a secretaria."
                     ),
                     exemplos=["Maria Silva", "EM Rosa Cury", "a reunião de pais será dia 20/08, às 15h."],
+                )
+            )
+            session.add(
+                TemplateWabaORM(
+                    id=uuid.uuid4(),
+                    template_id=DEMO_TEMPLATE_ID,
+                    waba_id=conta_id,
                     status="aprovado",
+                    atualizado_em=datetime.now(timezone.utc),
                 )
             )
 
@@ -307,6 +348,13 @@ async def _seed() -> None:
                         "EM Rosa Cury",
                         "a declaração de escolaridade já está pronta e pode ser retirada na secretaria.",
                     ],
+                )
+            )
+            session.add(
+                TemplateWabaORM(
+                    id=uuid.uuid4(),
+                    template_id=DEMO_TEMPLATE_RETOMADA_ID,
+                    waba_id=conta_id,
                     status="pendente",
                 )
             )

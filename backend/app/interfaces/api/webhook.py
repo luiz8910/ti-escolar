@@ -28,12 +28,17 @@ from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.templates_use_cases import AtualizarStatusTemplateMeta
 from app.application.use_cases import RegistrarStatusEntrega
 from app.config import get_settings
-from app.infrastructure.db.repositories import SqlBroadcastRepository, SqlTemplateRepository
+from app.infrastructure.db.repositories import (
+    SqlBroadcastRepository,
+    SqlTemplateRepository,
+    SqlWabaRepository,
+)
 from app.infrastructure.security import validar_assinatura_meta
 from app.interfaces.deps import (
     get_broadcast_repo,
     get_processar_inbound_meta,
     get_template_repo,
+    get_waba_repo,
 )
 
 logger = logging.getLogger("webhook.meta")
@@ -57,6 +62,7 @@ async def receber_evento(
     broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
     inbound: ProcessarInboundMeta = Depends(get_processar_inbound_meta),
     templates: SqlTemplateRepository = Depends(get_template_repo),
+    wabas: SqlWabaRepository = Depends(get_waba_repo),
 ) -> Response | dict:
     settings = get_settings()
     # Lê os BYTES BRUTOS: o HMAC é calculado sobre eles, antes de qualquer parse. Fazer
@@ -85,9 +91,9 @@ async def receber_evento(
     # Revisão de template concluída (aprovado/rejeitado) ou categoria reclassificada. É o
     # que fecha o ciclo de submissão sem polling — a revisão da Meta é assíncrona e este
     # evento é o único aviso de que ela terminou.
-    templates_atualizados = await AtualizarStatusTemplateMeta(templates=templates).executar(
-        payload=payload
-    )
+    templates_atualizados = await AtualizarStatusTemplateMeta(
+        templates=templates, wabas=wabas
+    ).executar(payload=payload)
 
     # Mensagens recebidas → chatbot. Processado em linha, como o webhook anterior fazia: a
     # Meta reenvia o evento se o 200 demorar, e o cache de idempotência (por wamid) absorve

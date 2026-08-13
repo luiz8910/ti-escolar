@@ -142,7 +142,12 @@ class Settings(BaseSettings):
     # Número remetente PADRÃO (fallback): usado quando a escola não tem o seu próprio
     # phone_number_id cadastrado. Em produção multi-tenant cada escola tem o seu — ver §9e.
     meta_phone_number_id: str | None = None
+    # WABA e portfólio: **só semente**. Quem endereça o catálogo de templates é a `Waba`
+    # do banco, escolhida pela escola — uma env não comporta a segunda conta, e foi por
+    # isso que ela deixou de ser a fonte da verdade (§9e.3). Estes valores são lidos uma
+    # única vez, pela migration `0042`, para criar a linha da conta que já existia.
     meta_waba_id: str | None = None
+    meta_business_id: str | None = None
     # Token de USUÁRIO DO SISTEMA (o token da tela de Configuração da API expira em 24h).
     meta_access_token: str | None = None
     # Token do handshake GET do webhook (hub.verify_token). TROQUE em produção.

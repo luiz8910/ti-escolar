@@ -39,6 +39,7 @@ from app.domain.entities import (
     RespostaLLM,
     StatusAtendimentoHumano,
     StatusTemplate,
+    TemplateNaWaba,
     Tenant,
     Usuario,
 )
@@ -53,6 +54,7 @@ from tests.fakes import (
     FakeTenantRepo,
     FakeVectorStore,
     fake_embedder,
+    WABA_PADRAO_ID,
 )
 
 TENANT = uuid.uuid4()
@@ -382,7 +384,7 @@ async def test_janela_expirada_com_template_aprovado_reabre_a_conversa():
         categoria=CategoriaTemplate.UTILITY,
         idioma="pt_BR",
         corpo="Olá! Aqui é a secretaria da {{1}}. Sobre a sua mensagem: {{2}} Se precisar de algo mais, é só responder por aqui.",
-        status=StatusTemplate.APROVADO,
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
     )
     canal = FakeChannel()
 
@@ -415,7 +417,7 @@ async def test_template_pendente_de_aprovacao_nao_serve():
         categoria=CategoriaTemplate.UTILITY,
         idioma="pt_BR",
         corpo="{{1}} {{2}}",
-        status=StatusTemplate.PENDENTE,
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.PENDENTE)],
     )
 
     with pytest.raises(ValueError, match="janela de 24h"):

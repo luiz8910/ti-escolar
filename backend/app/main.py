@@ -35,6 +35,7 @@ from app.interfaces.api import (
     respostas_rapidas,
     seguranca,
     templates,
+    wabas,
     webhook,
 )
 from app.interfaces.middleware import ContextoRequisicaoMiddleware, registrar_handlers
@@ -133,6 +134,7 @@ app.include_router(fichas.router)
 app.include_router(matricula.router)
 app.include_router(seguranca.router)
 app.include_router(templates.router)
+app.include_router(wabas.router)
 app.include_router(logs.router)
 app.include_router(webhook.router)
 

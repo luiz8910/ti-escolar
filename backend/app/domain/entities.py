@@ -74,6 +74,35 @@ def formatar_hora(h: time) -> str:
 
 
 @dataclass
+class Waba:
+    """Uma conta do WhatsApp Business (WABA) sob a qual escolas operam.
+
+    **Por que é entidade e não uma variável de ambiente.** A WABA é o endereço de tudo
+    que é template (``/{waba_id}/message_templates``) e uma só não comporta o produto
+    inteiro: o cadastro de números tem teto (§9e.3), e ao esgotá-lo a escola seguinte
+    entra em outra conta. Com o id numa env, a vigésima primeira escola criaria template
+    na conta errada — onde o número dela não está — e o disparo falharia na Graph API
+    depois de o painel já ter dito "aprovado".
+
+    ``meta_business_id`` é o **portfólio** dono da conta, e não é decoração: o teto de
+    números e o limite diário de envio são medidos ali, não por WABA. Guardá-lo é o que
+    permite responder "quantos números ainda cabem?" sem abrir o console.
+    """
+
+    meta_waba_id: str
+    nome: str
+    id: UUID = field(default_factory=_new_id)
+    # Portfólio empresarial (Meta Business Account) dono desta WABA. Vazio = não
+    # informado; só atrapalha a contagem de ocupação, não o envio.
+    meta_business_id: str = ""
+    # Desligada, deixa de receber replicação de template novo e de ser oferecida a escola
+    # nova. Não é o mesmo que remover: as escolas que já estão nela seguem operando.
+    ativo: bool = True
+    criado_em: datetime = field(default_factory=_now)
+    atualizado_em: datetime | None = None
+
+
+@dataclass
 class Tenant:
     """Uma escola. Raiz de isolamento multi-tenant.
 
@@ -101,6 +130,11 @@ class Tenant:
     # o mesmo id tornariam o roteamento do inbound ambíguo). Vazio = usa o número padrão da
     # env (``META_PHONE_NUMBER_ID``).
     meta_phone_number_id: str = ""
+    # WABA (``Waba``) onde o número desta escola está cadastrado. É o que diz **onde**
+    # criar e conferir template para ela — o número roteia a mensagem, a WABA responde
+    # pelo catálogo. Nulo = escola ainda sem conta atribuída: dispara pelo número, mas o
+    # painel não sabe em qual catálogo procurar e recusa o envio por template.
+    waba_id: UUID | None = None
     # Telefone de contato (E.164) público da escola — o número que a secretaria já usa no
     # dia a dia. É apenas **informativo** (referência de contato): não roteia inbound, não é
     # remetente do outbound e não exige unicidade entre escolas. Ver ``whatsapp_numero`` para
@@ -1327,16 +1361,50 @@ class StatusTemplate(str, enum.Enum):
 
 
 @dataclass
+class TemplateNaWaba:
+    """O mesmo texto de template, do lado de **uma** WABA.
+
+    Existe porque template é aprovado **por WABA**: o ``aviso_reuniao`` aprovado na WABA
+    onde estão as vinte primeiras escolas simplesmente **não existe** na segunda. Enquanto
+    o status morava numa coluna só do template, o produto respondia "aprovado" para uma
+    escola cujo número está na outra conta — e a Graph API recusava o envio depois de a
+    trava já ter dado o aval. É o único lugar onde `meta_template_id` faz sentido: a Meta
+    emite um id por WABA para o mesmo texto.
+    """
+
+    waba_id: UUID
+    status: StatusTemplate = StatusTemplate.PENDENTE
+    meta_template_id: str = ""
+    motivo_rejeicao: str = ""
+    atualizado_em: datetime | None = None
+
+
+# Do pior para o melhor. `REJEITADO` primeiro porque é o único que exige ação humana;
+# `RASCUNHO` aqui significa "ainda não submetido nesta WABA", que também impede o envio.
+_ORDEM_STATUS_TEMPLATE = [
+    StatusTemplate.REJEITADO,
+    StatusTemplate.RASCUNHO,
+    StatusTemplate.PENDENTE,
+    StatusTemplate.APROVADO,
+]
+
+
+@dataclass
 class MessageTemplate:
     """Template (HSM) exigido pela Meta fora da janela de 24h.
 
-    **``tenant_id`` nulo = template global**, do catálogo compartilhado. Não é um detalhe
-    de modelagem: templates moram na **WABA**, que na nossa topologia é uma só para todas
-    as escolas (§9e), e o nome é único nela. Um ``aviso_geral`` por escola significaria N
-    revisões da Meta para o mesmo texto — e, pior, N chances de rejeição num ativo que
-    todas compartilham. Então o caso comum é um template global com o nome da escola em
-    ``{{1}}``, e o escopo por escola fica para o que é mesmo específico dela, com o nome
-    prefixado pelo slug (``rosacury_festa_junina``) para não colidir na WABA.
+    **``tenant_id`` nulo = template global**, do catálogo compartilhado — o caso comum: um
+    ``aviso_geral`` com o nome da escola em ``{{1}}`` é revisado uma vez e serve todas, em
+    vez de N revisões do mesmo texto e N chances de rejeição. O escopo por escola fica
+    para o que é mesmo específico dela, com o nome prefixado pelo slug
+    (``rosacury_festa_junina``).
+
+    **O texto é um; as submissões são N.** Templates moram na WABA, e uma WABA não comporta
+    todas as escolas (§9e.3), então o mesmo global precisa ser replicado em cada uma.
+    Duplicar a linha inteira por WABA faria de editar um texto um trabalho de manter N
+    cópias em sincronia — e o painel mostraria o mesmo template várias vezes. Por isso o
+    corpo, a categoria e os exemplos vivem aqui, uma vez só, e o que varia por WABA (id na
+    Meta, status, motivo) fica em ``wabas``.
     """
 
     nome: str
@@ -1345,13 +1413,9 @@ class MessageTemplate:
     corpo: str  # com placeholders {{1}}, {{2}}...
     tenant_id: UUID | None = None
     id: UUID = field(default_factory=_new_id)
-    status: StatusTemplate = StatusTemplate.RASCUNHO
-    # Id do template na Meta (devolvido na submissão). É a chave que o webhook de
-    # ``message_template_status_update`` manda de volta.
-    meta_template_id: str = ""
-    # Por que a Meta recusou — sem isso a tela mostra "rejeitado" e ninguém sabe o que
-    # corrigir, que é o estado em que se resubmete o mesmo erro.
-    motivo_rejeicao: str = ""
+    # Uma entrada por WABA onde este texto foi submetido. Vazio = ainda não foi a lugar
+    # nenhum (rascunho).
+    wabas: list[TemplateNaWaba] = field(default_factory=list)
     # Valores de exemplo para os placeholders. **Obrigatórios pela Meta** quando o corpo
     # tem variáveis: a revisão é humana e sem amostra o template é recusado de saída.
     exemplos: list[str] = field(default_factory=list)
@@ -1366,10 +1430,47 @@ class MessageTemplate:
     def escopo(self) -> str:
         return "global" if self.global_ else "escola"
 
+    def na_waba(self, waba_id: UUID | None) -> TemplateNaWaba | None:
+        if waba_id is None:
+            return None
+        return next((w for w in self.wabas if w.waba_id == waba_id), None)
+
+    def status_em(self, waba_id: UUID | None) -> StatusTemplate:
+        """Status **naquela** WABA. Não submetido lá é ``RASCUNHO``, nunca ``APROVADO``.
+
+        Falhar fechado é o ponto: a pergunta que o envio faz é "dá para enviar por este
+        número?", e a resposta para uma WABA onde o texto nunca foi submetido é não.
+        """
+        entrada = self.na_waba(waba_id)
+        return entrada.status if entrada else StatusTemplate.RASCUNHO
+
+    def aprovado_em(self, waba_id: UUID | None) -> bool:
+        return self.status_em(waba_id) is StatusTemplate.APROVADO
+
+    def motivo_em(self, waba_id: UUID | None) -> str:
+        entrada = self.na_waba(waba_id)
+        return entrada.motivo_rejeicao if entrada else ""
+
+    @property
+    def status(self) -> StatusTemplate:
+        """Status consolidado para exibição: o **pior** entre as WABAs.
+
+        A tela precisa de um selo só, e o selo otimista seria o perigoso — "aprovado" com
+        uma WABA ainda pendente convida a secretaria daquela escola a um disparo que
+        falha. Sem nenhuma WABA, é rascunho.
+        """
+        if not self.wabas:
+            return StatusTemplate.RASCUNHO
+        return min(
+            (w.status for w in self.wabas),
+            key=lambda s: _ORDEM_STATUS_TEMPLATE.index(s),
+        )
+
     @property
     def utilizavel(self) -> bool:
-        """Só template aprovado pela Meta pode ser enviado — o resto a Graph API recusa."""
-        return self.status is StatusTemplate.APROVADO
+        """Enviável em **todas** as WABAs em que existe. Para uma escola específica, a
+        pergunta certa é ``aprovado_em(waba_id)`` — esta é a visão do catálogo."""
+        return bool(self.wabas) and self.status is StatusTemplate.APROVADO
 
     def visivel_para(self, tenant_id: UUID) -> bool:
         return self.global_ or self.tenant_id == tenant_id

@@ -753,10 +753,24 @@ class EnviarBroadcast:
         # ``remetente_canal`` entrega o ``meta_phone_number_id`` (o que a Graph API exige na
         # URL de envio) e cai no E.164 quando a escola ainda não tem id na Meta.
         remetente: str | None = None
+        escola = None
         if self._tenants is not None:
             escola = await self._tenants.obter(broadcast.tenant_id)
             remetente = (escola.remetente_canal or None) if escola else None
-        if template.status != StatusTemplate.APROVADO:
+
+        # A pergunta não é "este template está aprovado?", e sim "está aprovado **na conta
+        # em que está o número desta escola**?". Template é revisado por WABA, e o mesmo
+        # texto aprovado na conta A não existe na B: perguntar em geral fazia a trava
+        # liberar o disparo para a Graph API recusar depois (§9e.3).
+        if escola is not None:
+            if not template.aprovado_em(escola.waba_id):
+                raise ValueError(
+                    "O template precisa estar APROVADO pela Meta, na conta do WhatsApp "
+                    "desta escola, para disparo fora da janela de 24h."
+                )
+        elif template.status != StatusTemplate.APROVADO:
+            # Sem repositório de escola não dá para saber a conta; o status agregado é o
+            # **pior** entre as contas, então cair nele erra para o lado seguro.
             raise ValueError(
                 "O template precisa estar APROVADO pela Meta para disparo fora da janela de 24h."
             )

@@ -147,6 +147,8 @@ export interface Escola {
   whatsapp_numero: string;
   /** phone_number_id do número da escola na Meta: origem do outbound e roteamento do inbound. */
   meta_phone_number_id: string;
+  /** Conta do WhatsApp Business (WABA) onde o número está — é onde ficam os templates dela. */
+  waba_id: string | null;
   telefone_contato: string;
   expediente: Expediente | null;
   criado_em: string;
@@ -513,7 +515,8 @@ export async function criarEscola(
   whatsappNumero = "",
   telefoneContato = "",
   metaPhoneNumberId = "",
-  expediente: ExpedienteEntrada = {}
+  expediente: ExpedienteEntrada = {},
+  wabaId: string | null = null
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas`, {
     method: "POST",
@@ -524,6 +527,7 @@ export async function criarEscola(
       whatsapp_numero: whatsappNumero,
       telefone_contato: telefoneContato,
       meta_phone_number_id: metaPhoneNumberId,
+      waba_id: wabaId,
       ...expediente,
     }),
   });
@@ -538,7 +542,8 @@ export async function atualizarEscola(
   whatsappNumero = "",
   telefoneContato = "",
   metaPhoneNumberId = "",
-  expediente: ExpedienteEntrada = {}
+  expediente: ExpedienteEntrada = {},
+  wabaId: string | null = null
 ): Promise<Escola> {
   const resp = await apiFetch(`${API_URL}/api/admin/escolas/${id}`, {
     method: "PUT",
@@ -549,6 +554,7 @@ export async function atualizarEscola(
       whatsapp_numero: whatsappNumero,
       telefone_contato: telefoneContato,
       meta_phone_number_id: metaPhoneNumberId,
+      waba_id: wabaId,
       ...expediente,
     }),
   });
@@ -2553,8 +2559,20 @@ export async function salvarFicha(alunoId: string, campos: CamposFicha): Promise
 // ======================= Catálogo de templates (HSM) ======================= //
 // Fora da janela de 24h só sai template aprovado pela Meta. **Global** = catálogo
 // compartilhado (o nome da escola vai como parâmetro), e só o super admin mexe, porque a
-// WABA é ativo comum a todas as escolas. **Da escola** = específico, com o nome prefixado
-// pelo slug para não colidir na WABA.
+// conta é ativo comum a várias escolas. **Da escola** = específico, com o nome prefixado
+// pelo slug para não colidir na conta.
+//
+// O texto é um; as **submissões são N**: template é aprovado por conta (WABA), e uma conta
+// não comporta todas as escolas. Daí `contas[]` — o mesmo texto tem status próprio em cada.
+export interface TemplateNaConta {
+  waba_id: string;
+  waba_nome: string;
+  status: string;
+  meta_template_id: string;
+  motivo_rejeicao: string;
+  atualizado_em: string | null;
+}
+
 export interface TemplateMensagem {
   id: string;
   tenant_id: string | null;
@@ -2563,10 +2581,10 @@ export interface TemplateMensagem {
   categoria: string;
   idioma: string;
   corpo: string;
+  /** Consolidado: o **pior** entre as contas — o selo otimista convidaria a um disparo que falha. */
   status: string;
   utilizavel: boolean;
-  meta_template_id: string;
-  motivo_rejeicao: string;
+  contas: TemplateNaConta[];
   exemplos: string[];
   criado_em: string;
   atualizado_em: string | null;
@@ -2576,6 +2594,68 @@ export interface SincronizacaoTemplates {
   verificados: number;
   atualizados: number;
   desconhecidos: number;
+}
+
+export interface ReplicacaoTemplates {
+  submetidos: number;
+  falhas: number;
+  ja_existiam: number;
+}
+
+// ================== Contas do WhatsApp Business (WABA) ==================== //
+// A conta é o endereço de todo template. Uma não basta: o cadastro de números tem teto no
+// portfólio, e ao esgotá-lo a escola seguinte entra em outra conta.
+export interface ContaWhatsApp {
+  id: string;
+  nome: string;
+  meta_waba_id: string;
+  meta_business_id: string;
+  ativo: boolean;
+  total_escolas: number;
+  criado_em: string;
+  atualizado_em: string | null;
+}
+
+export async function listarContasWhatsApp(): Promise<ContaWhatsApp[]> {
+  const resp = await apiFetch(`${API_URL}/api/admin/wabas`, { headers: authHeaders() });
+  return jsonOuErro(resp, "listar contas do WhatsApp");
+}
+
+export async function criarContaWhatsApp(dados: {
+  nome: string;
+  meta_waba_id: string;
+  meta_business_id: string;
+  ativo: boolean;
+}): Promise<ContaWhatsApp> {
+  const resp = await apiFetch(`${API_URL}/api/admin/wabas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(dados),
+  });
+  return jsonOuErro(resp, "criar conta do WhatsApp");
+}
+
+export async function atualizarContaWhatsApp(
+  id: string,
+  dados: { nome: string; meta_waba_id: string; meta_business_id: string; ativo: boolean }
+): Promise<ContaWhatsApp> {
+  const resp = await apiFetch(`${API_URL}/api/admin/wabas/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(dados),
+  });
+  return jsonOuErro(resp, "salvar a conta do WhatsApp");
+}
+
+export async function removerContaWhatsApp(id: string): Promise<void> {
+  const resp = await apiFetch(`${API_URL}/api/admin/wabas/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(erro.detail ?? `Erro ${resp.status} ao remover a conta`);
+  }
 }
 
 export async function listarTemplates(): Promise<TemplateMensagem[]> {
@@ -2625,6 +2705,15 @@ export async function sincronizarTemplates(): Promise<SincronizacaoTemplates> {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "sincronizar templates com a Meta");
+}
+
+/** Leva os templates globais para as contas que ainda não os têm. */
+export async function replicarTemplates(): Promise<ReplicacaoTemplates> {
+  const resp = await apiFetch(`${API_URL}/api/admin/templates/replicar`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  return jsonOuErro(resp, "replicar templates nas contas");
 }
 
 /** Os `{{n}}` do corpo, distintos e em ordem — para pedir um exemplo de cada. */
