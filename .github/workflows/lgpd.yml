@@ -142,6 +142,31 @@ jobs:
             echo "de pull request como veio)."
           } >> prompt-do-auditor.txt
 
+      - name: Prepara o sandbox (bubblewrap)
+        if: steps.chave.outputs.presente == 'true'
+        run: |
+          set -euo pipefail
+
+          # Sem o bubblewrap do sistema, a Codex usa o que vem embutido no pacote npm — e
+          # esse não tem perfil AppArmor. No Ubuntu 24.04, que restringe user namespace
+          # não privilegiado (kernel.apparmor_restrict_unprivileged_userns=1), ele morre
+          # em `bwrap: loopback: Failed RTM_NEWADDR` e TODA leitura do agente é bloqueada.
+          # O pacote da distro traz o perfil e passa. Foi o que aconteceu no run 31656955912.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          bwrap --version
+
+          # Preflight determinístico, antes de gastar um token: se o namespace não sobe, o
+          # agente vai "rodar" e produzir um relatório dizendo que não conseguiu ler nada —
+          # relatório não-vazio, exit 0, comentário no PR, e a auditoria não aconteceu. É a
+          # mesma armadilha do check verde, uma camada abaixo. Melhor falhar aqui e alto.
+          if ! bwrap --ro-bind / / --unshare-all --die-with-parent /bin/true; then
+            echo "::error::bubblewrap não consegue criar o namespace neste runner; a Codex" \
+                 "não teria acesso de leitura e a auditoria sairia vazia de conteúdo real."
+            exit 1
+          fi
+          echo "Sandbox operante."
+
       - name: Roda o agente lgpd-auditor sobre o diff
         if: steps.chave.outputs.presente == 'true'
         run: |
@@ -160,6 +185,13 @@ jobs:
           # impressão de auditoria feita.
           if [ ! -s relatorio-lgpd.md ]; then
             echo "::error::A Codex não produziu relatório."
+            exit 1
+          fi
+
+          # Defesa em profundidade do preflight acima: relatório com conteúdo ainda pode ser
+          # um relatório dizendo "não consegui ler nada".
+          if grep -qiE "bwrap:|bloqueada pela camada de sandbox|sandbox.*(bloque|denied)" relatorio-lgpd.md; then
+            echo "::error::O agente foi bloqueado pelo sandbox — o relatório não é auditoria."
             exit 1
           fi
 
