@@ -417,6 +417,14 @@ class SqlUsuarioRepository:
         rows = (await self._s.execute(stmt)).scalars().all()
         return [_to_usuario(r) for r in rows]
 
+    async def por_ids(self, ids) -> list[Usuario]:
+        ids = [i for i in ids if i is not None]
+        if not ids:
+            return []
+        stmt = select(UsuarioORM).where(UsuarioORM.id.in_(ids))
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_usuario(r) for r in rows]
+
     async def atualizar(self, usuario: Usuario) -> Usuario:
         row = await self._s.get(UsuarioORM, usuario.id)
         if row is None:

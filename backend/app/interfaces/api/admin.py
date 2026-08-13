@@ -1070,10 +1070,11 @@ async def listar_auditoria(
     por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
     usuario: Usuario = Depends(usuario_autenticado),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+    usuarios: SqlUsuarioRepository = Depends(get_usuario_repo),
 ) -> AuditoriaPaginaSaida:
     """Log de auditoria da escola: ações de usuários logados e da LLM (mais recentes primeiro)."""
     _exige_acesso_tenant(usuario, tenant_id)
-    resultado = await ListarAuditoria(auditoria=auditoria).executar(
+    resultado = await ListarAuditoria(auditoria=auditoria, usuarios=usuarios).executar(
         tenant_id=tenant_id, pagina=pagina, por_pagina=por_pagina
     )
     itens = [
@@ -1083,6 +1084,7 @@ async def listar_auditoria(
             ator=r.ator.value,
             ator_id=r.ator_id,
             ator_nome=r.ator_nome,
+            ator_perfil_id=r.ator_perfil_id,
             acao=r.acao,
             descricao=r.descricao,
             metadados=r.metadados,

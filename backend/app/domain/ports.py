@@ -361,6 +361,13 @@ class UsuarioRepository(Protocol):
 
     async def listar(self, *, tenant_id: UUID | None = None) -> list[Usuario]: ...
 
+    async def por_ids(self, ids: Sequence[UUID]) -> list[Usuario]:
+        """Resolve vários usuários numa consulta só — é o que a auditoria precisa.
+
+        Sem isso, uma página de log com dez atores diferentes faria dez idas ao banco.
+        """
+        ...
+
     async def atualizar(self, usuario: Usuario) -> Usuario: ...
 
 

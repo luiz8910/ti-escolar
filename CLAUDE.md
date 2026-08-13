@@ -1510,6 +1510,19 @@ sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escop
   `broadcast.grupo.enviar`). Casos de uso `RegistrarAuditoria`/`ListarAuditoria`
   (`app/application/auditoria_use_cases.py`); auditar é **tolerante a falhas** (nunca derruba
   a ação auditada). Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
+  - **O ator é reidentificado na leitura** (12/ago/2026). `RegistroAuditoria.ator_nome` é
+    um retrato do momento da ação e virou **fallback histórico**: `ListarAuditoria` recebe
+    o `UsuarioRepository` e resolve o nome atual **em lote** (`por_ids`, uma consulta por
+    página). Sem isso, um nome corrigido depois faria a mesma pessoa aparecer com dois
+    nomes no log, e registro anterior ao campo ficaria anônimo para sempre.
+  - **`ator_perfil_id` (não persistido) é o que autoriza o link** para `/admin/usuarios`.
+    Só quem **ainda tem conta** o recebe: linkar para uma conta que não existe mais
+    entregaria um 404 no lugar da resposta, e para LLM/sistema não há perfil nenhum. O
+    `ator_id` é texto livre na porta (a LLM guarda telefone ali), então um valor que não
+    é UUID simplesmente não tem perfil — não é erro.
+  - **[Roadmap]** cobertura: as mutações de cadastro (alunos, responsáveis, professores,
+    turmas) ainda **não** são auditadas, então a tela mostra pouco do que a secretaria
+    faz no dia a dia.
   - ✅ **Ações da LLM auditadas no inbound real** (10/ago/2026): o inbound passou a usar
     `AtenderConversa`, que grava `llm.resposta` (pergunta/resposta resumidas, fontes,
     documentos) com `ator="llm"`. As ações da secretaria na fila de atendimento humano
