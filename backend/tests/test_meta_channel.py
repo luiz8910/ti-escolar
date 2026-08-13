@@ -17,10 +17,11 @@ from app.domain.entities import (
     DestinatarioBroadcast,
     MessageTemplate,
     StatusTemplate,
+    TemplateNaWaba,
     Tenant,
 )
 from app.infrastructure.channel.meta_channel import MetaMessageChannel
-from tests.fakes import FakeQuota, FakeRateLimiter
+from tests.fakes import FakeQuota, FakeRateLimiter, WABA_PADRAO_ID
 
 PADRAO = "000000000000000"
 PID_ESCOLA = "123456789012345"
@@ -93,7 +94,7 @@ async def _disparar(escola: Tenant) -> _CanalEspiao:
         categoria=CategoriaTemplate.UTILITY,
         corpo="Olá, {{1}}!",
         idioma="pt_BR",
-        status=StatusTemplate.APROVADO,
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
     )
     broadcast = Broadcast(
         tenant_id=escola.id,
@@ -116,6 +117,7 @@ async def _disparar(escola: Tenant) -> _CanalEspiao:
 async def test_broadcast_sai_pelo_phone_number_id_da_escola():
     escola = Tenant(
         id=uuid.uuid4(),
+        waba_id=WABA_PADRAO_ID,
         nome="EM Rosa Cury",
         slug="rosa-cury",
         whatsapp_numero="+5515333330000",
@@ -127,7 +129,8 @@ async def test_broadcast_sai_pelo_phone_number_id_da_escola():
 
 async def test_broadcast_de_escola_sem_id_na_meta_usa_o_e164():
     escola = Tenant(
-        id=uuid.uuid4(), nome="Escola", slug="escola", whatsapp_numero="+5515333330000"
+        id=uuid.uuid4(),
+        waba_id=WABA_PADRAO_ID, nome="Escola", slug="escola", whatsapp_numero="+5515333330000"
     )
     canal = await _disparar(escola)
     assert canal.remetentes == ["+5515333330000"]

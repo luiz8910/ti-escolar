@@ -531,7 +531,9 @@ class ResponderAtendimento:
         escola: Tenant | None,
     ) -> None:
         """Reabre a conversa por template quando as 24h já passaram (§A9)."""
-        template = await self._template_de_retomada(atendimento.tenant_id)
+        template = await self._template_de_retomada(
+            atendimento.tenant_id, waba_id=escola.waba_id if escola else None
+        )
         if template is None:
             raise ValueError(
                 "A janela de 24h do WhatsApp expirou para este responsável e não há "
@@ -551,13 +553,24 @@ class ResponderAtendimento:
             atendimento.id,
         )
 
-    async def _template_de_retomada(self, tenant_id: UUID) -> MessageTemplate | None:
+    async def _template_de_retomada(
+        self, tenant_id: UUID, *, waba_id: UUID | None
+    ) -> MessageTemplate | None:
         if not self._template_retomada or self._templates is None:
             return None
         template = await self._templates.por_nome(
             tenant_id=tenant_id, nome=self._template_retomada
         )
-        if template is None or template.status is not StatusTemplate.APROVADO:
+        if template is None:
+            return None
+        # Aprovado **na conta desta escola**: o mesmo texto pode estar aprovado em outra
+        # WABA e não existir nesta, e aí a Graph API recusa o envio.
+        aprovado = (
+            template.aprovado_em(waba_id)
+            if waba_id is not None
+            else template.status is StatusTemplate.APROVADO
+        )
+        if not aprovado:
             # Template não aprovado é template que a Meta recusa: melhor o erro claro
             # acima do que uma chamada que falha na Graph API sem explicação.
             return None

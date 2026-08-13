@@ -5,8 +5,10 @@ escopo ``whatsapp_business_management`` no token de usuário do sistema (o de en
 ``whatsapp_business_messaging``, **não** serve aqui — e o sintoma de faltar é um 400 cujo
 texto não menciona escopo nenhum, por isso ``_erro_legivel`` extrai a mensagem da Meta).
 
-Ao contrário do envio, aqui **não há multi-tenant**: a WABA é uma só (§9e), então o id vem
-da configuração e não do tenant.
+**A conta é parâmetro de cada chamada.** O mesmo token administra todas as WABAs do
+portfólio; o que muda entre elas é só o nó da URL. Fixar uma no construtor — como este
+adaptador nasceu, lendo ``META_WABA_ID`` — faz todo template ser criado numa conta só, e
+a escola cujo número está em outra fica com um catálogo que não existe para ela.
 """
 
 from __future__ import annotations
@@ -75,13 +77,20 @@ class CatalogoTemplatesIndisponivel(RuntimeError):
 
 
 class MetaCatalogoTemplates:
-    def __init__(self, *, waba_id: str, access_token: str) -> None:
-        self._waba_id = waba_id
+    def __init__(self, *, access_token: str) -> None:
         self._headers = {"Authorization": f"Bearer {access_token}"}
 
-    @property
-    def _url(self) -> str:
-        return f"{_BASE}/{self._waba_id}/message_templates"
+    @staticmethod
+    def _url(meta_waba_id: str) -> str:
+        meta_waba_id = (meta_waba_id or "").strip()
+        if not meta_waba_id:
+            # Sem id não há nó a chamar. Recusar aqui dá a causa; deixar seguir montaria
+            # ``/​/message_templates`` e a Meta devolveria um 400 sobre outra coisa.
+            raise CatalogoTemplatesIndisponivel(
+                "A conta do WhatsApp Business (WABA) desta escola está sem o id da Meta. "
+                "Preencha-o em Administração → Contas WhatsApp."
+            )
+        return f"{_BASE}/{meta_waba_id}/message_templates"
 
     @staticmethod
     def _erro_legivel(exc: httpx.HTTPStatusError) -> str:
@@ -108,7 +117,10 @@ class MetaCatalogoTemplates:
             corpo["example"] = {"body_text": [list(template.exemplos)]}
         return [corpo]
 
-    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+    async def submeter(
+        self, template: MessageTemplate, *, meta_waba_id: str
+    ) -> TemplateRemoto:
+        url = self._url(meta_waba_id)
         payload = {
             "name": template.nome,
             "language": template.idioma,
@@ -116,7 +128,7 @@ class MetaCatalogoTemplates:
             "components": self._componentes(template),
         }
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(self._url, headers=self._headers, json=payload)
+            resp = await client.post(url, headers=self._headers, json=payload)
             try:
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
@@ -137,13 +149,13 @@ class MetaCatalogoTemplates:
             motivo_rejeicao=motivo_da_meta(status_bruto=status_bruto, motivo=None),
         )
 
-    async def listar(self) -> list[TemplateRemoto]:
+    async def listar(self, *, meta_waba_id: str) -> list[TemplateRemoto]:
         params = {
             "fields": "id,name,language,status,category,rejected_reason",
             "limit": "200",
         }
         remotos: list[TemplateRemoto] = []
-        url: str | None = self._url
+        url: str | None = self._url(meta_waba_id)
         async with httpx.AsyncClient(timeout=30) as client:
             while url:
                 resp = await client.get(url, headers=self._headers, params=params)
@@ -174,10 +186,11 @@ class MetaCatalogoTemplates:
                 params = {}
         return remotos
 
-    async def remover(self, *, nome: str) -> bool:
+    async def remover(self, *, nome: str, meta_waba_id: str) -> bool:
+        url = self._url(meta_waba_id)
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.delete(
-                self._url, headers=self._headers, params={"name": nome}
+                url, headers=self._headers, params={"name": nome}
             )
             if resp.status_code == 404:
                 # Já não existe lá: para quem chamou, o efeito desejado está satisfeito.
@@ -192,7 +205,7 @@ class MetaCatalogoTemplates:
 
 
 class CatalogoTemplatesAusente:
-    """Stub para quando o canal efetivo é ``demo`` ou falta a WABA configurada.
+    """Stub para quando o canal efetivo é ``demo`` (sem token de acesso).
 
     Falha **no uso**, com a causa dita por extenso, em vez de no boot: o resto do produto
     não depende de gerir template, e derrubar a aplicação inteira por causa de uma env
@@ -205,14 +218,16 @@ class CatalogoTemplatesAusente:
     def _falhar(self) -> None:
         raise CatalogoTemplatesIndisponivel(self._motivo)
 
-    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+    async def submeter(
+        self, template: MessageTemplate, *, meta_waba_id: str
+    ) -> TemplateRemoto:
         self._falhar()
         raise AssertionError("inalcançável")  # pragma: no cover
 
-    async def listar(self) -> list[TemplateRemoto]:
+    async def listar(self, *, meta_waba_id: str) -> list[TemplateRemoto]:
         self._falhar()
         raise AssertionError("inalcançável")  # pragma: no cover
 
-    async def remover(self, *, nome: str) -> bool:
+    async def remover(self, *, nome: str, meta_waba_id: str) -> bool:
         self._falhar()
         raise AssertionError("inalcançável")  # pragma: no cover

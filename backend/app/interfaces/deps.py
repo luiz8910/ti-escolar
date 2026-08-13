@@ -16,6 +16,7 @@ from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.templates_use_cases import (
     CriarTemplate,
     RemoverTemplate,
+    ReplicarTemplates,
     SincronizarTemplates,
 )
 from app.application.tenant_use_cases import NotificarLicencasAVencer
@@ -42,6 +43,7 @@ from app.infrastructure.db.repositories import (
     SqlBroadcastRepository,
     SqlConversaRepository,
     SqlTemplateRepository,
+    SqlWabaRepository,
 )
 from app.application.conhecimento_use_cases import (
     AtualizarFonteConhecimento,
@@ -350,6 +352,7 @@ def get_criar_template(
         templates=SqlTemplateRepository(session),
         catalogo=criar_catalogo_templates(settings),
         tenants=SqlTenantRepository(session),
+        wabas=SqlWabaRepository(session),
     )
 
 
@@ -360,6 +363,7 @@ def get_remover_template(
     return RemoverTemplate(
         templates=SqlTemplateRepository(session),
         catalogo=criar_catalogo_templates(settings),
+        wabas=SqlWabaRepository(session),
     )
 
 
@@ -370,7 +374,23 @@ def get_sincronizar_templates(
     return SincronizarTemplates(
         templates=SqlTemplateRepository(session),
         catalogo=criar_catalogo_templates(settings),
+        wabas=SqlWabaRepository(session),
     )
+
+
+def get_replicar_templates(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ReplicarTemplates:
+    return ReplicarTemplates(
+        templates=SqlTemplateRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+        wabas=SqlWabaRepository(session),
+    )
+
+
+def get_waba_repo(session: AsyncSession = Depends(get_session)) -> SqlWabaRepository:
+    return SqlWabaRepository(session)
 
 
 def get_audit_repo(session: AsyncSession = Depends(get_session)) -> SqlAuditLogRepository:

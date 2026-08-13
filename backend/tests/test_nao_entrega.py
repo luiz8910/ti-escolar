@@ -22,6 +22,7 @@ from app.domain.entities import (
     MessageTemplate,
     StatusEntrega,
     StatusTemplate,
+    TemplateNaWaba,
 )
 from tests.fakes import (
     FakeBroadcastRepo,
@@ -30,6 +31,7 @@ from tests.fakes import (
     FakeQuota,
     FakeRateLimiter,
     FakeTemplateRepo,
+    WABA_PADRAO_ID,
 )
 
 TENANT = uuid.uuid4()
@@ -42,7 +44,7 @@ def _template() -> MessageTemplate:
         categoria=CategoriaTemplate.UTILITY,
         idioma="pt_BR",
         corpo="Olá, {{1}}!",
-        status=StatusTemplate.APROVADO,
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
     )
 
 

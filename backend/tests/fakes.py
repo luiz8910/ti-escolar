@@ -28,9 +28,11 @@ from app.domain.entities import (
     SolicitacaoImpressao,
     StatusImpressao,
     StatusTemplate,
+    TemplateNaWaba,
     TemplateRemoto,
     TrechoConhecimento,
     TurnoConversa,
+    Waba,
 )
 from app.infrastructure.llm.fake_provider import FakeEmbedder
 
@@ -411,8 +413,14 @@ class FakeTemplateRepo:
     async def por_meta_id(self, meta_template_id) -> MessageTemplate | None:
         if not meta_template_id:
             return None
+        # O id da Meta é emitido por conta, então mora na entrada, não no template.
         return next(
-            (t for t in self.templates if t.meta_template_id == meta_template_id), None
+            (
+                t
+                for t in self.templates
+                if any(w.meta_template_id == meta_template_id for w in t.wabas)
+            ),
+            None,
         )
 
     async def por_nome_e_idioma(self, *, nome, idioma) -> MessageTemplate | None:
@@ -445,15 +453,19 @@ class FakeCatalogoTemplates:
         erro: Exception | None = None,
     ) -> None:
         self.submetidos: list[MessageTemplate] = []
+        self.contas_submetidas: list[str] = []
         self.removidos: list[str] = []
         self._status = status
         self._remotos = remotos or []
         self._erro = erro
 
-    async def submeter(self, template: MessageTemplate) -> TemplateRemoto:
+    async def submeter(
+        self, template: MessageTemplate, *, meta_waba_id: str = ""
+    ) -> TemplateRemoto:
         if self._erro:
             raise self._erro
         self.submetidos.append(template)
+        self.contas_submetidas.append(meta_waba_id)
         return TemplateRemoto(
             nome=template.nome,
             idioma=template.idioma,
@@ -462,12 +474,12 @@ class FakeCatalogoTemplates:
             meta_template_id=f"meta-{len(self.submetidos)}",
         )
 
-    async def listar(self) -> list[TemplateRemoto]:
+    async def listar(self, *, meta_waba_id: str = "") -> list[TemplateRemoto]:
         if self._erro:
             raise self._erro
         return list(self._remotos)
 
-    async def remover(self, *, nome: str) -> bool:
+    async def remover(self, *, nome: str, meta_waba_id: str = "") -> bool:
         if self._erro:
             raise self._erro
         self.removidos.append(nome)
@@ -1296,3 +1308,50 @@ class FakeNumeroBloqueadoRepo:
 
     async def listar(self, *, tenant_id):
         return [b for (t, _), b in self.bloqueios.items() if t == tenant_id]
+
+
+class FakeWabaRepo:
+    """Contas do WhatsApp Business. Por padrão, uma só — o cenário de hoje."""
+
+    def __init__(self, wabas: list[Waba] | None = None) -> None:
+        self.wabas = list(wabas) if wabas is not None else [waba_padrao()]
+
+    async def listar(self, *, apenas_ativas: bool = False) -> list[Waba]:
+        return [w for w in self.wabas if w.ativo or not apenas_ativas]
+
+    async def obter(self, waba_id) -> Waba | None:
+        return next((w for w in self.wabas if w.id == waba_id), None)
+
+    async def por_meta_id(self, meta_waba_id) -> Waba | None:
+        if not meta_waba_id:
+            return None
+        return next((w for w in self.wabas if w.meta_waba_id == meta_waba_id), None)
+
+    async def salvar(self, waba: Waba) -> Waba:
+        for i, existente in enumerate(self.wabas):
+            if existente.id == waba.id:
+                self.wabas[i] = waba
+                return waba
+        self.wabas.append(waba)
+        return waba
+
+    async def remover(self, waba_id) -> bool:
+        antes = len(self.wabas)
+        self.wabas = [w for w in self.wabas if w.id != waba_id]
+        return len(self.wabas) != antes
+
+    async def total_escolas(self) -> dict:
+        return {}
+
+
+WABA_PADRAO_ID = uuid.UUID("00000000-0000-0000-0000-00000000fa01")
+
+
+def waba_padrao() -> Waba:
+    return Waba(id=WABA_PADRAO_ID, meta_waba_id="900900900", nome="WABA principal")
+
+
+def template_aprovado(template: MessageTemplate, *, waba_id=WABA_PADRAO_ID) -> MessageTemplate:
+    """Marca o template como aprovado **naquela conta** — o estado que libera o disparo."""
+    template.wabas = [TemplateNaWaba(waba_id=waba_id, status=StatusTemplate.APROVADO)]
+    return template

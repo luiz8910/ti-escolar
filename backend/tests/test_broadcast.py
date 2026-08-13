@@ -15,6 +15,8 @@ from app.domain.entities import (
     StatusBroadcast,
     StatusEntrega,
     StatusTemplate,
+    TemplateNaWaba,
+    Tenant,
 )
 from tests.fakes import (
     FakeBroadcastRepo,
@@ -22,6 +24,7 @@ from tests.fakes import (
     FakeQuota,
     FakeRateLimiter,
     FakeTemplateRepo,
+    WABA_PADRAO_ID,
 )
 
 TENANT = uuid.uuid4()
@@ -34,7 +37,7 @@ def _template(status=StatusTemplate.APROVADO) -> MessageTemplate:
         categoria=CategoriaTemplate.UTILITY,
         idioma="pt_BR",
         corpo="Olá, {{1}}!",
-        status=status,
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=status)],
     )
 
 
@@ -108,3 +111,65 @@ async def test_falha_de_envio_nao_derruba_lote():
     assert resultado.enviados == 2
     assert resultado.falhas == 1
     assert resultado.status == StatusBroadcast.CONCLUIDO
+
+
+class _TenantRepoDeUmaConta:
+    def __init__(self, tenant: Tenant) -> None:
+        self._tenant = tenant
+
+    async def obter(self, tenant_id):
+        return self._tenant if tenant_id == self._tenant.id else None
+
+
+@pytest.mark.asyncio
+async def test_template_aprovado_em_outra_conta_nao_dispara():
+    """A falha que o status numa coluna só escondia (§9e.3).
+
+    O template está aprovado — mas na conta onde estão *as outras* escolas. Para o número
+    desta, ele não existe: a Graph API recusaria depois de a trava já ter dado o aval.
+    """
+    outra_conta = uuid.uuid4()
+    template = _template()  # aprovado na WABA_PADRAO_ID
+    escola = Tenant(
+        id=TENANT, nome="EM Rosa Cury", slug="rosacury", waba_id=outra_conta
+    )
+    broadcast = Broadcast(
+        tenant_id=TENANT,
+        template_id=template.id,
+        titulo="Aviso",
+        destinatarios=[DestinatarioBroadcast(contato="+5511900000001")],
+    )
+    canal = FakeChannel()
+    with pytest.raises(ValueError, match="conta do WhatsApp"):
+        await EnviarBroadcast(
+            broadcasts=FakeBroadcastRepo(),
+            templates=FakeTemplateRepo(template),
+            canal=canal,
+            quota=FakeQuota(limite_diario=100),
+            rate_limiter=FakeRateLimiter(),
+            tenants=_TenantRepoDeUmaConta(escola),
+        ).executar(broadcast=broadcast)
+    assert canal.enviados == []
+
+
+@pytest.mark.asyncio
+async def test_template_aprovado_na_conta_da_escola_dispara():
+    template = _template()
+    escola = Tenant(
+        id=TENANT, nome="EM Rosa Cury", slug="rosacury", waba_id=WABA_PADRAO_ID
+    )
+    broadcast = Broadcast(
+        tenant_id=TENANT,
+        template_id=template.id,
+        titulo="Aviso",
+        destinatarios=[DestinatarioBroadcast(contato="+5511900000001")],
+    )
+    resultado = await EnviarBroadcast(
+        broadcasts=FakeBroadcastRepo(),
+        templates=FakeTemplateRepo(template),
+        canal=FakeChannel(),
+        quota=FakeQuota(limite_diario=100),
+        rate_limiter=FakeRateLimiter(),
+        tenants=_TenantRepoDeUmaConta(escola),
+    ).executar(broadcast=broadcast)
+    assert resultado.enviados == 1

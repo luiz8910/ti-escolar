@@ -48,6 +48,11 @@ class TenantORM(Base):
     # ``phone_number_id`` do número da escola na Meta: origem do outbound (URL da Graph API)
     # e chave de roteamento do inbound (value.metadata.phone_number_id). Indexado e único
     # entre escolas — o índice parcial da migration 0024 permite várias escolas com "".
+    # Conta do WhatsApp Business (WABA) onde o número desta escola está cadastrado — é
+    # onde o template dela é criado e conferido. Nulo enquanto não atribuída.
+    waba_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("wabas.id"), index=True, nullable=True
+    )
     meta_phone_number_id: Mapped[str] = mapped_column(
         String(64), default="", server_default="", index=True
     )
@@ -195,22 +200,64 @@ class TemplateORM(Base):
     categoria: Mapped[str] = mapped_column(String(30))
     idioma: Mapped[str] = mapped_column(String(10))
     corpo: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20))
-    # Id do template na Meta — a chave que o webhook de status devolve.
-    meta_template_id: Mapped[str] = mapped_column(
-        String(64), default="", server_default="", index=True
-    )
-    motivo_rejeicao: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Amostras dos {{n}} exigidas na submissão; não vão ao responsável.
     exemplos: Mapped[list] = mapped_column(JSON, default=list)
     criado_em: Mapped[datetime] = mapped_column(nullable=True)
     atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
-        # (nome, idioma) é único **na WABA**, e a nossa WABA é uma só. Espelhar isso aqui
-        # transforma um erro genérico da Graph API, descoberto só na submissão, em uma
-        # recusa local com mensagem em português.
+        # (nome, idioma) é único **em cada WABA**. Mantemos o UNIQUE global aqui porque o
+        # texto é um só no nosso catálogo, replicado nas contas: dois registros com o
+        # mesmo nome seriam duas linhas disputando o mesmo nome em toda WABA.
         UniqueConstraint("nome", "idioma", name="uq_template_nome_idioma"),
+    )
+
+
+class WabaORM(Base):
+    """Conta do WhatsApp Business. Ver `Waba` — o endereço de todo template."""
+
+    __tablename__ = "wabas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    meta_waba_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    nome: Mapped[str] = mapped_column(String(200))
+    # Portfólio (Meta Business Account) dono da conta: onde o teto de números e o limite
+    # diário de envio são de fato medidos.
+    meta_business_id: Mapped[str] = mapped_column(
+        String(64), default="", server_default=""
+    )
+    ativo: Mapped[bool] = mapped_column(default=True, server_default="true")
+    criado_em: Mapped[datetime] = mapped_column(nullable=True)
+    atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class TemplateWabaORM(Base):
+    """Status de um template **em uma** WABA. Ver `TemplateNaWaba`.
+
+    Uma linha por (template, conta). O ``meta_template_id`` é único na Meta inteira, o
+    que faz dele a chave exata do webhook: ele identifica o texto **e** a conta.
+    """
+
+    __tablename__ = "template_wabas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("templates.id", ondelete="CASCADE"),
+        index=True,
+    )
+    waba_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("wabas.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(20))
+    meta_template_id: Mapped[str] = mapped_column(
+        String(64), default="", server_default="", index=True
+    )
+    motivo_rejeicao: Mapped[str] = mapped_column(Text, default="", server_default="")
+    atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("template_id", "waba_id", name="uq_template_waba"),
     )
 
 

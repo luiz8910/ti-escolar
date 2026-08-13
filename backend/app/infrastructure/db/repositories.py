@@ -21,6 +21,8 @@ from app.domain.entities import (
     StatusBroadcast,
     StatusEntrega,
     StatusTemplate,
+    TemplateNaWaba,
+    Waba,
 )
 from app.infrastructure.db.models import (
     BroadcastORM,
@@ -28,6 +30,9 @@ from app.infrastructure.db.models import (
     DestinatarioORM,
     MensagemORM,
     TemplateORM,
+    TemplateWabaORM,
+    TenantORM,
+    WabaORM,
 )
 
 
@@ -47,7 +52,9 @@ def _to_mensagem(row: MensagemORM) -> Mensagem:
     )
 
 
-def _to_template(row: TemplateORM) -> MessageTemplate:
+def _to_template(
+    row: TemplateORM, entradas: list[TemplateWabaORM] | None = None
+) -> MessageTemplate:
     return MessageTemplate(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -55,10 +62,30 @@ def _to_template(row: TemplateORM) -> MessageTemplate:
         categoria=CategoriaTemplate(row.categoria),
         idioma=row.idioma,
         corpo=row.corpo,
+        wabas=[_to_template_waba(e) for e in (entradas or [])],
+        exemplos=list(row.exemplos or []),
+        criado_em=row.criado_em or _now(),
+        atualizado_em=row.atualizado_em,
+    )
+
+
+def _to_template_waba(row: TemplateWabaORM) -> TemplateNaWaba:
+    return TemplateNaWaba(
+        waba_id=row.waba_id,
         status=StatusTemplate(row.status),
         meta_template_id=row.meta_template_id or "",
         motivo_rejeicao=row.motivo_rejeicao or "",
-        exemplos=list(row.exemplos or []),
+        atualizado_em=row.atualizado_em,
+    )
+
+
+def _to_waba(row: WabaORM) -> Waba:
+    return Waba(
+        id=row.id,
+        meta_waba_id=row.meta_waba_id or "",
+        nome=row.nome,
+        meta_business_id=row.meta_business_id or "",
+        ativo=bool(row.ativo),
         criado_em=row.criado_em or _now(),
         atualizado_em=row.atualizado_em,
     )
@@ -257,8 +284,39 @@ class SqlConversaRepository:
 
 
 class SqlTemplateRepository:
+    """Catálogo de templates + o status de cada um **em cada WABA**.
+
+    As entradas por conta são carregadas **em lote** (uma consulta por página, não uma por
+    template): a listagem do painel percorre o catálogo inteiro, e um SELECT por linha ali
+    é o N+1 clássico.
+    """
+
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
+
+    async def _entradas(
+        self, template_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[TemplateWabaORM]]:
+        if not template_ids:
+            return {}
+        stmt = select(TemplateWabaORM).where(
+            TemplateWabaORM.template_id.in_(template_ids)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        agrupado: dict[uuid.UUID, list[TemplateWabaORM]] = {}
+        for r in rows:
+            agrupado.setdefault(r.template_id, []).append(r)
+        return agrupado
+
+    async def _montar(self, row: TemplateORM | None) -> MessageTemplate | None:
+        if row is None:
+            return None
+        entradas = await self._entradas([row.id])
+        return _to_template(row, entradas.get(row.id, []))
+
+    async def _montar_muitos(self, rows: list[TemplateORM]) -> list[MessageTemplate]:
+        entradas = await self._entradas([r.id for r in rows])
+        return [_to_template(r, entradas.get(r.id, [])) for r in rows]
 
     async def obter(
         self, *, tenant_id: uuid.UUID, template_id: uuid.UUID
@@ -267,7 +325,7 @@ class SqlTemplateRepository:
         # ``tenant_id IS NULL`` é template global: visível para toda escola.
         if row is None or (row.tenant_id is not None and row.tenant_id != tenant_id):
             return None
-        return _to_template(row)
+        return await self._montar(row)
 
     async def por_nome(self, *, tenant_id: uuid.UUID, nome: str) -> MessageTemplate | None:
         nome = (nome or "").strip()
@@ -280,7 +338,7 @@ class SqlTemplateRepository:
             # ``NULLS LAST`` ordena o global depois do específico.
         ).order_by(TemplateORM.tenant_id.desc().nullslast())
         row = (await self._s.execute(stmt)).scalars().first()
-        return _to_template(row) if row else None
+        return await self._montar(row)
 
     async def listar(self, *, tenant_id: uuid.UUID) -> list[MessageTemplate]:
         stmt = (
@@ -288,20 +346,25 @@ class SqlTemplateRepository:
             .where(or_(TemplateORM.tenant_id == tenant_id, TemplateORM.tenant_id.is_(None)))
             .order_by(TemplateORM.nome)
         )
-        rows = (await self._s.execute(stmt)).scalars().all()
-        return [_to_template(r) for r in rows]
+        rows = list((await self._s.execute(stmt)).scalars().all())
+        return await self._montar_muitos(rows)
 
     async def listar_todos(self) -> list[MessageTemplate]:
-        rows = (await self._s.execute(select(TemplateORM))).scalars().all()
-        return [_to_template(r) for r in rows]
+        rows = list((await self._s.execute(select(TemplateORM))).scalars().all())
+        return await self._montar_muitos(rows)
 
     async def por_meta_id(self, meta_template_id: str) -> MessageTemplate | None:
         meta_template_id = (meta_template_id or "").strip()
         if not meta_template_id:
             return None
-        stmt = select(TemplateORM).where(TemplateORM.meta_template_id == meta_template_id)
-        row = (await self._s.execute(stmt)).scalars().first()
-        return _to_template(row) if row else None
+        # O id da Meta mora na entrada por conta: o mesmo texto tem um id em cada WABA.
+        stmt = select(TemplateWabaORM).where(
+            TemplateWabaORM.meta_template_id == meta_template_id
+        )
+        entrada = (await self._s.execute(stmt)).scalars().first()
+        if entrada is None:
+            return None
+        return await self._montar(await self._s.get(TemplateORM, entrada.template_id))
 
     async def por_nome_e_idioma(self, *, nome: str, idioma: str) -> MessageTemplate | None:
         nome = (nome or "").strip()
@@ -311,7 +374,7 @@ class SqlTemplateRepository:
             TemplateORM.nome == nome, TemplateORM.idioma == idioma
         )
         row = (await self._s.execute(stmt)).scalars().first()
-        return _to_template(row) if row else None
+        return await self._montar(row)
 
     async def salvar(self, template: MessageTemplate) -> MessageTemplate:
         row = await self._s.get(TemplateORM, template.id)
@@ -323,13 +386,33 @@ class SqlTemplateRepository:
         row.categoria = template.categoria.value
         row.idioma = template.idioma
         row.corpo = template.corpo
-        row.status = template.status.value
-        row.meta_template_id = template.meta_template_id
-        row.motivo_rejeicao = template.motivo_rejeicao
         row.exemplos = list(template.exemplos)
         row.atualizado_em = _now()
         await self._s.flush()
-        return _to_template(row)
+
+        existentes = {
+            e.waba_id: e for e in (await self._entradas([template.id])).get(template.id, [])
+        }
+        for entrada in template.wabas:
+            alvo = existentes.pop(entrada.waba_id, None)
+            if alvo is None:
+                alvo = TemplateWabaORM(
+                    id=uuid.uuid4(),
+                    template_id=template.id,
+                    waba_id=entrada.waba_id,
+                )
+                self._s.add(alvo)
+            alvo.status = entrada.status.value
+            alvo.meta_template_id = entrada.meta_template_id
+            alvo.motivo_rejeicao = entrada.motivo_rejeicao
+            alvo.atualizado_em = _now()
+        # Entrada que sumiu da entidade é submissão desfeita (conta removida do catálogo);
+        # deixá-la para trás faria o status agregado considerar uma conta que já não vale.
+        for sobra in existentes.values():
+            await self._s.delete(sobra)
+
+        await self._s.flush()
+        return (await self._montar(row)) or template
 
     async def remover(self, template_id: uuid.UUID) -> bool:
         row = await self._s.get(TemplateORM, template_id)
@@ -338,6 +421,62 @@ class SqlTemplateRepository:
         await self._s.delete(row)
         await self._s.flush()
         return True
+
+
+class SqlWabaRepository:
+    """Contas do WhatsApp Business. Ver `Waba`."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def listar(self, *, apenas_ativas: bool = False) -> list[Waba]:
+        stmt = select(WabaORM).order_by(WabaORM.criado_em)
+        if apenas_ativas:
+            stmt = stmt.where(WabaORM.ativo.is_(True))
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [_to_waba(r) for r in rows]
+
+    async def obter(self, waba_id: uuid.UUID) -> Waba | None:
+        row = await self._s.get(WabaORM, waba_id)
+        return _to_waba(row) if row else None
+
+    async def por_meta_id(self, meta_waba_id: str) -> Waba | None:
+        meta_waba_id = (meta_waba_id or "").strip()
+        if not meta_waba_id:
+            return None
+        stmt = select(WabaORM).where(WabaORM.meta_waba_id == meta_waba_id)
+        row = (await self._s.execute(stmt)).scalars().first()
+        return _to_waba(row) if row else None
+
+    async def salvar(self, waba: Waba) -> Waba:
+        row = await self._s.get(WabaORM, waba.id)
+        if row is None:
+            row = WabaORM(id=waba.id, criado_em=waba.criado_em)
+            self._s.add(row)
+        row.meta_waba_id = waba.meta_waba_id
+        row.nome = waba.nome
+        row.meta_business_id = waba.meta_business_id
+        row.ativo = waba.ativo
+        row.atualizado_em = _now()
+        await self._s.flush()
+        return _to_waba(row)
+
+    async def remover(self, waba_id: uuid.UUID) -> bool:
+        row = await self._s.get(WabaORM, waba_id)
+        if row is None:
+            return False
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
+
+    async def total_escolas(self) -> dict[uuid.UUID, int]:
+        stmt = (
+            select(TenantORM.waba_id, func.count(TenantORM.id))
+            .where(TenantORM.waba_id.is_not(None))
+            .group_by(TenantORM.waba_id)
+        )
+        rows = (await self._s.execute(stmt)).all()
+        return {linha[0]: int(linha[1]) for linha in rows}
 
 
 class SqlBroadcastRepository:

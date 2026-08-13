@@ -67,7 +67,12 @@ const HISTORICO: NavItem[] = [
 
 // Destinos só do super admin — moram no JSX, mas entram aqui porque o realce escolhe o
 // item pelo caminho mais específico e precisa enxergar todos os candidatos.
-const SUPER_ADMIN_HREFS = ["/admin/escolas", "/admin/seguranca", "/admin/logs"];
+const SUPER_ADMIN_HREFS = [
+  "/admin/escolas",
+  "/admin/wabas",
+  "/admin/seguranca",
+  "/admin/logs",
+];
 
 const TODOS_OS_DESTINOS = [
   ...PRINCIPAL.map((i) => i.href),
@@ -246,6 +251,16 @@ export function Sidebar({
               <NavLink
                 item={{ href: "/admin/escolas", label: "Escolas", icon: BuildingIcon, badge: "super" }}
                 active={isActive("/admin/escolas")}
+                onNavigate={onClose}
+              />
+              <NavLink
+                item={{
+                  href: "/admin/wabas",
+                  label: "Contas WhatsApp",
+                  icon: ChatBubbleIcon,
+                  badge: "super",
+                }}
+                active={isActive("/admin/wabas")}
                 onNavigate={onClose}
               />
               <NavLink

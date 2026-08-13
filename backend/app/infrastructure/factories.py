@@ -124,10 +124,14 @@ def criar_fonte_midia(settings: Settings) -> FonteMidia:
 def criar_catalogo_templates(settings: Settings) -> CatalogoTemplates:
     """Adaptador de gestão de templates, alinhado ao canal **efetivo** (§9c).
 
-    Precisa de duas coisas que o envio não precisa: a ``META_WABA_ID`` (templates são da
-    WABA, não do número) e o escopo ``whatsapp_business_management`` no token. A primeira
-    dá para conferir aqui; a segunda só aparece na primeira chamada, e por isso o stub
-    diz qual das duas faltou.
+    Precisa de uma coisa que o envio não precisa: o escopo
+    ``whatsapp_business_management`` no token. Isso só aparece na primeira chamada — o que
+    dá para decidir aqui é apenas se existe token.
+
+    **Qual conta usar não é decisão daqui.** Até 13/ago/2026 era: o adaptador nascia
+    amarrado à ``META_WABA_ID``, e com isso todo template ia para a mesma conta,
+    independentemente de onde estivesse o número da escola. A conta agora vem do banco
+    (`Waba`), por escola, e é parâmetro de cada chamada.
     """
     if canal_efetivo(settings) != "meta":
         from app.infrastructure.channel.meta_templates import CatalogoTemplatesAusente
@@ -136,19 +140,9 @@ def criar_catalogo_templates(settings: Settings) -> CatalogoTemplates:
             "O canal do WhatsApp está em modo demo — configure MESSAGE_CHANNEL=meta e "
             "META_ACCESS_TOKEN para gerenciar templates na Meta."
         )
-    if not settings.meta_waba_id:
-        from app.infrastructure.channel.meta_templates import CatalogoTemplatesAusente
-
-        return CatalogoTemplatesAusente(
-            "META_WABA_ID não está configurada — sem o id da conta do WhatsApp Business "
-            "não há onde criar o template."
-        )
     from app.infrastructure.channel.meta_templates import MetaCatalogoTemplates
 
-    return MetaCatalogoTemplates(
-        waba_id=settings.meta_waba_id,
-        access_token=settings.meta_access_token or "",
-    )
+    return MetaCatalogoTemplates(access_token=settings.meta_access_token or "")
 
 
 def criar_email_sender(settings: Settings) -> EmailSender:

@@ -174,6 +174,31 @@ function StatusBadge({ t }: { t: TemplateMensagem }) {
   return <Badge tone="neutral">Rascunho</Badge>;
 }
 
+/** O status conta a conta.
+
+Com uma conta só, repetir o selo seria ruído — então não aparece. A partir da segunda é o
+detalhe que importa: "aprovado" no consolidado esconde qual escola pode disparar, porque o
+que libera o envio de uma escola é a aprovação **na conta dela**. */
+function PorConta({ t }: { t: TemplateMensagem }) {
+  if (t.contas.length < 2) return null;
+  return (
+    <div className="mt-1 flex flex-col gap-0.5">
+      {t.contas.map((c) => (
+        <span key={c.waba_id} className="text-[11px] text-n-500">
+          {c.waba_nome}: <span className="font-medium">{ROTULO_STATUS[c.status] ?? c.status}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const ROTULO_STATUS: Record<string, string> = {
+  aprovado: "aprovado",
+  pendente: "em análise",
+  rejeitado: "rejeitado",
+  rascunho: "não submetido",
+};
+
 function Lista({
   itens,
   superAdmin,
@@ -235,11 +260,16 @@ function Lista({
                     </Td>
                     <Td className="max-w-[380px] text-xs text-n-600">
                       <span className="line-clamp-2">{t.corpo}</span>
-                      {t.motivo_rejeicao && (
-                        <span className="mt-1 block text-[11px] text-danger">
-                          Meta: {t.motivo_rejeicao}
-                        </span>
-                      )}
+                      {t.contas
+                        .filter((c) => c.motivo_rejeicao)
+                        .map((c) => (
+                          <span
+                            key={c.waba_id}
+                            className="mt-1 block text-[11px] text-danger"
+                          >
+                            Meta ({c.waba_nome}): {c.motivo_rejeicao}
+                          </span>
+                        ))}
                     </Td>
                     <Td className="text-xs">
                       {t.categoria}
@@ -249,6 +279,7 @@ function Lista({
                     </Td>
                     <Td>
                       <StatusBadge t={t} />
+                      <PorConta t={t} />
                     </Td>
                     <Td className="text-right">
                       {podeRemover ? (

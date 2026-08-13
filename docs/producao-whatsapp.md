@@ -90,9 +90,22 @@ da Meta.
 
 ## 2. Criar a WABA de produção e registrar o número
 
-O modelo é **uma WABA nossa com o número de cada escola dentro dela** (até 20 números por WABA;
-ao esgotar, cria-se outra sob o mesmo portfólio). Qualidade e tier de envio são **por número**,
-então uma escola não derruba o limite das outras.
+O modelo é **uma WABA nossa com o número de cada escola dentro dela**.
+
+> ⚠️ **Corrigido em 13/ago/2026** — esta seção dizia "até 20 números por WABA; ao esgotar,
+> cria-se outra sob o mesmo portfólio", e dizia que qualidade e tier eram por número. A doc
+> da Meta diz outra coisa:
+>
+> - o teto de **20 números é do portfólio**, não da WABA ("Meta Business Accounts are
+>   initially limited to 2 registered business phone numbers, but this limit can be
+>   increased to up to 20"). Abrir outra WABA **não** aumenta o teto — passar de 20 escolas
+>   exige aumento via Direct Support ou **outro portfólio**;
+> - o **limite diário de envio é do portfólio e compartilhado** por todos os números
+>   ("shared by all business phone numbers within a portfolio", mudança de out/2025), de modo
+>   que uma escola em campanha **consome** a capacidade das outras.
+>
+> O que continua por número é a **qualidade**. Confirme os dois com o Direct Support antes de
+> planejar acima de 20 escolas.
 
 O console não usa mais a lista de "Produtos": o WhatsApp vive sob **Casos de uso**.
 
@@ -262,8 +275,10 @@ Use o `META_ACCESS_TOKEN` (o do system user); é a permissão `whatsapp_business
 autoriza. Guarde-o num arquivo (`~/.meta_token`, `chmod 600`) em vez de passar na linha de
 comando — assim ele não fica no histórico do shell.
 
-**É por WABA.** Ao abrir uma segunda WABA (§9e.3, ao passar de 20 números), repita a chamada,
-senão as escolas daquela WABA nascem sem inbound.
+**É por WABA.** Ao abrir uma segunda WABA, repita a chamada, senão as escolas daquela conta
+nascem sem inbound. Dois outros passos acompanham a conta nova: **cadastrá-la** em
+Administração → Contas WhatsApp (senão não há onde criar template para as escolas dela) e
+clicar em **Replicar templates globais** (senão elas ficam sem nenhum template aprovado).
 
 > **Feito em 10/ago/2026** na WABA `2116419572321695` → `{"success":true}`.
 
@@ -436,17 +451,23 @@ token de usuário do sistema — diferente do `whatsapp_business_messaging` usad
 | **Global** | só super admin | como digitado | o caso comum — nome da escola em `{{1}}`, aprovado uma vez, servindo todas |
 | **Da escola** | admin da escola | prefixado pelo slug (`rosacury_festa_junina`) | o que é mesmo específico dela |
 
-O global existe porque **template mora na WABA**, que é uma só (§9e do CLAUDE.md): um
-`aviso_geral` por escola seriam N revisões do mesmo texto e N chances de rejeição num ativo
-compartilhado. O prefixo do escopo por escola é o que evita colisão de nome na mesma WABA.
+O global existe porque um `aviso_geral` por escola seriam N revisões do mesmo texto e N
+chances de rejeição num ativo compartilhado. O prefixo do escopo por escola é o que evita
+colisão de nome na mesma conta.
+
+**Template é aprovado por conta (WABA)** — e desde 13/ago/2026 o produto modela isso
+(§9a-ter do CLAUDE.md): o texto é um só no catálogo, mas a submissão e o status são **por
+conta**. Um global aprovado na conta A **não existe** na conta B; quem libera o disparo de
+uma escola é a aprovação **na conta dela**. Na tela de templates, o selo mostra o pior
+status entre as contas, e a lista por conta aparece a partir da segunda.
 
 **A submissão não é a aprovação.** O `POST` devolve `PENDING`; quem muda para aprovado é o
 webhook `message_template_status_update` (§5). Se ele falhar, `POST /api/admin/templates/sincronizar`
 (super admin) reconcilia lendo a Meta — é a rede de segurança, porque webhook perdido é
 indistinguível de revisão ainda em curso.
 
-**Validação local antes de submeter.** Não é preciosismo: rejeição conta contra a WABA, que
-todas as escolas compartilham. O painel recusa, antes de gastar uma submissão, corpo que
+**Validação local antes de submeter.** Não é preciosismo: rejeição conta contra a conta, que
+várias escolas compartilham. O painel recusa, antes de gastar uma submissão, corpo que
 começa ou termina em variável (a recusa que já levamos), corpo que é só variável, numeração
 fora de sequência, falta de exemplo e categoria `authentication`.
 
@@ -496,6 +517,10 @@ fora de sequência, falta de exemplo e categoria `authentication`.
 - [x] Verificação da empresa aprovada
 - [x] **App publicado ("Ao vivo")** — sem isso o webhook não recebe dado de produção nenhum (§1.1)
 - [x] WABA de produção criada (id `2116419572321695`)
+- [ ] **WABA cadastrada no painel** (Administração → Contas WhatsApp) e escolhida em cada
+      escola — sem isso o disparo por template é recusado, porque não há onde conferir a
+      aprovação. A migration `0042` já cria a linha a partir de `META_WABA_ID`; **confira o
+      id na tela** se a env não estava preenchida no deploy
 - [x] Número registrado, **verificado e inscrito** (chip nosso) — `phone_number_id`
       `1231892910008454`; PIN de 6 dígitos guardado fora do repositório (§2, passo 5)
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)

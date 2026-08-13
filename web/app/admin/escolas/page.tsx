@@ -7,11 +7,13 @@ import {
   atualizarEscola,
   bloquearEscola,
   cancelarEscola,
+  ContaWhatsApp,
   criarEscola,
   definirLicenca,
   desbloquearEscola,
   Escola,
   getSessao,
+  listarContasWhatsApp,
   listarEscolas,
   logout,
   notificarVencimento,
@@ -42,6 +44,48 @@ import {
   BellIcon,
 } from "@/components/ui/icons";
 
+/** Escolhe a conta (WABA) da escola.
+
+Existe porque a conta deixou de ser uma variável de ambiente: com mais de uma, é ela que
+diz **onde** o template desta escola é criado e conferido. Contas inativas não aparecem —
+exceto a que já está escolhida, que precisa continuar visível para não sumir em silêncio
+na próxima edição. */
+function SeletorDeConta({
+  contas,
+  valor,
+  onChange,
+  id,
+  detalhado = false,
+}: {
+  contas: ContaWhatsApp[];
+  valor: string;
+  onChange: (v: string) => void;
+  id?: string;
+  detalhado?: boolean;
+}) {
+  const visiveis = contas.filter((c) => c.ativo || c.id === valor);
+  return (
+    <Field label="Conta do WhatsApp (WABA)" htmlFor={id}>
+      <Select id={id} value={valor} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— sem conta —</option>
+        {visiveis.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.nome}
+            {c.meta_waba_id ? ` · ${c.meta_waba_id}` : " · sem id na Meta"}
+            {c.ativo ? "" : " (inativa)"}
+          </option>
+        ))}
+      </Select>
+      {detalhado && (
+        <p className="mt-1 text-[11.5px] leading-snug text-n-500">
+          Onde o número desta escola está cadastrado na Meta. É a conta que responde pelo
+          catálogo de templates dela — sem conta, o disparo por template é recusado.
+        </p>
+      )}
+    </Field>
+  );
+}
+
 function sigla(nome: string) {
   return nome
     .split(" ")
@@ -56,10 +100,16 @@ export default function EscolasPage() {
   const toast = useToast();
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [escolas, setEscolas] = useState<Escola[]>([]);
+  const [contas, setContas] = useState<ContaWhatsApp[]>([]);
   const [carregando, setCarregando] = useState(true);
 
   const recarregar = useCallback(async () => {
-    setEscolas(await listarEscolas());
+    const [lista, contasWhats] = await Promise.all([
+      listarEscolas(),
+      listarContasWhatsApp(),
+    ]);
+    setEscolas(lista);
+    setContas(contasWhats);
   }, []);
 
   useEffect(() => {
@@ -94,7 +144,7 @@ export default function EscolasPage() {
       onLogout={sair}
     >
       <div className="flex flex-col gap-[18px]">
-        <NovaEscola onCriada={recarregar} />
+        <NovaEscola onCriada={recarregar} contas={contas} />
 
         <Card>
           <CardHeader
@@ -109,7 +159,7 @@ export default function EscolasPage() {
           ) : (
             <div className="flex flex-col">
               {escolas.map((e) => (
-                <EscolaLinha key={e.id} escola={e} onMudou={recarregar} />
+                <EscolaLinha key={e.id} escola={e} onMudou={recarregar} contas={contas} />
               ))}
             </div>
           )}
@@ -147,12 +197,23 @@ function AvisarVencimentos() {
   );
 }
 
-function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
+function NovaEscola({
+  onCriada,
+  contas,
+}: {
+  onCriada: () => Promise<void>;
+  contas: ContaWhatsApp[];
+}) {
   const toast = useToast();
   const [nome, setNome] = useState("");
   const [slug, setSlug] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [metaPhoneId, setMetaPhoneId] = useState("");
+  // Só uma conta ativa? Ela já vem escolhida — no caso comum não há decisão a tomar.
+  const [wabaId, setWabaId] = useState<string>(() => {
+    const ativas = contas.filter((c) => c.ativo);
+    return ativas.length === 1 ? ativas[0].id : "";
+  });
   const [contato, setContato] = useState("");
   const [expediente, setExpediente] = useState<EstadoExpediente>(EXPEDIENTE_PADRAO);
   const [salvando, setSalvando] = useState(false);
@@ -172,7 +233,8 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
         whatsapp.trim(),
         contato.trim(),
         metaPhoneId.trim(),
-        paraEntrada(expediente)
+        paraEntrada(expediente),
+        wabaId || null
       );
       setNome("");
       setSlug("");
@@ -247,6 +309,9 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
             />
           </Field>
         </div>
+        <div className="min-w-[190px]">
+          <SeletorDeConta contas={contas} valor={wabaId} onChange={setWabaId} id="esc-waba" />
+        </div>
         <div className="min-w-[280px]">
           <CamposExpediente valor={expediente} onChange={setExpediente} />
         </div>
@@ -258,7 +323,15 @@ function NovaEscola({ onCriada }: { onCriada: () => Promise<void> }) {
   );
 }
 
-function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promise<void> }) {
+function EscolaLinha({
+  escola,
+  onMudou,
+  contas,
+}: {
+  escola: Escola;
+  onMudou: () => Promise<void>;
+  contas: ContaWhatsApp[];
+}) {
   const router = useRouter();
   const toast = useToast();
   const [editando, setEditando] = useState(false);
@@ -270,6 +343,7 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
   const [slug, setSlug] = useState(escola.slug);
   const [whatsapp, setWhatsapp] = useState(escola.whatsapp_numero);
   const [metaPhoneId, setMetaPhoneId] = useState(escola.meta_phone_number_id);
+  const [wabaId, setWabaId] = useState(escola.waba_id ?? "");
   const [contato, setContato] = useState(escola.telefone_contato);
   const [expediente, setExpediente] = useState<EstadoExpediente>(
     escola.expediente
@@ -297,7 +371,8 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
         whatsapp.trim(),
         contato.trim(),
         metaPhoneId.trim(),
-        paraEntrada(expediente)
+        paraEntrada(expediente),
+        wabaId || null
       );
       setEditando(false);
       await onMudou();
@@ -371,6 +446,18 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
               · ⚠ sem id na Meta
             </span>
           )}
+          {escola.waba_id ? (
+            <span className="ml-2 text-n-500">
+              · 🗂 {contas.find((c) => c.id === escola.waba_id)?.nome ?? "conta removida"}
+            </span>
+          ) : (
+            <span
+              className="ml-2 text-amber-600"
+              title="Sem conta do WhatsApp Business: o disparo por template desta escola é recusado, porque não há onde conferir a aprovação."
+            >
+              · ⚠ sem conta
+            </span>
+          )}
         </p>
       </div>
 
@@ -439,6 +526,7 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
                 setSlug(escola.slug);
                 setWhatsapp(escola.whatsapp_numero);
                 setMetaPhoneId(escola.meta_phone_number_id);
+                setWabaId(escola.waba_id ?? "");
                 setContato(escola.telefone_contato);
                 setExpediente(
                   escola.expediente
@@ -494,6 +582,7 @@ function EscolaLinha({ escola, onMudou }: { escola: Escola; onMudou: () => Promi
               WhatsApp recebido é roteado para cá — sem ele, o inbound desta escola é descartado.
             </p>
           </Field>
+          <SeletorDeConta contas={contas} valor={wabaId} onChange={setWabaId} detalhado />
           <CamposExpediente valor={expediente} onChange={setExpediente} />
         </form>
       </Modal>

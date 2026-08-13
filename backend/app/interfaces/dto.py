@@ -40,6 +40,17 @@ class TemplateEntrada(BaseModel):
     exemplos: list[str] = []
 
 
+class TemplateNaWabaSaida(BaseModel):
+    """Situação do template em **uma** conta. Ver `TemplateNaWaba`."""
+
+    waba_id: UUID
+    waba_nome: str
+    status: str
+    meta_template_id: str
+    motivo_rejeicao: str
+    atualizado_em: datetime | None
+
+
 class TemplateSaida(BaseModel):
     id: UUID
     tenant_id: UUID | None
@@ -48,10 +59,11 @@ class TemplateSaida(BaseModel):
     categoria: str
     idioma: str
     corpo: str
+    # Consolidado (o **pior** entre as contas) — o selo da lista. Para saber se uma escola
+    # específica pode disparar, é `contas[].status` da conta dela.
     status: str
     utilizavel: bool
-    meta_template_id: str
-    motivo_rejeicao: str
+    contas: list[TemplateNaWabaSaida]
     exemplos: list[str]
     criado_em: datetime
     atualizado_em: datetime | None
@@ -61,6 +73,33 @@ class SincronizacaoTemplatesSaida(BaseModel):
     verificados: int
     atualizados: int
     desconhecidos: int
+
+
+class ReplicacaoTemplatesSaida(BaseModel):
+    submetidos: int
+    falhas: int
+    ja_existiam: int
+
+
+class WabaEntrada(BaseModel):
+    nome: str
+    meta_waba_id: str = ""
+    meta_business_id: str = ""
+    ativo: bool = True
+
+
+class WabaSaida(BaseModel):
+    id: UUID
+    nome: str
+    meta_waba_id: str
+    meta_business_id: str
+    ativo: bool
+    # Quantas escolas operam nesta conta. É a leitura contra o teto de números do
+    # portfólio — sem ela, o limite só aparece como erro da Graph API no meio de um
+    # cadastro.
+    total_escolas: int
+    criado_em: datetime
+    atualizado_em: datetime | None
 
 
 class QuotaSaida(BaseModel):
@@ -193,6 +232,9 @@ class EscolaEntrada(BaseModel):
     # ``phone_number_id`` do número da escola na Meta (só dígitos). É o que a Graph API usa
     # na URL de envio e o que roteia o inbound do webhook. Vazio = número padrão da env.
     meta_phone_number_id: str = ""
+    # Conta do WhatsApp Business (`Waba`) onde o número desta escola está cadastrado — é
+    # onde os templates dela são criados e conferidos. Nulo = ainda sem conta.
+    waba_id: UUID | None = None
     # Telefone de contato público (E.164) da escola — **obrigatório**, apenas informativo.
     telefone_contato: str = ""
     # Expediente da secretaria (§6j) — governa o encaminhamento do atendimento humano.
@@ -238,6 +280,7 @@ class EscolaSaida(BaseModel):
     slug: str
     whatsapp_numero: str = ""
     meta_phone_number_id: str = ""
+    waba_id: UUID | None = None
     telefone_contato: str = ""
     expediente: ExpedienteSaida | None = None
     criado_em: datetime
@@ -250,6 +293,7 @@ class EscolaResumoSaida(BaseModel):
     slug: str
     whatsapp_numero: str = ""
     meta_phone_number_id: str = ""
+    waba_id: UUID | None = None
     telefone_contato: str = ""
     expediente: ExpedienteSaida | None = None
     criado_em: datetime

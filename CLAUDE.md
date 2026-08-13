@@ -136,7 +136,8 @@ ti-escolar/
 
 - **Isolamento por `tenant_id`** (escola) em todas as tabelas relevantes.
 - Entidades principais: `Tenant` (escola), `Usuario` (admin), `Conversa`, `Mensagem`,
-  `Documento`, `Conhecimento` (FAQ/aviso/procedimento), `MessageTemplate`, `Broadcast`/Campanha,
+  `Documento`, `Conhecimento` (FAQ/aviso/procedimento), `MessageTemplate` (+ `TemplateNaWaba`,
+  o status dele em cada conta), `Waba` (conta do WhatsApp Business), `Broadcast`/Campanha,
   `MessageQuota`, `Contato` (pai/responsável), `Grupo` + associação `grupo_contatos`,
   `Sala` (turma) + associação `sala_contatos`, `Professor` (vinculado à série por
   `Sala.professor_id`; `ativo` marca o vínculo vivo — desligado, o número deixa de ser
@@ -167,7 +168,7 @@ ti-escolar/
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
   `0037_conversa_sessao` → `0038_impressao_whatsapp` → `0040_templates_catalogo` →
-  `0041_anti_spam_documentos`.
+  `0041_anti_spam_documentos` → `0042_wabas_multiplas`.
   ⚠️ **O `0039` não existe, e o `0041` já se chamou `0038`.** Três migrations foram
   escritas em paralelo apontando para a `0037`; a ordem de merge decidiu o resto. A do
   anti-spam quase se perdeu: o PR #55 foi mergeado numa branch de feature que **já tinha
@@ -522,6 +523,13 @@ ti-escolar/
   escolas. Vazio = a escola **não recebe** inbound (a mensagem é descartada) e dispara pelo
   número padrão da env. Migration `0024_tenant_meta_phone_number_id` (índice UNIQUE parcial).
   Ver §9e.1.
+- **Conta do WhatsApp por escola (`Tenant.waba_id` → `Waba`):** em qual **WABA** o número
+  desta escola está cadastrado. Não é o mesmo que `meta_phone_number_id`: o número roteia a
+  mensagem, a conta responde pelo **catálogo de templates**. É o que diz onde criar o
+  template da escola e onde conferir a aprovação antes de um disparo — template é aprovado
+  por conta, e uma conta não comporta todas as escolas (§9a-ter, §9e.3). Nulo = a escola
+  dispara pelo número mas tem o disparo **por template** recusado. Migration
+  `0042_wabas_multiplas`.
 - **Telefone de contato por escola (`Tenant.telefone_contato`, E.164):** o número **público** que
   a secretaria já usa no dia a dia — apenas **informativo** (referência de contato). É
   **obrigatório** no cadastro/edição (`CriarEscola`/`AtualizarEscola` via
@@ -1085,19 +1093,22 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
 **WhatsApp Business Management API** (`/{waba_id}/message_templates`).
 
 - **Dois escopos, e o global é o caso comum.** `MessageTemplate.tenant_id` **nulo = global**:
-  templates moram na **WABA**, que é uma só para todas as escolas (§9e), e o nome é único
-  nela. Um `aviso_geral` por escola seriam N revisões da Meta para o mesmo texto e — pior — N
+  um `aviso_geral` por escola seriam N revisões da Meta para o mesmo texto e — pior — N
   chances de rejeição num ativo compartilhado. Então o padrão é **um texto com o nome da
   escola em `{{1}}`**, e o escopo por escola fica para o que é mesmo específico dela, com o
-  nome **prefixado pelo slug** (`rosacury_festa_junina`) para não colidir na WABA. Global só o
-  super admin cria/remove; da escola, o admin dela.
+  nome **prefixado pelo slug** (`rosacury_festa_junina`) para não colidir na conta. Global só
+  o super admin cria/remove; da escola, o admin dela.
+- **⚠️ A WABA deixou de ser uma só** (13/ago/2026, migration `0042_wabas_multiplas`, §9a-ter).
+  O catálogo nasceu sobre a premissa de uma conta única numa env — e ela não se sustenta,
+  porque o cadastro de números tem teto (§9e.3). **Template é aprovado por conta**, então o
+  mesmo texto precisa ser replicado em cada uma, com status próprio em cada.
 - **Porta `CatalogoTemplates`** (`submeter`/`listar`/`remover`), separada de `MessageChannel`
   porque é **outra API e outro escopo de token**: enviar usa `whatsapp_business_messaging` em
   `/{phone_number_id}/messages`; gerir template usa `whatsapp_business_management` em
-  `/{waba_id}/message_templates`. Adaptador `MetaCatalogoTemplates`
+  `/{waba_id}/message_templates`. A conta é **parâmetro de cada chamada**, não estado do
+  adaptador. Adaptador `MetaCatalogoTemplates`
   (`app/infrastructure/channel/meta_templates.py`) + `CatalogoTemplatesAusente`, que falha
-  **no uso** com a causa por extenso (canal em demo, ou `META_WABA_ID` vazia) em vez de
-  derrubar o boot.
+  **no uso** com a causa por extenso (canal em demo) em vez de derrubar o boot.
 - **Submeter não é aprovar.** O `POST` devolve `PENDING`; quem muda para aprovado é o webhook
   `message_template_status_update` (§9c). `SincronizarTemplates` é a **rede de segurança**:
   webhook perdido é indistinguível de revisão em curso, e sem reconciliação alguém esperaria
@@ -1105,8 +1116,8 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
   **contado, não importado** — sem saber se é global ou de uma escola, o palpite erraria o
   isolamento.
 - **Validação local antes de gastar uma submissão** (`app/application/validacao_template.py`).
-  Não é preciosismo: **rejeição conta contra a WABA compartilhada**, então uma escola que
-  apanhe três vezes respinga em todas. Recusa corpo que começa ou termina em variável (a
+  Não é preciosismo: **rejeição conta contra a conta compartilhada**, então uma escola que
+  apanhe três vezes respinga em todas as que operam nela. Recusa corpo que começa ou termina em variável (a
   recusa que já levamos no `retomada_atendimento`), corpo que é só variável (a Meta o proíbe
   justamente para impedir template genérico), numeração fora de sequência (os parâmetros são
   posicionais), falta de exemplo (obrigatório quando há variável) e `authentication`.
@@ -1117,12 +1128,53 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
 - **Reclassificação é registrada em `warning`:** a Meta pode virar `utility` em `marketing`, o
   que **muda o preço do disparo** — sem o log, isso só aparece na fatura.
 - **Rotas** `app/interfaces/api/templates.py` (`/api/admin/templates`): listar, obter, criar,
-  remover e `POST /sincronizar` (super admin). Migration `0040_templates_catalogo`
-  (`tenant_id` anulável, `meta_template_id`, `motivo_rejeicao`, `exemplos`, UNIQUE
-  `(nome, idioma)` espelhando a WABA). Cobertura: `tests/test_templates.py` (30 testes).
+  remover, `POST /sincronizar` e `POST /replicar` (super admin). Migrations
+  `0040_templates_catalogo` (`tenant_id` anulável, `exemplos`, UNIQUE `(nome, idioma)`) e
+  `0042_wabas_multiplas` (status por conta). Cobertura: `tests/test_templates.py` (40 testes).
 - **[Roadmap]** o disparo a grupo ainda usa o `DEMO_TEMPLATE_ID` cravado em
   `web/lib/admin.ts`; com o catálogo existindo, o passo natural é **escolher o template na
-  tela de disparo**.
+  tela de disparo**. Ele também manda **2 parâmetros** para um corpo de **3** — a contagem
+  ficou defasada quando o `aviso_reuniao` do seed ganhou o nome da escola em `{{2}}`, e a
+  Graph API recusa por número de parâmetros.
+
+### 9a-ter. Várias contas do WhatsApp (`Waba`) — o teto que quebrava o catálogo
+
+A premissa de "uma WABA para todas as escolas" **não se sustenta**: o teto de números
+(§9e.3) garante que haverá uma segunda conta, e template é aprovado **por conta**. Com o
+status numa coluna só do template, o produto respondia "aprovado" para uma escola cujo
+número está em outra conta — e a Graph API recusava o envio **depois** de a trava já ter
+dado o aval. A falha era do tipo pior: silenciosa, e no caminho do dinheiro.
+
+- **`Waba`** (migration `0042_wabas_multiplas`): `meta_waba_id`, `nome`, `ativo` e
+  **`meta_business_id`** — o portfólio, que é onde a Meta de fato mede o teto de números e o
+  limite diário de envio. Só super admin (`/api/admin/wabas`, painel `web/app/admin/wabas/`),
+  porque a conta é ativo compartilhado: quem a edita redireciona o catálogo de várias
+  escolas.
+- **`Tenant.waba_id`** diz **onde** o número da escola está — e portanto onde criar e
+  conferir o template dela. Nulo = a escola dispara pelo número, mas o disparo **por
+  template** é recusado, porque não há onde conferir a aprovação.
+- **Um texto, N submissões** (`TemplateNaWaba`, tabela `template_wabas`): corpo, categoria e
+  exemplos ficam no template, uma vez só; id na Meta, status e motivo ficam por conta.
+  Duplicar a linha inteira faria de editar um texto o trabalho de manter N cópias em
+  sincronia, e o painel mostraria o mesmo template várias vezes.
+- **`MessageTemplate.status` virou derivado — o pior entre as contas.** A tela precisa de um
+  selo só, e o selo otimista é o perigoso. Quem decide o envio é `aprovado_em(waba_id)`;
+  nunca submetido numa conta é `RASCUNHO`, não `PENDENTE`.
+- **Global replica; da escola, não.** `CriarTemplate` submete o global em toda conta ativa e
+  o da escola só na conta dela — ocupar o nome nas outras multiplicaria por N o risco de
+  rejeição num ativo compartilhado. **Falha numa conta não desfaz as outras** (desfazer
+  gastaria outra submissão para voltar ao início): a conta sem entrada aparece como "não
+  submetido", e `ReplicarTemplates` (`POST /templates/replicar`) reprocessa. É também o
+  passo obrigatório ao **cadastrar uma conta nova** — sem ele as escolas dela ficam sem
+  nenhum template aprovado, e a falha só aparece no primeiro disparo.
+- **O webhook usa `entry[].id`**, que é o id da WABA, para saber em qual conta aplicar o
+  status. Sem isso a aprovação na conta A marcaria aprovado o template da conta B — a mesma
+  mentira que o modelo por conta veio corrigir. **Categoria é exceção**: vale para o texto
+  em qualquer conta, então é aplicada mesmo quando o evento não diz de onde veio.
+- **`META_WABA_ID` deixou de ser configuração** e virou **semente**: a migration a lê uma
+  única vez para criar a linha da conta que já existia, apontar todas as escolas para ela e
+  mover os status. Sem a env, a linha nasce inativa e sem id — estado visível no painel, em
+  vez de aprovações sumindo sem aviso.
 
 ### 9b. Confirmação de recebimento (não-entrega reativa)
 
@@ -1348,13 +1400,25 @@ Manager. A escola só recebe o número já operante. Isso elimina o principal po
 onboarding (depender da secretaria para ler um código que expira em minutos) e mantém a posse
 do número — e portanto do canal — com a plataforma.
 
-- **Uma escola nova NÃO exige uma WABA nova:** é mais um número na WABA existente. O limite
-  documentado é de **20 números por WABA**; ao esgotar, cria-se **outra WABA sob o mesmo
-  portfólio empresarial** (o portfólio comporta várias), sem trocar de conta nem refazer a
-  verificação da empresa. Confira o limite vigente na documentação antes de planejar acima
-  disso.
-- **Qualidade e tier de envio são por número**, não por WABA: uma escola que gere bloqueios não
-  derruba o limite das outras. É o que torna a WABA compartilhada segura.
+- **Uma escola nova NÃO exige uma WABA nova:** é mais um número na WABA existente.
+- **⚠️ O teto de números é do PORTFÓLIO, não da WABA** (conferido na doc da Meta em
+  13/ago/2026, e ao contrário do que esta seção afirmou até então). São **2 números por
+  portfólio**, elevados automaticamente para **20** com a verificação da empresa — que já
+  temos. Criar outra WABA **não** aumenta esse teto: a 21ª escola exige pedir aumento ao
+  Direct Support ou abrir **outro portfólio**, com verificação de empresa própria. O limite
+  de **20 WABAs por portfólio** existe, mas não é o gargalo.
+  **Consequência de produto:** o teto prático é de ~20 escolas por portfólio, e não 400
+  como a leitura antiga sugeria. Vale confirmar com o Direct Support antes de vender o 21º
+  contrato.
+- **⚠️ O limite diário de envio é do portfólio e COMPARTILHADO** entre todos os números
+  ("Messaging limits are calculated and set at the business portfolio level and are shared
+  by all business phone numbers within a portfolio" — mudança de out/2025). A afirmação
+  anterior aqui, de que o tier era por número e por isso a WABA compartilhada era segura,
+  **está errada hoje**: uma escola em campanha pode consumir a capacidade diária das
+  outras. O `MessageQuota` por tenant (§9a) é contabilidade **nossa**, não o limite real da
+  Meta — e as duas podem divergir. **[Roadmap]** medir a cota no nível do portfólio.
+- **Qualidade continua sendo por número**, então uma escola que gere bloqueios não derruba
+  a reputação das outras — mas derruba, sim, a capacidade de envio compartilhada.
 - **Requisito duro do chip:** o número **não pode estar ativo em nenhum WhatsApp** (comum ou
   Business) no momento do registro, e depois de registrado na Cloud API **não volta** a
   funcionar no aplicativo. Por isso o chip é sempre **novo e dedicado**.
@@ -1481,8 +1545,15 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   Escopo **global** (catálogo compartilhado, super admin) + **por escola** (nome prefixado
   pelo slug). Ver §9a-bis (`app/application/templates_use_cases.py`,
   `web/app/admin/templates/`).
+  - [x] **Várias contas do WhatsApp (WABA)** (13/ago/2026) — a conta virou entidade
+    (`Waba` + `Tenant.waba_id`), o status do template passou a ser **por conta** e o global
+    é replicado em todas. Sem isso, a escola seguinte ao teto de números do portfólio teria
+    o disparo recusado pela Graph API **depois** de o painel dizer "aprovado". Ver §9a-ter.
   - [ ] **Escolher o template na tela de disparo** — o envio a grupo ainda usa o
-    `DEMO_TEMPLATE_ID` cravado em `web/lib/admin.ts`.
+    `DEMO_TEMPLATE_ID` cravado em `web/lib/admin.ts`, e manda 2 parâmetros para um corpo de 3.
+  - [ ] **Cota de envio no nível do portfólio** — o limite diário da Meta é compartilhado
+    entre todos os números do portfólio desde out/2025, e o `MessageQuota` por tenant é
+    contabilidade nossa, que pode divergir do limite real (§9e.3).
   - [ ] **Assinar `message_template_status_update` no console da Meta** — sem isso o status
     só muda pelo botão "Sincronizar". Ver `docs/producao-whatsapp.md` §5.
 - [x] **Transferência de responsáveis** (Onda 2 · F1) Progressão de série na virada de ano:

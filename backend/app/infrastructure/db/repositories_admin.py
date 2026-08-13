@@ -94,6 +94,7 @@ def _to_tenant(row: TenantORM) -> Tenant:
         expediente_timezone=row.expediente_timezone,
         whatsapp_numero=row.whatsapp_numero,
         meta_phone_number_id=row.meta_phone_number_id,
+        waba_id=row.waba_id,
         telefone_contato=row.telefone_contato,
         status=StatusTenant(row.status),
         motivo_bloqueio=row.motivo_bloqueio,
@@ -161,6 +162,7 @@ class SqlTenantRepository:
                 criado_em=tenant.criado_em,
                 whatsapp_numero=tenant.whatsapp_numero,
                 meta_phone_number_id=tenant.meta_phone_number_id,
+                waba_id=tenant.waba_id,
                 telefone_contato=tenant.telefone_contato,
                 status=tenant.status.value,
                 motivo_bloqueio=tenant.motivo_bloqueio,
@@ -274,6 +276,7 @@ class SqlTenantRepository:
         row.slug = tenant.slug
         row.whatsapp_numero = tenant.whatsapp_numero
         row.meta_phone_number_id = tenant.meta_phone_number_id
+        row.waba_id = tenant.waba_id
         row.telefone_contato = tenant.telefone_contato
         row.status = tenant.status.value
         row.motivo_bloqueio = tenant.motivo_bloqueio
