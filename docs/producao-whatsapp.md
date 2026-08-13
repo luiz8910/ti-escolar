@@ -490,6 +490,13 @@ São dois caminhos para preencher o id, e o segundo costuma dispensar o primeiro
    **não afirma** que `entry[].id` é a WABA: os exemplos mostram o número, a referência
    não descreve o campo. Quem decide é a resposta da Meta, não a nossa leitura do payload.
 
+> **Conferido em 13/ago/2026** contra a API real:
+> `GET /v21.0/2116419572321695?fields=id,name` → `{"id":"2116419572321695","name":"TI-Escolar"}`,
+> com o token de usuário do sistema em uso (escopos `whatsapp_business_management` +
+> `whatsapp_business_messaging`, sem expiração). É a chamada que a adoção faz antes de
+> gravar, e o nome adotado no painel passa a ser **TI-Escolar**, no lugar do rótulo
+> provisório "WABA principal".
+
 Enquanto o id estiver vazio, criar template falha com a causa por extenso ("A conta do
 WhatsApp Business (WABA) desta escola está sem o id da Meta"), e o painel de segurança
 sinaliza as escolas afetadas.
