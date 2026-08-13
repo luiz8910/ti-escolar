@@ -1906,15 +1906,26 @@ por rotina, não por lembrança.
 
 São **duas camadas, separadas pela natureza do risco** — `.github/workflows/lgpd.yml`:
 
-- **Código, no pull request** — o agente **`lgpd-auditor`** (`.claude/agents/`, versionado)
-  audita **só o diff**, e só quando ele toca os caminhos onde dado pessoal é definido,
-  movido ou exposto (entidades, rotas, migrations, casos de uso de ficha/matrícula/
-  importação/exportação/inbound/conhecimento, política e termos). Comenta os achados no PR
-  com `arquivo:linha` e artigo da lei; **não bloqueia o merge** e não substitui parecer
-  jurídico. Exige o secret `OPENAI_API_KEY` — sem ele o job avisa e passa, e desde
-  12/ago/2026 o aviso também vai para o resumo do run: o secret **nunca existiu**, e como
-  os passos são condicionais o check ficava **verde sem auditar nada**. Um warning no fundo
-  do log não é sinal.
+- **Código, sob demanda** — o agente **`lgpd-auditor`** (`.claude/agents/`, versionado)
+  audita **só o diff** de um PR e comenta os achados nele, com `arquivo:linha` e artigo da
+  lei; **não bloqueia o merge** e não substitui parecer jurídico. Exige o secret
+  `OPENAI_API_KEY` — sem ele o job avisa e passa, e desde 12/ago/2026 o aviso também vai
+  para o resumo do run: o secret **nunca existiu**, e como os passos são condicionais o
+  check ficava **verde sem auditar nada**. Um warning no fundo do log não é sinal.
+  - **Deixou de rodar sozinho em 13/ago/2026.** Disparava em todo PR que tocasse os
+    caminhos de dado pessoal — entidades, rotas, migrations, ficha/matrícula/importação/
+    exportação/inbound/conhecimento, política e termos —, e isso é quase todo PR do
+    projeto. Cada execução é uma sessão de agente lendo diff e repositório, cobrada em
+    créditos de API, na maioria das vezes para concluir que nada mudou para o titular. O
+    valor está em auditar mudança que mexe com dado pessoal, não em auditar toda vez.
+  - **Como pedir a auditoria:** rótulo **`lgpd`** no PR (reaplicar roda de novo), ou
+    **Actions → Run workflow** informando o número do PR. O filtro por caminhos saiu
+    junto: ele existia para conter execução automática, e sob disparo manual só produziria
+    o pior resultado possível — pedir a auditoria e não receber nada, sem erro.
+  - **O julgamento de quando auditar passou a ser humano**, e essa é a troca honesta: um
+    PR que mexe em dado pessoal e não recebe o rótulo passa sem auditoria nenhuma. A
+    camada de ambiente abaixo continua automática, e o painel §14 segue medindo a postura
+    de dentro.
   - **O executor é a Codex CLI** (`codex exec`), trocada em 12/ago/2026 — antes era o
     Claude Code, que só autentica contra Anthropic/Bedrock/Vertex e **não lê
     `OPENAI_API_KEY`**: a variável não existe no binário. Trocar de provedor aqui é trocar
