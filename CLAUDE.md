@@ -1131,11 +1131,26 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
   remover, `POST /sincronizar` e `POST /replicar` (super admin). Migrations
   `0040_templates_catalogo` (`tenant_id` anulável, `exemplos`, UNIQUE `(nome, idioma)`) e
   `0042_wabas_multiplas` (status por conta). Cobertura: `tests/test_templates.py` (40 testes).
-- **[Roadmap]** o disparo a grupo ainda usa o `DEMO_TEMPLATE_ID` cravado em
-  `web/lib/admin.ts`; com o catálogo existindo, o passo natural é **escolher o template na
-  tela de disparo**. Ele também manda **2 parâmetros** para um corpo de **3** — a contagem
-  ficou defasada quando o `aviso_reuniao` do seed ganhou o nome da escola em `{{2}}`, e a
-  Graph API recusa por número de parâmetros.
+- **O disparo escolhe o template** (13/ago/2026). Até aqui ele usava um UUID cravado em
+  `web/lib/admin.ts` (`DEMO_TEMPLATE_ID`, do seed de demonstração) e montava **2
+  parâmetros fixos** — contagem que ficou defasada quando o `aviso_reuniao` ganhou o nome
+  da escola em `{{2}}`. Em produção, onde o seed não roda, o id não existe; e onde existia,
+  a Meta recusaria por número de parâmetros, **destinatário a destinatário, depois de a
+  cota do dia ter sido consumida**.
+  - `TemplateSaida.enviavel_aqui` responde "aprovado **na conta desta escola**?" — a única
+    pergunta da tela de disparo. É resolvido no **servidor**, que conhece o vínculo escola
+    → conta; deixar o painel cruzar `contas[]` espalharia a regra por duas camadas.
+  - **`ParametroTemplate` (`origem` ∈ {`responsavel`, `escola`, `texto`})** diz como
+    preencher cada `{{n}}`. São as três coisas disponíveis no envio a um grupo: quem
+    recebe, quem assina, e o que a secretaria escreveu. Um campo livre para tudo obrigaria
+    a digitar o nome de cada responsável; um valor fixo para tudo mandaria o mesmo nome
+    para a turma inteira.
+  - **A contagem é conferida no servidor** contra os `{{n}}` do corpo, com erro em
+    português — em vez de descoberta como "não entregue" na Graph API. Origem desconhecida
+    cai em `texto`, que é inerte: cair em `responsavel` mandaria o nome de outra pessoa.
+  - A tela mostra o corpo do template e, para cada variável, o **trecho em volta dela**
+    (`trechoDoPlaceholder`) — sem isso o formulário pede "parâmetro 2" e a secretaria
+    adivinha.
 
 ### 9a-ter. Várias contas do WhatsApp (`Waba`) — o teto que quebrava o catálogo
 
@@ -1549,8 +1564,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
     (`Waba` + `Tenant.waba_id`), o status do template passou a ser **por conta** e o global
     é replicado em todas. Sem isso, a escola seguinte ao teto de números do portfólio teria
     o disparo recusado pela Graph API **depois** de o painel dizer "aprovado". Ver §9a-ter.
-  - [ ] **Escolher o template na tela de disparo** — o envio a grupo ainda usa o
-    `DEMO_TEMPLATE_ID` cravado em `web/lib/admin.ts`, e manda 2 parâmetros para um corpo de 3.
+  - [x] **Escolher o template na tela de disparo** (13/ago/2026) — o envio a grupo saiu do
+    `DEMO_TEMPLATE_ID` cravado e passou a oferecer só os templates **aprovados na conta
+    daquela escola**, com um campo por variável do corpo. Fecha junto o descasamento de
+    parâmetros, que a Meta recusava depois de consumir a cota.
   - [ ] **Cota de envio no nível do portfólio** — o limite diário da Meta é compartilhado
     entre todos os números do portfólio desde out/2025, e o `MessageQuota` por tenant é
     contabilidade nossa, que pode divergir do limite real (§9e.3).
@@ -1808,6 +1825,11 @@ enum `StatusMedida` em `entities.py`.
 - **Medidas acrescentadas em 29/jul/2026:** `rate_limit_login`, `rate_limit_inbound` (deixou
   de ser `PENDENTE`), `seed_producao` (alerta se `SEED_DEMO` estiver ligado com
   `APP_ENV=production`) e `observabilidade` (logs persistidos e consultáveis).
+- **Medida acrescentada em 13/ago/2026:** `conta_whatsapp_por_escola` — acusa escola ativa
+  sem `Tenant.waba_id`, cujo disparo **por template** é recusado (e template é o que sai
+  fora da janela de 24h, ou seja, todo aviso ativo). O sinal é contagem de **banco**, feita
+  na rota; o caso de uso segue recebendo um retrato pronto, sem saber de onde veio. Escola
+  cancelada não conta — não dispara de qualquer forma, e viraria alarme que nunca fecha.
 - **Medida acrescentada em 09/ago/2026:** `canal_efetivo` — acusa o caso híbrido
   `MESSAGE_CHANNEL=meta` **sem** `META_ACCESS_TOKEN`, em que `criar_canal` cai no
   `DemoMessageChannel` **sem erro** e o WhatsApp simplesmente não está no ar. Rodar em `demo`

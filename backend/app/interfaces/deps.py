@@ -435,7 +435,12 @@ def get_enviar_para_grupo(
         rate_limiter=_rate_limiter,
         tenants=SqlTenantRepository(session),
     )
-    return EnviarBroadcastParaGrupo(grupos=SqlGrupoRepository(session), enviar=enviar)
+    return EnviarBroadcastParaGrupo(
+        grupos=SqlGrupoRepository(session),
+        enviar=enviar,
+        templates=SqlTemplateRepository(session),
+        tenants=SqlTenantRepository(session),
+    )
 
 
 # --------------------------------------------------------------------------- #

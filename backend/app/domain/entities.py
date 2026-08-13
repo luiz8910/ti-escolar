@@ -1497,6 +1497,35 @@ class StatusEntrega(str, enum.Enum):
     FALHOU = "failed"
 
 
+class OrigemParametro(str, enum.Enum):
+    """De onde sai o valor de um ``{{n}}`` no disparo.
+
+    São as três — e únicas — coisas disponíveis na hora do envio a um grupo: quem recebe,
+    a escola que assina, e o que a secretaria escreveu. Um campo livre para tudo obrigaria
+    a repetir o nome de cada responsável à mão; um valor fixo para tudo entregaria "Olá,
+    {{1}}" com o mesmo nome para a turma inteira.
+    """
+
+    RESPONSAVEL = "responsavel"  # nome de quem recebe — varia por destinatário
+    ESCOLA = "escola"  # nome da escola que assina
+    TEXTO = "texto"  # o que a secretaria digitou, igual para todos
+
+
+@dataclass(frozen=True)
+class ParametroTemplate:
+    """Um ``{{n}}`` do template e a regra para preenchê-lo em cada destinatário."""
+
+    origem: OrigemParametro
+    texto: str = ""
+
+    def resolver(self, *, responsavel: str, escola: str) -> str:
+        if self.origem is OrigemParametro.RESPONSAVEL:
+            return responsavel
+        if self.origem is OrigemParametro.ESCOLA:
+            return escola
+        return self.texto
+
+
 @dataclass
 class DestinatarioBroadcast:
     contato: str  # telefone E.164

@@ -303,6 +303,9 @@ class FakeDocumentSource:
 class FakeChannel:
     def __init__(self, *, falhar_em: set[str] | None = None) -> None:
         self.enviados: list[tuple[str, str]] = []
+        # Os parâmetros de cada envio por template, na ordem — é o que a Meta valida
+        # contra o corpo aprovado, e o que o disparo a grupo montava errado.
+        self.parametros_enviados: list[list[str]] = []
         self._falhar_em = falhar_em or set()
 
     async def enviar_texto(self, *, contato, texto, remetente=None) -> str:
@@ -315,6 +318,7 @@ class FakeChannel:
             raise RuntimeError("falha simulada")
         self.remetente = remetente
         self.enviados.append((contato, "template"))
+        self.parametros_enviados.append(list(parametros))
         return f"wamid:{contato}"
 
     async def enviar_documento(self, *, contato, documento, remetente=None) -> str:

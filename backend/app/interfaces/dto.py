@@ -60,9 +60,14 @@ class TemplateSaida(BaseModel):
     idioma: str
     corpo: str
     # Consolidado (o **pior** entre as contas) — o selo da lista. Para saber se uma escola
-    # específica pode disparar, é `contas[].status` da conta dela.
+    # específica pode disparar, é `enviavel_aqui`.
     status: str
     utilizavel: bool
+    # Aprovado **na conta desta escola**, que é a única pergunta que a tela de disparo
+    # precisa fazer. Resolvido no servidor porque é ele que conhece o vínculo
+    # escola → conta; deixar o painel cruzar `contas[]` com a conta da escola espalharia a
+    # regra por duas camadas e ofereceria template que a Graph API recusa.
+    enviavel_aqui: bool
     contas: list[TemplateNaWabaSaida]
     exemplos: list[str]
     criado_em: datetime
@@ -206,11 +211,24 @@ class ContatoEntrada(BaseModel):
     telefone: str = Field(..., examples=["+5511999990000"])
 
 
+class ParametroTemplateEntrada(BaseModel):
+    """Como preencher um ``{{n}}`` do template no disparo.
+
+    ``origem`` ∈ {``responsavel``, ``escola``, ``texto``}; ``texto`` só é usado na última.
+    """
+
+    origem: str = "texto"
+    texto: str = ""
+
+
 class EnvioGrupoEntrada(BaseModel):
     tenant_id: UUID
     template_id: UUID
     titulo: str
-    mensagem: str
+    # Um por variável do corpo, **na ordem**. A contagem é conferida no servidor contra o
+    # template: errá-la é o que faz a Meta recusar o envio destinatário a destinatário,
+    # depois de a cota ter sido consumida.
+    parametros: list[ParametroTemplateEntrada] = []
 
 
 class EnvioGrupoSaida(BaseModel):

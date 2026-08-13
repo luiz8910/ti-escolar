@@ -6,7 +6,6 @@
 import { API_URL } from "./api";
 
 // Template aprovado criado pelo seed (usado nos disparos do painel).
-export const DEMO_TEMPLATE_ID = "00000000-0000-0000-0000-0000000000a1";
 
 const STORAGE_KEY = "tiescolar.admin";
 
@@ -449,19 +448,28 @@ export async function adicionarContato(
   return resp.json();
 }
 
+/** De onde sai o valor de cada `{{n}}` do template no disparo. */
+export type OrigemParametro = "responsavel" | "escola" | "texto";
+
+export interface ParametroDisparo {
+  origem: OrigemParametro;
+  texto: string;
+}
+
 export async function enviarParaGrupo(
   grupoId: string,
   titulo: string,
-  mensagem: string
+  templateId: string,
+  parametros: ParametroDisparo[]
 ): Promise<ResultadoEnvioGrupo> {
   const resp = await apiFetch(`${API_URL}/api/admin/grupos/${grupoId}/enviar`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
       tenant_id: tenantEmFoco(),
-      template_id: DEMO_TEMPLATE_ID,
+      template_id: templateId,
       titulo,
-      mensagem,
+      parametros,
     }),
   });
   if (!resp.ok) {
@@ -2584,6 +2592,8 @@ export interface TemplateMensagem {
   /** Consolidado: o **pior** entre as contas — o selo otimista convidaria a um disparo que falha. */
   status: string;
   utilizavel: boolean;
+  /** Aprovado **na conta desta escola** — a única pergunta que a tela de disparo faz. */
+  enviavel_aqui: boolean;
   contas: TemplateNaConta[];
   exemplos: string[];
   criado_em: string;
@@ -2714,6 +2724,18 @@ export async function replicarTemplates(): Promise<ReplicacaoTemplates> {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "replicar templates nas contas");
+}
+
+/** Trecho do corpo em volta de um `{{n}}`, para a tela dizer o que vai naquele campo.
+
+Sem isso, o disparo pede "parâmetro 2" e a secretaria adivinha. */
+export function trechoDoPlaceholder(corpo: string, n: number, raio = 28): string {
+  const alvo = `{{${n}}}`;
+  const i = (corpo ?? "").indexOf(alvo);
+  if (i < 0) return "";
+  const inicio = Math.max(0, i - raio);
+  const fim = Math.min(corpo.length, i + alvo.length + raio);
+  return `${inicio > 0 ? "…" : ""}${corpo.slice(inicio, fim)}${fim < corpo.length ? "…" : ""}`;
 }
 
 /** Os `{{n}}` do corpo, distintos e em ordem — para pedir um exemplo de cada. */

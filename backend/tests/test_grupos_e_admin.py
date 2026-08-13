@@ -16,10 +16,13 @@ from app.application.use_cases import EnviarBroadcast
 from app.domain.entities import (
     CategoriaTemplate,
     MessageTemplate,
+    OrigemParametro,
     Papel,
+    ParametroTemplate,
     StatusBroadcast,
     StatusTemplate,
     TemplateNaWaba,
+    Tenant,
     Usuario,
 )
 from app.infrastructure.security import (
@@ -39,6 +42,13 @@ from tests.fakes import (
 )
 
 TENANT = uuid.uuid4()
+
+
+class _FakeTenantRepo:
+    """Só o que o disparo precisa: o nome da escola, para o `{{n}}` que a assina."""
+
+    async def obter(self, tenant_id):
+        return Tenant(id=tenant_id, nome="EM Rosa Cury", slug="rosacury")
 
 
 def _template() -> MessageTemplate:
@@ -104,14 +114,24 @@ async def test_envio_para_grupo_resolve_membros():
         quota=FakeQuota(limite_diario=1000),
         rate_limiter=FakeRateLimiter(),
     )
-    uc = EnviarBroadcastParaGrupo(grupos=grupos, enviar=enviar)
+    uc = EnviarBroadcastParaGrupo(
+        grupos=grupos,
+        enviar=enviar,
+        templates=FakeTemplateRepo(template),
+        tenants=_FakeTenantRepo(),
+    )
 
     resultado = await uc.executar(
         tenant_id=TENANT,
         grupo_id=grupo.id,
         template_id=template.id,
         titulo="Reunião",
-        mensagem="Reunião dia 20/06 às 19h",
+        parametros=[
+            ParametroTemplate(origem=OrigemParametro.RESPONSAVEL),
+            ParametroTemplate(
+                origem=OrigemParametro.TEXTO, texto="Reunião dia 20/06 às 19h"
+            ),
+        ],
     )
 
     assert resultado.total_contatos == 2
@@ -132,14 +152,19 @@ async def test_envio_para_grupo_vazio_falha():
         quota=FakeQuota(limite_diario=1000),
         rate_limiter=FakeRateLimiter(),
     )
-    uc = EnviarBroadcastParaGrupo(grupos=grupos, enviar=enviar)
+    uc = EnviarBroadcastParaGrupo(
+        grupos=grupos,
+        enviar=enviar,
+        templates=FakeTemplateRepo(template),
+        tenants=_FakeTenantRepo(),
+    )
     with pytest.raises(ValueError, match="sem contatos"):
         await uc.executar(
             tenant_id=TENANT,
             grupo_id=grupo.id,
             template_id=template.id,
             titulo="x",
-            mensagem="y",
+            parametros=[],
         )
 
 
@@ -192,3 +217,122 @@ async def test_super_admin_cria_admin_de_tenant():
     )
     assert novo.papel == Papel.TENANT_ADMIN
     assert novo.tenant_id == TENANT
+
+
+# ------------------- parâmetros do template no disparo --------------------- #
+def _disparo(template: MessageTemplate, grupos):
+    return EnviarBroadcastParaGrupo(
+        grupos=grupos,
+        enviar=EnviarBroadcast(
+            broadcasts=FakeBroadcastRepo(),
+            templates=FakeTemplateRepo(template),
+            canal=FakeChannel(),
+            quota=FakeQuota(limite_diario=1000),
+            rate_limiter=FakeRateLimiter(),
+        ),
+        templates=FakeTemplateRepo(template),
+        tenants=_FakeTenantRepo(),
+    )
+
+
+async def _grupo_com_um_contato():
+    grupos = FakeGrupoRepo()
+    grupo = await CriarGrupo(grupos=grupos).executar(tenant_id=TENANT, nome="Turma")
+    await AdicionarContatoAoGrupo(grupos=grupos).executar(
+        tenant_id=TENANT, grupo_id=grupo.id, nome="Maria", telefone="+5511900000001"
+    )
+    return grupos, grupo
+
+
+async def test_contagem_de_parametros_diferente_do_corpo_e_recusada():
+    """O bug que só aparecia na Graph API, depois de consumir a cota.
+
+    O disparo mandava dois parâmetros fixos; o corpo do `aviso_reuniao` passou a ter três
+    quando ganhou o nome da escola em `{{2}}`. A Meta recusa por contagem, destinatário a
+    destinatário — e a falha chegava como "não entregue", não como erro de configuração.
+    """
+    grupos, grupo = await _grupo_com_um_contato()
+    template = _template()  # corpo com {{1}} e {{2}}
+    with pytest.raises(ValueError, match="2 variável"):
+        await _disparo(template, grupos).executar(
+            tenant_id=TENANT,
+            grupo_id=grupo.id,
+            template_id=template.id,
+            titulo="Reunião",
+            parametros=[ParametroTemplate(origem=OrigemParametro.TEXTO, texto="só um")],
+        )
+
+
+async def test_parametros_resolvem_responsavel_escola_e_texto():
+    grupos, grupo = await _grupo_com_um_contato()
+    template = MessageTemplate(
+        tenant_id=TENANT,
+        nome="aviso_reuniao",
+        categoria=CategoriaTemplate.UTILITY,
+        idioma="pt_BR",
+        corpo="Olá, {{1}}! A escola {{2}} informa: {{3}} Fale com a secretaria.",
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
+    )
+    canal = FakeChannel()
+    uc = EnviarBroadcastParaGrupo(
+        grupos=grupos,
+        enviar=EnviarBroadcast(
+            broadcasts=FakeBroadcastRepo(),
+            templates=FakeTemplateRepo(template),
+            canal=canal,
+            quota=FakeQuota(limite_diario=1000),
+            rate_limiter=FakeRateLimiter(),
+        ),
+        templates=FakeTemplateRepo(template),
+        tenants=_FakeTenantRepo(),
+    )
+    await uc.executar(
+        tenant_id=TENANT,
+        grupo_id=grupo.id,
+        template_id=template.id,
+        titulo="Reunião",
+        parametros=[
+            ParametroTemplate(origem=OrigemParametro.RESPONSAVEL),
+            ParametroTemplate(origem=OrigemParametro.ESCOLA),
+            ParametroTemplate(origem=OrigemParametro.TEXTO, texto="a reunião é dia 20/08."),
+        ],
+    )
+    assert canal.parametros_enviados[0] == [
+        "Maria",
+        "EM Rosa Cury",
+        "a reunião é dia 20/08.",
+    ]
+
+
+async def test_template_de_outra_escola_nao_dispara():
+    """`obter` já é escopado por tenant; aqui é a garantia de que o disparo usa esse caminho."""
+    grupos, grupo = await _grupo_com_um_contato()
+    template = _template()
+    de_outra_escola = MessageTemplate(
+        tenant_id=uuid.uuid4(),
+        nome="alheio",
+        categoria=CategoriaTemplate.UTILITY,
+        idioma="pt_BR",
+        corpo="Olá, {{1}}! {{2}}",
+        wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
+    )
+    uc = EnviarBroadcastParaGrupo(
+        grupos=grupos,
+        enviar=EnviarBroadcast(
+            broadcasts=FakeBroadcastRepo(),
+            templates=FakeTemplateRepo(template),
+            canal=FakeChannel(),
+            quota=FakeQuota(limite_diario=1000),
+            rate_limiter=FakeRateLimiter(),
+        ),
+        templates=FakeTemplateRepo(template),
+        tenants=_FakeTenantRepo(),
+    )
+    with pytest.raises(ValueError, match="não encontrado"):
+        await uc.executar(
+            tenant_id=TENANT,
+            grupo_id=grupo.id,
+            template_id=de_outra_escola.id,
+            titulo="x",
+            parametros=[],
+        )

@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
 from app.application.use_cases import EnviarBroadcast, ResultadoBroadcast
 from app.application.validacao import normalizar_telefone
+from app.application.validacao_template import placeholders_do_corpo
 from app.domain.entities import (
     Broadcast,
     Cargo,
     DestinatarioBroadcast,
     Grupo,
     Papel,
+    ParametroTemplate,
     Turno,
     Usuario,
 )
-from app.domain.ports import GrupoRepository, UsuarioRepository
+from app.domain.ports import (
+    GrupoRepository,
+    TemplateRepository,
+    TenantRepository,
+    UsuarioRepository,
+)
 from app.infrastructure.security import hash_senha, verificar_senha
 
 
@@ -249,9 +257,18 @@ class EnviarBroadcastParaGrupo:
     aplica template aprovado, rate limiting e cota diária (tier Meta).
     """
 
-    def __init__(self, *, grupos: GrupoRepository, enviar: EnviarBroadcast) -> None:
+    def __init__(
+        self,
+        *,
+        grupos: GrupoRepository,
+        enviar: EnviarBroadcast,
+        templates: TemplateRepository,
+        tenants: TenantRepository,
+    ) -> None:
         self._grupos = grupos
         self._enviar = enviar
+        self._templates = templates
+        self._tenants = tenants
 
     async def executar(
         self,
@@ -260,15 +277,41 @@ class EnviarBroadcastParaGrupo:
         grupo_id: UUID,
         template_id: UUID,
         titulo: str,
-        mensagem: str,
+        parametros: Sequence[ParametroTemplate],
     ) -> ResultadoEnvioGrupo:
         contatos = await self._grupos.membros(tenant_id=tenant_id, grupo_id=grupo_id)
         if not contatos:
             raise ValueError("Grupo sem contatos ou inexistente.")
 
-        # Parâmetros do template padrão: {{1}} = nome do responsável, {{2}} = mensagem.
+        template = await self._templates.obter(
+            tenant_id=tenant_id, template_id=template_id
+        )
+        if template is None:
+            raise ValueError("Template não encontrado para esta escola.")
+
+        # **A contagem é conferida aqui, não descoberta na Graph API.** O disparo mandava
+        # dois parâmetros fixos para um corpo que hoje tem três, e a Meta recusa por número
+        # de parâmetros — erro que chega como falha de envio por destinatário, depois de a
+        # cota já ter sido consumida.
+        esperados = placeholders_do_corpo(template.corpo)
+        if len(parametros) != len(esperados):
+            raise ValueError(
+                f"O template {template.nome!r} tem {len(esperados)} variável(is) "
+                f"({', '.join('{{%d}}' % n for n in esperados) or 'nenhuma'}) e foram "
+                f"informados {len(parametros)} valor(es). A Meta recusa o envio quando a "
+                "contagem não bate."
+            )
+
+        escola = await self._tenants.obter(tenant_id)
+        nome_escola = escola.nome if escola else ""
+
         destinatarios = [
-            DestinatarioBroadcast(contato=c.telefone, parametros=[c.nome, mensagem])
+            DestinatarioBroadcast(
+                contato=c.telefone,
+                parametros=[
+                    p.resolver(responsavel=c.nome, escola=nome_escola) for p in parametros
+                ],
+            )
             for c in contatos
         ]
         broadcast = Broadcast(
