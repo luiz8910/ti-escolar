@@ -78,6 +78,13 @@ class SincronizacaoTemplatesSaida(BaseModel):
     verificados: int
     atualizados: int
     desconhecidos: int
+    # Constavam no catálogo e não existem na Meta — a aprovação que ninguém deu.
+    desmentidos: int = 0
+
+
+class ImportarTemplateEntrada(BaseModel):
+    nome: str
+    idioma: str = "pt_BR"
 
 
 class ReplicacaoTemplatesSaida(BaseModel):
@@ -428,6 +435,8 @@ class DestinatarioBroadcastSaida(BaseModel):
     contato: str
     nome: str = ""  # nome do responsável, se cadastrado
     status: str
+    # Por que falhou, na palavra da Meta. Vazio quando não falhou.
+    erro: str = ""
     atualizado_em: datetime | None = None
 
 

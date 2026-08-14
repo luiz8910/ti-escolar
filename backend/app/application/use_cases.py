@@ -800,10 +800,22 @@ class EnviarBroadcast:
                 dest.atualizado_em = datetime.now(timezone.utc)
                 await self._quota.consumir(broadcast.tenant_id, 1)
                 enviados += 1
-            except Exception:  # noqa: BLE001 — falha de envio não derruba o lote
+            except Exception as exc:  # noqa: BLE001 — falha de envio não derruba o lote
+                # **O motivo é registrado.** Continuar o lote é certo; perder a explicação
+                # não era: no primeiro disparo real, dois envios falharam porque o template
+                # não existia na conta da escola, e o painel mostrou "Falhou" sem mais nada
+                # — nem log, nem motivo. Sem isto, a única saída é adivinhar.
                 dest.status = StatusEntrega.FALHOU
+                dest.erro = str(exc)[:500]
                 dest.atualizado_em = datetime.now(timezone.utc)
                 falhas += 1
+                _logger.warning(
+                    "Falha ao enviar template %r para %s (broadcast %s): %s",
+                    template.nome,
+                    dest.contato,
+                    broadcast.id,
+                    exc,
+                )
 
         broadcast.status = (
             StatusBroadcast.PARCIAL_LIMITE if bloqueados else StatusBroadcast.CONCLUIDO

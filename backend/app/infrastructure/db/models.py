@@ -293,6 +293,8 @@ class DestinatarioORM(Base):
     mensagem_id_externo: Mapped[str] = mapped_column(String(128), default="", index=True)
     # Última atualização de status (envio ou webhook).
     atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Motivo da falha, como a Meta o descreveu. Ver `DestinatarioBroadcast.erro`.
+    erro: Mapped[str] = mapped_column(Text, default="", server_default="")
 
     broadcast: Mapped[BroadcastORM] = relationship(back_populates="destinatarios")
 

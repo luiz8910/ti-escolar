@@ -207,6 +207,8 @@ export interface DestinatarioBroadcast {
   contato: string;
   nome: string;
   status: string;
+  /** Por que falhou, na palavra da Meta. Vazio quando não falhou. */
+  erro: string;
   atualizado_em: string | null;
 }
 
@@ -2604,6 +2606,8 @@ export interface SincronizacaoTemplates {
   verificados: number;
   atualizados: number;
   desconhecidos: number;
+  /** Constavam no catálogo e não existem na Meta — a aprovação que ninguém deu. */
+  desmentidos: number;
 }
 
 export interface ReplicacaoTemplates {
@@ -2715,6 +2719,19 @@ export async function sincronizarTemplates(): Promise<SincronizacaoTemplates> {
     headers: authHeaders(),
   });
   return jsonOuErro(resp, "sincronizar templates com a Meta");
+}
+
+/** Adota no catálogo um template que já existe na Meta (escopo global, super admin). */
+export async function importarTemplate(
+  nome: string,
+  idioma = "pt_BR"
+): Promise<TemplateMensagem> {
+  const resp = await apiFetch(`${API_URL}/api/admin/templates/importar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ nome, idioma }),
+  });
+  return jsonOuErro(resp, "importar o template da Meta");
 }
 
 /** Leva os templates globais para as contas que ainda não os têm. */

@@ -173,3 +173,31 @@ async def test_template_aprovado_na_conta_da_escola_dispara():
         tenants=_TenantRepoDeUmaConta(escola),
     ).executar(broadcast=broadcast)
     assert resultado.enviados == 1
+
+
+@pytest.mark.asyncio
+async def test_falha_de_envio_guarda_o_motivo():
+    """Sem o motivo, o painel diz "Falhou" e a causa não existe em lugar nenhum.
+
+    Foi o que aconteceu no primeiro disparo real: dois destinatários falharam porque o
+    template não existia na conta, e descobrir isso exigiu consultar a Graph API à mão.
+    """
+    template = _template()
+    broadcast = Broadcast(
+        tenant_id=TENANT,
+        template_id=template.id,
+        titulo="Aviso",
+        destinatarios=[DestinatarioBroadcast(contato="+5511900000001", parametros=["Ana"])],
+    )
+    canal = FakeChannel(falhar_em={"+5511900000001"})
+    resultado = await EnviarBroadcast(
+        broadcasts=FakeBroadcastRepo(),
+        templates=FakeTemplateRepo(template),
+        canal=canal,
+        quota=FakeQuota(limite_diario=100),
+        rate_limiter=FakeRateLimiter(),
+    ).executar(broadcast=broadcast)
+
+    assert resultado.falhas == 1
+    assert broadcast.destinatarios[0].status is StatusEntrega.FALHOU
+    assert "falha simulada" in broadcast.destinatarios[0].erro

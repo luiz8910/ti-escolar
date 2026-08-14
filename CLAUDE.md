@@ -168,7 +168,7 @@ ti-escolar/
   `0034_contato_responsavel` → `0035_aluno_foto` →
   `0036_turma_estruturada` →
   `0037_conversa_sessao` → `0038_impressao_whatsapp` → `0040_templates_catalogo` →
-  `0041_anti_spam_documentos` → `0042_wabas_multiplas`.
+  `0041_anti_spam_documentos` → `0042_wabas_multiplas` → `0043_destinatario_erro`.
   ⚠️ **O `0039` não existe, e o `0041` já se chamou `0038`.** Três migrations foram
   escritas em paralelo apontando para a `0037`; a ordem de merge decidiu o resto. A do
   anti-spam quase se perdeu: o PR #55 foi mergeado numa branch de feature que **já tinha
@@ -1109,6 +1109,20 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
   adaptador. Adaptador `MetaCatalogoTemplates`
   (`app/infrastructure/channel/meta_templates.py`) + `CatalogoTemplatesAusente`, que falha
   **no uso** com a causa por extenso (canal em demo) em vez de derrubar o boot.
+- **⚠️ O catálogo não pode afirmar aprovação que a Meta não deu** (14/ago/2026). O primeiro
+  disparo real falhou nos dois destinatários porque o `aviso_reuniao` constava "Aprovado" e
+  **não existia na WABA**: ele entrou pelo seed de demonstração, que cravava
+  `status="aprovado"`, e o seed rodou contra homolog, onde o canal é real. Três correções,
+  cada uma numa camada diferente:
+  - **`SincronizarTemplates` passou a desmentir.** A reconciliação era de mão única — só
+    aplicava o que a Meta devolvia — então um template marcado aprovado que nunca chegou lá
+    permanecia aprovado para sempre. Agora o que consta aqui e não existe na conta volta a
+    `RASCUNHO`, com o motivo escrito. **Falha de listagem não desmente nada**: uma conta
+    fora do ar não pode zerar o catálogo de quem está no ar.
+  - **O seed só crava `aprovado` com o canal em demo** (`canal_efetivo(settings)`). Ali nada
+    é enviado, a aprovação fictícia é inofensiva e é o que torna a vitrine demonstrável; com
+    canal real, nunca.
+  - **A falha de envio passou a registrar o motivo** (§9a-quater).
 - **Submeter não é aprovar.** O `POST` devolve `PENDING`; quem muda para aprovado é o webhook
   `message_template_status_update` (§9c). `SincronizarTemplates` é a **rede de segurança**:
   webhook perdido é indistinguível de revisão em curso, e sem reconciliação alguém esperaria
@@ -1151,6 +1165,18 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
   - A tela mostra o corpo do template e, para cada variável, o **trecho em volta dela**
     (`trechoDoPlaceholder`) — sem isso o formulário pede "parâmetro 2" e a secretaria
     adivinha.
+
+### 9a-quater. O motivo da falha de envio (`DestinatarioBroadcast.erro`)
+
+`EnviarBroadcast` captura a exceção por destinatário para **não derrubar o lote** — o que
+está certo — e a descartava junto, o que não estava. No primeiro disparo real o painel
+mostrou "Falhou" nos dois responsáveis e a causa não existia em lugar nenhum: nem log, nem
+campo. Descobri-la exigiu consultar a Graph API à mão.
+
+Agora a exceção vai para o log (`warning`, com template, contato e broadcast) **e** para
+`DestinatarioBroadcast.erro` (migration `0043_destinatario_erro`), que o painel exibe sob o
+selo "Falhou". "Falhou" vira "Falhou — template name does not exist in the translation",
+que é a diferença entre um mistério e um conserto de dois minutos.
 
 ### 9a-ter. Várias contas do WhatsApp (`Waba`) — o teto que quebrava o catálogo
 

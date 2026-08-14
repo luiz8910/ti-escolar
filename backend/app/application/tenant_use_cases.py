@@ -623,6 +623,8 @@ class DestinatarioComNome:
     nome: str  # nome do responsável, se cadastrado
     status: StatusEntrega
     atualizado_em: datetime | None
+    # Motivo da falha, como a Meta o descreveu. Vazio quando não falhou.
+    erro: str = ""
 
 
 @dataclass
@@ -674,6 +676,7 @@ class ObterBroadcastDaEscola:
                     nome=contato.nome if contato else "",
                     status=dest.status,
                     atualizado_em=dest.atualizado_em,
+                    erro=dest.erro,
                 )
             )
         return BroadcastDetalhado(

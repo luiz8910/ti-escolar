@@ -1486,6 +1486,9 @@ class TemplateRemoto:
     categoria: CategoriaTemplate
     meta_template_id: str = ""
     motivo_rejeicao: str = ""
+    # Corpo, quando a listagem trouxe os componentes. É o que permite **importar** para o
+    # catálogo um template que já existe na Meta, em vez de só contá-lo como desconhecido.
+    corpo: str = ""
 
 
 class StatusEntrega(str, enum.Enum):
@@ -1537,6 +1540,11 @@ class DestinatarioBroadcast:
     # Última atualização de status (envio ou webhook). Base para a verificação reativa
     # de não-entrega (quanto tempo se passou desde o envio sem confirmação).
     atualizado_em: datetime | None = None
+    # Por que falhou, **na palavra da Meta**. Sem isto o painel diz "Falhou" e não há mais
+    # nada em lugar nenhum: a exceção era engolida para não derrubar o lote, e com ela ia
+    # embora a única explicação — foi o que aconteceu no primeiro disparo real, em que dois
+    # envios falharam porque o template não existia na conta e ninguém tinha como saber.
+    erro: str = ""
     id: UUID = field(default_factory=_new_id)
 
 

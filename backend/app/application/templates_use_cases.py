@@ -37,6 +37,7 @@ from app.application.validacao_template import (
 from app.domain.entities import (
     CategoriaTemplate,
     MessageTemplate,
+    StatusTemplate,
     TemplateNaWaba,
     TemplateRemoto,
     Usuario,
@@ -80,6 +81,9 @@ class ResultadoSincronizacao:
     verificados: int
     atualizados: int
     desconhecidos: int  # existem na Meta e não no nosso banco
+    # Constavam aqui e **não existem** na Meta: o catálogo estava afirmando uma aprovação
+    # que ninguém deu. Ver `SincronizarTemplates`.
+    desmentidos: int = 0
 
 
 @dataclass(frozen=True)
@@ -365,24 +369,56 @@ class SincronizarTemplates:
         verificados = 0
         atualizados = 0
         desconhecidos = 0
+        desmentidos = 0
         tocados: dict[UUID, MessageTemplate] = {}
 
         for conta in contas:
             try:
                 remotos = await self._catalogo.listar(meta_waba_id=conta.meta_waba_id)
             except Exception as exc:  # noqa: BLE001 — uma conta fora não cancela as demais
+                # Sem a listagem desta conta, **nada** é desmentido a partir dela: uma
+                # falha de rede não pode zerar o catálogo de quem está no ar.
                 logger.warning("Não foi possível listar templates de %r: %s", conta.nome, exc)
                 continue
             verificados += len(remotos)
+            nomes_remotos = {(r.nome, r.idioma) for r in remotos}
+
             for remoto in remotos:
                 local = por_chave.get((remoto.nome, remoto.idioma))
                 if local is None:
-                    # Template criado direto no WhatsApp Manager. Não importamos: sem
-                    # saber se é global ou de uma escola, o palpite erraria o isolamento.
+                    # Template criado direto no WhatsApp Manager. Não importamos sozinhos:
+                    # sem saber se é global ou de uma escola, o palpite erraria o
+                    # isolamento. `ImportarTemplateDaMeta` é o caminho explícito.
                     desconhecidos += 1
                     continue
                 if _aplicar_remoto(local, remoto, waba_id=conta.id):
                     tocados[local.id] = local
+
+            # **O que consta aqui e não existe lá.** É a metade que faltava: até
+            # 14/ago/2026 a reconciliação era de mão única, e um template marcado
+            # "aprovado" que nunca chegou à Meta permanecia aprovado para sempre. Foi
+            # exatamente esse estado que fez o primeiro disparo real falhar nos dois
+            # destinatários — a trava de envio consultava um dado que ninguém desmentia.
+            for local in locais:
+                if (local.nome, local.idioma) in nomes_remotos:
+                    continue
+                entrada = local.na_waba(conta.id)
+                if entrada is None or entrada.status is StatusTemplate.RASCUNHO:
+                    continue
+                logger.warning(
+                    "Template %r constava como %s e não existe na conta %r: desmentido.",
+                    local.nome,
+                    entrada.status.value,
+                    conta.nome,
+                )
+                entrada.status = StatusTemplate.RASCUNHO
+                entrada.meta_template_id = ""
+                entrada.motivo_rejeicao = (
+                    "Não existe nesta conta do WhatsApp. Foi removido na Meta, ou nunca "
+                    "chegou a ser submetido."
+                )
+                tocados[local.id] = local
+                desmentidos += 1
 
         for local in tocados.values():
             await self._templates.salvar(local)
@@ -390,14 +426,18 @@ class SincronizarTemplates:
 
         logger.info(
             "Sincronização de templates: %d conta(s), %d na Meta, %d atualizados, "
-            "%d fora do catálogo",
+            "%d fora do catálogo, %d desmentidos",
             len(contas),
             verificados,
             atualizados,
             desconhecidos,
+            desmentidos,
         )
         return ResultadoSincronizacao(
-            verificados=verificados, atualizados=atualizados, desconhecidos=desconhecidos
+            verificados=verificados,
+            atualizados=atualizados,
+            desconhecidos=desconhecidos,
+            desmentidos=desmentidos,
         )
 
 
@@ -455,6 +495,98 @@ class ReplicarTemplates:
         return ResultadoReplicacao(
             submetidos=submetidos, falhas=falhas, ja_existiam=ja_existiam
         )
+
+
+class ImportarTemplateDaMeta:
+    """Traz para o catálogo um template que **já existe** na Meta, como global.
+
+    A sincronização não faz isso sozinha, e por um bom motivo: sem saber se o template é
+    global ou de uma escola, adotá-lo erraria o isolamento. Mas contá-lo como
+    "desconhecido" e parar ali deixava um buraco real — o ``retomada_atendimento``, que a
+    Meta aprovou e o produto **precisa encontrar pelo nome** para reabrir conversa fora da
+    janela de 24h (§6j), ficava invisível para o catálogo, e a secretaria não conseguia
+    responder quem escreveu ontem.
+
+    Aqui quem resolve a ambiguidade é o super admin, dizendo explicitamente "isto é
+    global". Nada é submetido: o template já está lá, e o que se cria é o registro local
+    com o status que a Meta reporta **em cada conta**.
+    """
+
+    def __init__(
+        self,
+        *,
+        templates: TemplateRepository,
+        catalogo: CatalogoTemplates,
+        wabas: WabaRepository,
+    ) -> None:
+        self._templates = templates
+        self._catalogo = catalogo
+        self._wabas = wabas
+
+    async def executar(
+        self, *, usuario: Usuario, nome: str, idioma: str = IDIOMA_PADRAO
+    ) -> MessageTemplate:
+        if not _pode_gerir_globais(usuario):
+            raise PermissaoTemplateNegada(
+                "Só o super admin importa template para o catálogo compartilhado."
+            )
+        nome = (nome or "").strip()
+        if await self._templates.por_nome_e_idioma(nome=nome, idioma=idioma) is not None:
+            raise TemplateInvalido(
+                f"O template {nome!r} já está no catálogo. Use 'Sincronizar com a Meta' "
+                "para atualizar o status dele."
+            )
+
+        contas = await self._wabas.listar(apenas_ativas=True)
+        if not contas:
+            raise SemContaWhatsApp("Nenhuma conta do WhatsApp Business ativa cadastrada.")
+
+        entradas: list[TemplateNaWaba] = []
+        modelo: TemplateRemoto | None = None
+        for conta in contas:
+            remotos = await self._catalogo.listar(meta_waba_id=conta.meta_waba_id)
+            achado = next(
+                (r for r in remotos if r.nome == nome and r.idioma == idioma), None
+            )
+            if achado is None:
+                continue
+            modelo = modelo or achado
+            entradas.append(
+                TemplateNaWaba(
+                    waba_id=conta.id,
+                    status=achado.status,
+                    meta_template_id=achado.meta_template_id,
+                    motivo_rejeicao=achado.motivo_rejeicao,
+                )
+            )
+
+        if modelo is None:
+            raise TemplateNaoEncontrado(
+                f"Nenhuma conta tem um template {nome!r} em {idioma}. Confira o nome no "
+                "WhatsApp Manager."
+            )
+        if not modelo.corpo:
+            # Sem o corpo o registro local seria uma casca: a tela não mostraria o texto e
+            # o disparo não saberia quantas variáveis pedir.
+            raise TemplateInvalido(
+                f"A Meta não devolveu o corpo de {nome!r}; não dá para importar às cegas."
+            )
+
+        template = MessageTemplate(
+            tenant_id=None,
+            nome=nome,
+            categoria=modelo.categoria,
+            idioma=idioma,
+            corpo=modelo.corpo,
+            wabas=entradas,
+        )
+        salvo = await self._templates.salvar(template)
+        logger.info(
+            "Template %r importado da Meta para o catálogo global (%d conta(s)).",
+            salvo.nome,
+            len(entradas),
+        )
+        return salvo
 
 
 def _aplicar_remoto(

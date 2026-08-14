@@ -14,12 +14,14 @@ import pytest
 from app.application.templates_use_cases import (
     AtualizarStatusTemplateMeta,
     CriarTemplate,
+    ImportarTemplateDaMeta,
     ListarTemplates,
     PermissaoTemplateNegada,
     RemoverTemplate,
     ReplicarTemplates,
     SemContaWhatsApp,
     SincronizarTemplates,
+    TemplateNaoEncontrado,
 )
 from app.application.waba_use_cases import AdotarContaDoWebhook
 from app.application.validacao_template import (
@@ -800,3 +802,136 @@ async def test_entry_sem_id_numerico_e_ignorada():
     payload = {"entry": [{"id": "", "changes": []}, {"changes": []}]}
     assert await _adotar(repo).executar(payload=payload) is None
     assert repo.wabas[0].meta_waba_id == ""
+
+
+# --------------------------------------------------------------------------- #
+# O catálogo não pode afirmar aprovação que a Meta não deu (14/ago/2026)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_sincronizacao_desmente_template_que_nao_existe_na_meta():
+    """A falha do primeiro disparo real: 'Aprovado' num template que nunca foi submetido.
+
+    O `aviso_reuniao` entrou no banco pelo seed com `status='aprovado'` e o seed rodou em
+    homolog, onde o canal é real. A trava de envio consultou esse dado, liberou, e a Graph
+    API recusou os dois destinatários. A reconciliação era de mão única e nunca desmentia.
+    """
+    repo = FakeTemplateRepo()
+    await repo.salvar(
+        _pendente(
+            "aviso_reuniao",
+            wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
+        )
+    )
+    # A Meta só conhece outro template.
+    catalogo = FakeCatalogoTemplates(
+        remotos=[
+            TemplateRemoto(
+                nome="retomada_atendimento", idioma="pt_BR",
+                status=StatusTemplate.APROVADO, categoria=CategoriaTemplate.UTILITY,
+            )
+        ]
+    )
+    resultado = await SincronizarTemplates(
+        templates=repo, catalogo=catalogo, wabas=FakeWabaRepo()
+    ).executar()
+
+    assert resultado.desmentidos == 1
+    assert repo.templates[0].aprovado_em(WABA_PADRAO_ID) is False
+    assert repo.templates[0].status_em(WABA_PADRAO_ID) is StatusTemplate.RASCUNHO
+    assert "não existe" in repo.templates[0].motivo_em(WABA_PADRAO_ID).lower()
+
+
+@pytest.mark.asyncio
+async def test_conta_fora_do_ar_nao_desmente_nada():
+    """Falha de rede não pode zerar o catálogo de quem está no ar."""
+    repo = FakeTemplateRepo()
+    await repo.salvar(
+        _pendente(
+            "aviso_geral",
+            wabas=[TemplateNaWaba(waba_id=WABA_PADRAO_ID, status=StatusTemplate.APROVADO)],
+        )
+    )
+    catalogo = FakeCatalogoTemplates(erro=RuntimeError("timeout"))
+    resultado = await SincronizarTemplates(
+        templates=repo, catalogo=catalogo, wabas=FakeWabaRepo()
+    ).executar()
+
+    assert resultado.desmentidos == 0
+    assert repo.templates[0].aprovado_em(WABA_PADRAO_ID) is True
+
+
+@pytest.mark.asyncio
+async def test_template_nunca_submetido_naquela_conta_nao_conta_como_desmentido():
+    """`RASCUNHO` já significa "não está lá" — desmentir de novo inflaria o número."""
+    repo = FakeTemplateRepo()
+    await repo.salvar(_pendente("aviso_geral", wabas=[]))
+    resultado = await SincronizarTemplates(
+        templates=repo, catalogo=FakeCatalogoTemplates(), wabas=FakeWabaRepo()
+    ).executar()
+    assert resultado.desmentidos == 0
+
+
+@pytest.mark.asyncio
+async def test_importa_template_que_ja_existe_na_meta():
+    """Destrava o `retomada_atendimento`, aprovado na Meta e invisível para o catálogo.
+
+    Sem ele no catálogo, `_template_de_retomada` não acha nada e a secretaria não consegue
+    responder quem escreveu há mais de 24h (§6j).
+    """
+    repo = FakeTemplateRepo()
+    catalogo = FakeCatalogoTemplates(
+        remotos=[
+            TemplateRemoto(
+                nome="retomada_atendimento", idioma="pt_BR",
+                status=StatusTemplate.APROVADO, categoria=CategoriaTemplate.UTILITY,
+                meta_template_id="777", corpo="Olá! Aqui é a secretaria da {{1}}: {{2}} Até.",
+            )
+        ]
+    )
+    template = await ImportarTemplateDaMeta(
+        templates=repo, catalogo=catalogo, wabas=FakeWabaRepo()
+    ).executar(usuario=_super_admin(), nome="retomada_atendimento")
+
+    assert template.global_ is True
+    assert template.corpo.startswith("Olá! Aqui é a secretaria")
+    assert template.aprovado_em(WABA_PADRAO_ID) is True
+    # Importar não submete nada: o template já está lá.
+    assert catalogo.submetidos == []
+
+
+@pytest.mark.asyncio
+async def test_importar_exige_super_admin():
+    with pytest.raises(PermissaoTemplateNegada):
+        await ImportarTemplateDaMeta(
+            templates=FakeTemplateRepo(),
+            catalogo=FakeCatalogoTemplates(),
+            wabas=FakeWabaRepo(),
+        ).executar(usuario=_admin_escola(), nome="retomada_atendimento")
+
+
+@pytest.mark.asyncio
+async def test_importar_o_que_a_meta_nao_tem_e_recusado():
+    with pytest.raises(TemplateNaoEncontrado):
+        await ImportarTemplateDaMeta(
+            templates=FakeTemplateRepo(),
+            catalogo=FakeCatalogoTemplates(remotos=[]),
+            wabas=FakeWabaRepo(),
+        ).executar(usuario=_super_admin(), nome="nao_existe")
+
+
+@pytest.mark.asyncio
+async def test_importar_sem_corpo_e_recusado():
+    """Registro local sem corpo é casca: a tela não mostra o texto e o disparo não sabe
+    quantas variáveis pedir."""
+    catalogo = FakeCatalogoTemplates(
+        remotos=[
+            TemplateRemoto(
+                nome="sem_corpo", idioma="pt_BR", status=StatusTemplate.APROVADO,
+                categoria=CategoriaTemplate.UTILITY, corpo="",
+            )
+        ]
+    )
+    with pytest.raises(TemplateInvalido, match="às cegas"):
+        await ImportarTemplateDaMeta(
+            templates=FakeTemplateRepo(), catalogo=catalogo, wabas=FakeWabaRepo()
+        ).executar(usuario=_super_admin(), nome="sem_corpo")

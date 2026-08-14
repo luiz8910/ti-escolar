@@ -1037,6 +1037,7 @@ async def obter_broadcast(
                 contato=d.contato,
                 nome=d.nome,
                 status=d.status.value,
+                erro=d.erro,
                 atualizado_em=d.atualizado_em,
             )
             for d in detalhe.destinatarios

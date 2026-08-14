@@ -79,7 +79,7 @@ from app.infrastructure.db.repositories_conhecimento import (
     SqlRespostaRapidaRepository,
 )
 from app.infrastructure.db.session import SessionLocal
-from app.infrastructure.factories import criar_embedder
+from app.infrastructure.factories import canal_efetivo, criar_embedder
 from app.infrastructure.security import hash_senha
 
 # Tenant fixo para o demo (o front-end usa este id).
@@ -323,7 +323,14 @@ async def _seed() -> None:
                     id=uuid.uuid4(),
                     template_id=DEMO_TEMPLATE_ID,
                     waba_id=conta_id,
-                    status="aprovado",
+                    # **"Aprovado" só quando ninguém vai enviar de verdade.** O seed não
+                    # tem como saber o que a Meta aprovou, e afirmar aprovação num
+                    # ambiente de canal real é uma mentira que a Graph API desmente no
+                    # pior momento: foi o que derrubou o primeiro disparo real em
+                    # 14/ago/2026, com o painel exibindo "Aprovado" para um template que
+                    # nunca foi submetido. No canal demo nada sai, então a aprovação
+                    # fictícia é inofensiva e é o que torna a vitrine demonstrável.
+                    status="aprovado" if canal_efetivo(settings) == "demo" else "pendente",
                     atualizado_em=datetime.now(timezone.utc),
                 )
             )
