@@ -18,6 +18,32 @@ from app.domain.entities import Documento, MessageTemplate
 
 logger = logging.getLogger("channel.meta")
 
+
+class EnvioRecusado(RuntimeError):
+    """A Meta recusou o envio, com o motivo dela — não com o código HTTP."""
+
+
+def _erro_do_corpo(resposta: httpx.Response) -> str:
+    """Extrai o motivo que a Meta escreveu, em vez do status cru.
+
+    **O status HTTP engana aqui.** Template inexistente responde **404**, e o
+    ``HTTPStatusError`` do httpx vira "Client error '404 Not Found' for url
+    .../messages" — que foi exatamente o que apareceu no painel no disparo de
+    14/ago/2026, escondendo a única frase que importava: "template name
+    (aviso_reuniao) does not exist in pt_BR". O motivo está sempre no corpo.
+    """
+    try:
+        erro = resposta.json().get("error", {})
+    except Exception:  # noqa: BLE001 — corpo não-JSON: cai no texto bruto
+        return (resposta.text or "")[:300] or f"HTTP {resposta.status_code}"
+    partes = [
+        erro.get("message"),
+        (erro.get("error_data") or {}).get("details"),
+    ]
+    texto = " — ".join(p for p in partes if p)
+    return texto or f"HTTP {resposta.status_code}"
+
+
 _BASE = "https://graph.facebook.com/v21.0"
 
 
@@ -57,7 +83,10 @@ class MetaMessageChannel:
         url = f"{_BASE}/{self._origem(remetente)}/messages"
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, headers=self._headers, json=payload)
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise EnvioRecusado(_erro_do_corpo(exc.response)) from exc
             data = resp.json()
         return data["messages"][0]["id"]
 
