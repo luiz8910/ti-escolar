@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.application.templates_use_cases import (
     CatalogoIndisponivelEmTodasAsContas,
     CriarTemplate,
+    ImportarTemplateDaMeta,
     ListarTemplates,
     ObterTemplate,
     PermissaoTemplateNegada,
@@ -41,6 +42,7 @@ from app.interfaces.api.admin import (
 )
 from app.interfaces.deps import (
     get_criar_template,
+    get_importar_template,
     get_remover_template,
     get_replicar_templates,
     get_sincronizar_templates,
@@ -49,6 +51,7 @@ from app.interfaces.deps import (
     get_waba_repo,
 )
 from app.interfaces.dto import (
+    ImportarTemplateEntrada,
     ReplicacaoTemplatesSaida,
     SincronizacaoTemplatesSaida,
     TemplateEntrada,
@@ -247,7 +250,42 @@ async def sincronizar_templates(
         verificados=resultado.verificados,
         atualizados=resultado.atualizados,
         desconhecidos=resultado.desconhecidos,
+        desmentidos=resultado.desmentidos,
     )
+
+
+@router.post("/importar", response_model=TemplateSaida, status_code=status.HTTP_201_CREATED)
+async def importar_template(
+    payload: ImportarTemplateEntrada,
+    solicitante: Usuario = Depends(usuario_autenticado),
+    uc: ImportarTemplateDaMeta = Depends(get_importar_template),
+    wabas: SqlWabaRepository = Depends(get_waba_repo),
+) -> TemplateSaida:
+    """Adota no catálogo um template que já existe na Meta (escopo global).
+
+    Existe porque a sincronização se recusa a importar sozinha — e com razão, já que não
+    tem como saber se o template é global ou de uma escola. Aqui quem diz é o super admin.
+    """
+    _exige_super_admin(solicitante)
+    try:
+        template = await uc.executar(
+            usuario=solicitante, nome=payload.nome, idioma=payload.idioma
+        )
+    except PermissaoTemplateNegada as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except TemplateInvalido as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except TemplateNaoEncontrado as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SemContaWhatsApp as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except CatalogoTemplatesIndisponivel as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+    return _saida(template, await _contas(wabas))
 
 
 @router.post("/replicar", response_model=ReplicacaoTemplatesSaida)

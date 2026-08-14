@@ -509,6 +509,7 @@ class SqlBroadcastRepository:
                     status=dest.status.value,
                     mensagem_id_externo=dest.mensagem_id_externo,
                     atualizado_em=dest.atualizado_em,
+                    erro=dest.erro,
                 )
             )
         await self._s.flush()
@@ -527,6 +528,7 @@ class SqlBroadcastRepository:
                 status=StatusEntrega(d.status),
                 mensagem_id_externo=d.mensagem_id_externo or "",
                 atualizado_em=d.atualizado_em,
+                erro=d.erro or "",
             )
             for d in row.destinatarios
         ]

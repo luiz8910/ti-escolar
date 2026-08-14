@@ -307,6 +307,13 @@ function DetalheDisparo({ detalhe }: { detalhe: BroadcastDetalhe }) {
                   <Badge tone={TONE_ENTREGA[d.status] ?? "neutral"}>
                     {ROTULO_ENTREGA[d.status] ?? d.status}
                   </Badge>
+                  {d.erro && (
+                    // O motivo, na palavra da Meta. Sem ele a tela dizia só "Falhou" e a
+                    // causa não existia em lugar nenhum.
+                    <p className="mt-1 max-w-[420px] text-[11px] leading-snug text-danger">
+                      {d.erro}
+                    </p>
+                  )}
                 </Td>
                 <Td className="text-xs text-n-500">{formatar(d.atualizado_em)}</Td>
               </Tr>

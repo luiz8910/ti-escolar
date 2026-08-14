@@ -65,6 +65,14 @@ def motivo_da_meta(*, status_bruto: str, motivo: str | None) -> str:
     return _MOTIVO_IMPLICITO.get((status_bruto or "").upper(), "")
 
 
+def _corpo_dos_componentes(componentes: list | None) -> str:
+    """Extrai o texto do componente BODY — o único que o produto usa hoje."""
+    for componente in componentes or []:
+        if str(componente.get("type", "")).upper() == "BODY":
+            return str(componente.get("text") or "")
+    return ""
+
+
 def categoria_da_meta(bruto: str) -> CategoriaTemplate:
     try:
         return CategoriaTemplate((bruto or "").lower())
@@ -151,7 +159,7 @@ class MetaCatalogoTemplates:
 
     async def listar(self, *, meta_waba_id: str) -> list[TemplateRemoto]:
         params = {
-            "fields": "id,name,language,status,category,rejected_reason",
+            "fields": "id,name,language,status,category,rejected_reason,components",
             "limit": "200",
         }
         remotos: list[TemplateRemoto] = []
@@ -175,6 +183,7 @@ class MetaCatalogoTemplates:
                             status=status_da_meta(bruto),
                             categoria=categoria_da_meta(item.get("category", "")),
                             meta_template_id=str(item.get("id", "")),
+                            corpo=_corpo_dos_componentes(item.get("components")),
                             motivo_rejeicao=motivo_da_meta(
                                 status_bruto=bruto, motivo=item.get("rejected_reason")
                             ),

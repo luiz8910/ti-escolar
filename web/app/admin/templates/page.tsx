@@ -10,6 +10,7 @@ import {
   logout,
   placeholdersDoCorpo,
   problemaNoCorpoDoTemplate,
+  importarTemplate,
   removerTemplate,
   sincronizarTemplates,
   TemplateMensagem,
@@ -73,6 +74,7 @@ export default function Templates() {
             Novo template
           </Button>
           {superAdmin && <BotaoSincronizar onMudou={recarregar} />}
+          {superAdmin && <BotaoImportar onMudou={recarregar} />}
         </div>
         <Lista itens={itens} superAdmin={superAdmin} onMudou={recarregar} />
       </div>
@@ -118,6 +120,83 @@ function Explicacao() {
   );
 }
 
+/** Adota um template que já existe na Meta.
+
+A sincronização não importa sozinha — sem saber se o template é global ou de uma escola, o
+palpite erraria o isolamento. Mas parar em "contei N desconhecidos" deixava de fora o
+`retomada_atendimento`, que a Meta aprovou e o atendimento humano precisa achar pelo nome
+para reabrir conversa fora da janela de 24h. Aqui o super admin diz "isto é global". */
+function BotaoImportar({ onMudou }: { onMudou: () => Promise<void> }) {
+  const toast = useToast();
+  const [aberto, setAberto] = useState(false);
+  const [nome, setNome] = useState("");
+  const [idioma, setIdioma] = useState("pt_BR");
+  const [rodando, setRodando] = useState(false);
+
+  async function importar() {
+    if (!nome.trim()) return;
+    setRodando(true);
+    try {
+      const t = await importarTemplate(nome.trim(), idioma.trim() || "pt_BR");
+      setAberto(false);
+      setNome("");
+      await onMudou();
+      toast({ tone: "success", title: `Template "${t.nome}" importado da Meta.` });
+    } catch (err) {
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao importar.",
+      });
+    } finally {
+      setRodando(false);
+    }
+  }
+
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setAberto(true)}>
+        Importar da Meta
+      </Button>
+      {aberto && (
+        <Modal
+          open
+          onClose={() => setAberto(false)}
+          title="Importar template da Meta"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setAberto(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={importar} loading={rodando}>
+                Importar
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-n-500">
+              Para um template que <b>já existe</b> na Meta e não está no catálogo — criado
+              direto no WhatsApp Manager, por exemplo. Nada é submetido: só passamos a
+              conhecê-lo, com o status que a Meta reporta em cada conta. Entra como{" "}
+              <b>global</b>.
+            </p>
+            <Input
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Nome exato na Meta (ex.: retomada_atendimento)"
+            />
+            <Input
+              value={idioma}
+              onChange={(e) => setIdioma(e.target.value)}
+              placeholder="Idioma (pt_BR)"
+            />
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function BotaoSincronizar({ onMudou }: { onMudou: () => Promise<void> }) {
   const toast = useToast();
   const [rodando, setRodando] = useState(false);
@@ -127,13 +206,19 @@ function BotaoSincronizar({ onMudou }: { onMudou: () => Promise<void> }) {
     try {
       const r = await sincronizarTemplates();
       await onMudou();
+      const avisos = [
+        r.desmentidos > 0
+          ? `${r.desmentidos} constava(m) como aprovado(s) aqui e não existe(m) na Meta — corrigido(s).`
+          : "",
+        r.desconhecidos > 0
+          ? `${r.desconhecidos} existe(m) na Meta e não no catálogo: use "Importar da Meta".`
+          : "",
+      ].filter(Boolean);
       toast({
-        tone: "success",
+        // Desmentir é notícia ruim: alguém achava que podia disparar e não podia.
+        tone: r.desmentidos > 0 ? "danger" : "success",
         title: `${r.atualizados} template(s) atualizado(s) de ${r.verificados} na Meta.`,
-        description:
-          r.desconhecidos > 0
-            ? `${r.desconhecidos} existe(m) na Meta e não no catálogo (criado(s) direto no WhatsApp Manager).`
-            : undefined,
+        description: avisos.join(" ") || undefined,
       });
     } catch (err) {
       toast({

@@ -15,6 +15,7 @@ from app.application.impressao_use_cases import (
 from app.application.inbound_use_cases import ProcessarInboundMeta
 from app.application.templates_use_cases import (
     CriarTemplate,
+    ImportarTemplateDaMeta,
     RemoverTemplate,
     ReplicarTemplates,
     SincronizarTemplates,
@@ -373,6 +374,17 @@ def get_sincronizar_templates(
     settings: Settings = Depends(get_settings_dep),
 ) -> SincronizarTemplates:
     return SincronizarTemplates(
+        templates=SqlTemplateRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+        wabas=SqlWabaRepository(session),
+    )
+
+
+def get_importar_template(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ImportarTemplateDaMeta:
+    return ImportarTemplateDaMeta(
         templates=SqlTemplateRepository(session),
         catalogo=criar_catalogo_templates(settings),
         wabas=SqlWabaRepository(session),
