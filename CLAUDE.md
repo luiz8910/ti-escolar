@@ -1175,8 +1175,16 @@ campo. Descobri-la exigiu consultar a Graph API à mão.
 
 Agora a exceção vai para o log (`warning`, com template, contato e broadcast) **e** para
 `DestinatarioBroadcast.erro` (migration `0043_destinatario_erro`), que o painel exibe sob o
-selo "Falhou". "Falhou" vira "Falhou — template name does not exist in the translation",
-que é a diferença entre um mistério e um conserto de dois minutos.
+selo "Falhou".
+
+**Guardar o erro não bastou: o texto precisava ser legível.** Na primeira tentativa depois
+da correção, o painel exibiu `Client error '404 Not Found' for url .../messages` — o
+`HTTPStatusError` cru do httpx, que esconde a única frase que importa. **O status HTTP
+engana aqui:** template inexistente responde **404**, não 400, e o motivo real
+(`(#132001) … template name (aviso_reuniao) does not exist in pt_BR`) está no **corpo**.
+`MetaMessageChannel` passou a levantar `EnvioRecusado` com `error.message` +
+`error_data.details` extraídos do corpo — o mesmo que `MetaCatalogoTemplates` já fazia para
+a submissão, e que faltava no envio.
 
 ### 9a-ter. Várias contas do WhatsApp (`Waba`) — o teto que quebrava o catálogo
 

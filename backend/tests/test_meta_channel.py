@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
+import pytest
+
 from app.application.use_cases import EnviarBroadcast
 from app.domain.entities import (
     Broadcast,
@@ -20,7 +23,11 @@ from app.domain.entities import (
     TemplateNaWaba,
     Tenant,
 )
-from app.infrastructure.channel.meta_channel import MetaMessageChannel
+from app.infrastructure.channel.meta_channel import (
+    EnvioRecusado,
+    MetaMessageChannel,
+    _erro_do_corpo,
+)
 from tests.fakes import FakeQuota, FakeRateLimiter, WABA_PADRAO_ID
 
 PADRAO = "000000000000000"
@@ -219,3 +226,64 @@ def test_health_sem_divergencia_nao_polui_o_corpo():
         assert "canal_alerta" not in corpo
     finally:
         main.settings = original
+
+
+def test_erro_do_corpo_extrai_o_motivo_da_meta():
+    """404 aqui não é "rota não existe" — é "template não existe", e a frase está no corpo.
+
+    Foi o que apareceu no painel no disparo de 14/ago/2026: "Client error '404 Not Found'
+    for url .../messages", escondendo a única informação útil.
+    """
+    resposta = httpx.Response(
+        404,
+        json={
+            "error": {
+                "message": "(#132001) Template name does not exist in the translation",
+                "code": 132001,
+                "error_data": {"details": "template name (aviso_reuniao) does not exist in pt_BR"},
+            }
+        },
+    )
+    motivo = _erro_do_corpo(resposta)
+    assert "132001" in motivo
+    assert "aviso_reuniao" in motivo
+
+
+def test_erro_sem_json_cai_no_texto_bruto():
+    resposta = httpx.Response(502, text="<html>Bad Gateway</html>")
+    assert "Bad Gateway" in _erro_do_corpo(resposta)
+
+
+def test_erro_sem_corpo_usa_o_status():
+    assert "503" in _erro_do_corpo(httpx.Response(503, text=""))
+
+
+@pytest.mark.asyncio
+async def test_envio_recusado_carrega_o_motivo(monkeypatch):
+    """O caso de uso guarda `str(exc)`; se a exceção for a do httpx, o motivo se perde."""
+
+    class _RespostaFalsa:
+        status_code = 404
+
+        @staticmethod
+        def json():
+            return {"error": {"message": "(#132001) Template name does not exist"}}
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("404", request=None, response=self)  # type: ignore[arg-type]
+
+    class _ClienteFalso:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def post(self, *_a, **_kw):
+            return _RespostaFalsa()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _ClienteFalso())
+    canal = MetaMessageChannel(phone_number_id="123", access_token="t")
+    with pytest.raises(EnvioRecusado) as erro:
+        await canal.enviar_texto(contato="+5511900000001", texto="oi")
+    assert "132001" in str(erro.value)
