@@ -151,7 +151,20 @@ class Settings(BaseSettings):
     meta_access_token: str | None = None
     # Token do handshake GET do webhook (hub.verify_token). TROQUE em produção.
     meta_webhook_verify_token: str = "changeme"
-    meta_daily_tier_limit: int = 1000
+    # Destinatários **únicos por 24h** que podemos iniciar conversa. Medido pela Meta **no
+    # portfólio** e compartilhado por todos os números dele (mudança de out/2025), não por
+    # número como esta linha assumia quando dizia 1000.
+    #
+    # **250 é o teto real de um portfólio novo** — conferido em 14/ago/2026 no Gerenciador
+    # do WhatsApp ("0 de 250 enviados") e pela API (`messaging_limit_tier: TIER_250`).
+    # Configurar acima do real é pior que inútil: o disparo manda até o teto da Meta e o
+    # excedente vira **falha**, que conta contra a qualidade do número — justamente o que
+    # precisa estar alto para o limite subir. Com o valor certo, o excedente fica marcado
+    # como bloqueado pela cota e espera a próxima janela, sem queimar reputação.
+    #
+    # Sobe sozinho (verificação da empresa → 2.000; depois, um nível a cada 6h com
+    # qualidade alta e metade do limite usada em 7 dias). **Ao subir, ajuste aqui.**
+    meta_daily_tier_limit: int = 250
     # App secret usado para validar a assinatura X-Hub-Signature-256 dos webhooks.
     meta_app_secret: str | None = None
     # Valida a assinatura dos webhooks da Meta. OBRIGATÓRIO em produção: sem isso o

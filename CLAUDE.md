@@ -1479,6 +1479,21 @@ do número — e portanto do canal — com a plataforma.
   **está errada hoje**: uma escola em campanha pode consumir a capacidade diária das
   outras. O `MessageQuota` por tenant (§9a) é contabilidade **nossa**, não o limite real da
   Meta — e as duas podem divergir. **[Roadmap]** medir a cota no nível do portfólio.
+- **Os números reais, conferidos em 14/ago/2026** no Gerenciador do WhatsApp e pela API —
+  e os dois são **menores** do que esta seção supunha:
+
+  | Teto | Valor real hoje | Como sobe |
+  |---|---|---|
+  | Destinatários únicos / 24h | **250** (`messaging_limit_tier: TIER_250`) | verificação da empresa → 2.000; depois **um nível a cada 6h**, com qualidade alta e metade do limite usada em 7 dias. **Sem abrir chamado** — a doc da Meta diz que não é preciso contatar suporte |
+  | Números por portfólio | **2** ("1 de 2 adicionados") | verificação da empresa, ou 2.000 conversas; acima de 20, só por Direct Support |
+
+  **250 é o número que governa o produto hoje**, e é o que `META_DAILY_TIER_LIMIT` deve
+  dizer. Configurar acima do real não "libera" nada: o disparo manda até o teto da Meta e o
+  excedente vira **falha**, que conta contra a qualidade — justamente o que precisa estar
+  alto para o limite subir. Com o valor certo, o excedente fica bloqueado pela cota e
+  espera a janela seguinte (§9a-quinquies).
+  **Conversas iniciadas pelo responsável não contam**: o inbound e as respostas de
+  atendimento são livres. O teto pesa só no aviso em massa.
 - **Qualidade continua sendo por número**, então uma escola que gere bloqueios não derruba
   a reputação das outras — mas derruba, sim, a capacidade de envio compartilhada.
 - **Requisito duro do chip:** o número **não pode estar ativo em nenhum WhatsApp** (comum ou
