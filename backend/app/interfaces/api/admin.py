@@ -25,6 +25,7 @@ from app.application.admin_use_cases import (
 from app.application.auditoria_use_cases import ListarAuditoria, RegistrarAuditoria
 from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
 from app.application.use_cases import VerificarRecebimentoBroadcast
+from app.application.retomada_use_cases import RetomarBroadcastsPendentes
 from app.application.tenant_use_cases import (
     AtualizarEscola,
     BloquearEscola,
@@ -75,6 +76,7 @@ from app.interfaces.deps import (
     get_contato_repo,
     get_conversa_repo,
     get_enviar_para_grupo,
+    get_retomar_broadcasts,
     get_grupo_repo,
     get_notificar_licencas,
     get_session,
@@ -100,6 +102,7 @@ from app.interfaces.dto import (
     DestinatarioBroadcastSaida,
     EnvioGrupoEntrada,
     ParametroTemplateEntrada,
+    RetomadaSaida,
     EnvioGrupoSaida,
     EscolaEntrada,
     EscolaResumoSaida,
@@ -550,6 +553,28 @@ async def enviar_para_grupo(
             bloqueados_por_limite=b.bloqueados_por_limite,
             restante_cota=b.restante_cota,
         ),
+    )
+
+
+@router.post("/broadcasts/retomar", response_model=RetomadaSaida)
+async def retomar_broadcasts(
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: RetomarBroadcastsPendentes = Depends(get_retomar_broadcasts),
+) -> RetomadaSaida:
+    """Continua agora os disparos que a cota diária interrompeu.
+
+    A tarefa de fundo já faz isto sozinha em intervalo fixo; esta rota existe para não
+    depender **só** dela — para rodar na hora depois de a cota virar, e para dar a quem
+    opera uma forma de agir sem esperar o próximo ciclo. Super admin: a passada é
+    cross-tenant.
+    """
+    _exige_super_admin(usuario)
+    resultado = await uc.executar()
+    return RetomadaSaida(
+        broadcasts=resultado.broadcasts,
+        enviados=resultado.enviados,
+        falhas=resultado.falhas,
+        ainda_bloqueados=resultado.ainda_bloqueados,
     )
 
 

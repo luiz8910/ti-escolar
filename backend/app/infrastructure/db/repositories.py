@@ -581,6 +581,21 @@ class SqlBroadcastRepository:
         rows = (await self._s.execute(stmt)).scalars().all()
         return [self._to_broadcast(r) for r in rows]
 
+    async def listar_retomaveis(self, *, desde: datetime) -> list[Broadcast]:
+        stmt = (
+            select(BroadcastORM)
+            .where(
+                BroadcastORM.status == StatusBroadcast.PARCIAL_LIMITE.value,
+                BroadcastORM.criado_em >= desde,
+            )
+            .options(selectinload(BroadcastORM.destinatarios))
+            # Mais antigo primeiro: quem esperou mais tem a fila da frente, senão um
+            # disparo grande de ontem nunca sai na frente dos de hoje.
+            .order_by(BroadcastORM.criado_em)
+        )
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [self._to_broadcast(r) for r in rows]
+
     async def registrar_status(
         self, *, mensagem_id_externo: str, status: StatusEntrega
     ) -> bool:

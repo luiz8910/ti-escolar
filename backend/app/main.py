@@ -13,6 +13,8 @@ from app.config import get_settings
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import canal_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
+from app.infrastructure.retomada import RetomadorDeDisparos
+from app.interfaces.deps import montar_retomada
 from app.interfaces.api import (
     admin,
     atendimento_humano,
@@ -56,6 +58,11 @@ _coletor = ColetorDeLogs(
 _gravador = GravadorDeLogs(
     _coletor, SessionLocal, retencao_dias=settings.log_retencao_dias
 )
+_retomador = RetomadorDeDisparos(
+    SessionLocal,
+    montar=lambda sessao: montar_retomada(sessao, settings),
+    intervalo_segundos=settings.broadcast_retomada_intervalo_segundos,
+)
 
 
 @asynccontextmanager
@@ -70,6 +77,8 @@ async def lifespan(_: FastAPI):
     if settings.log_persistir:
         logging.getLogger().addHandler(_coletor)
         _gravador.iniciar()
+    if settings.broadcast_retomada_habilitada:
+        _retomador.iniciar()
     if canal_efetivo(settings) != settings.message_channel:
         # Um deploy que pede "meta" e recebe "demo" não falha em lugar nenhum: as mensagens
         # são aceitas e descartadas em memória. Gritar no boot é a única chance de alguém ver.
@@ -77,6 +86,8 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if settings.broadcast_retomada_habilitada:
+            await _retomador.parar()
         if settings.log_persistir:
             await _gravador.parar()
             logging.getLogger().removeHandler(_coletor)

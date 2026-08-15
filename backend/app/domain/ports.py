@@ -439,6 +439,15 @@ class BroadcastRepository(Protocol):
         """
         ...
 
+    async def listar_retomaveis(self, *, desde: datetime) -> list[Broadcast]:
+        """Disparos interrompidos pela cota diária, ainda dentro do prazo de retomada.
+
+        São os ``PARCIAL_LIMITE``: começaram, esbarraram no teto de destinatários únicos
+        por 24h e deixaram o resto pendente. ``desde`` recorta por idade — aviso de três
+        semanas atrás entregue hoje é pior que aviso não entregue.
+        """
+        ...
+
 
 @runtime_checkable
 class AuditLogRepository(Protocol):

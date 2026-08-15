@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     # desligar a retomada (valor vazio).
     template_retomada_atendimento: str = "retomada_atendimento"
 
+    # Retomada de disparos travados pela cota diária (§9a-quinquies). O teto da Meta é de
+    # destinatários únicos por 24h, então uma escola grande não cabe num dia — e sem esta
+    # tarefa "espera a próxima janela" significa alguém lembrar de re-disparar à mão.
+    broadcast_retomada_habilitada: bool = True
+    broadcast_retomada_intervalo_segundos: int = 1800
+    # Prazo de validade do disparo, não otimização: aviso de três semanas atrás entregue
+    # hoje é pior que não entregue — a reunião já passou.
+    broadcast_retomada_janela_dias: int = 7
+
     # Licenciamento / avisos por e-mail
     # Janela (em dias) para avisar que a licença anual está perto de vencer.
     license_warning_days: int = 30
