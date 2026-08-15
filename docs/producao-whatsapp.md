@@ -173,6 +173,57 @@ Aprendido no primeiro registro real (06/ago/2026), com chip **Vivo pré-pago** n
 
 ---
 
+### 2.2 Elevar o teto de números (Direct Support)
+
+**Só este teto precisa de chamado.** O de mensagens sobe sozinho (§8) e a documentação da
+Meta diz textualmente que não é preciso contatar suporte; pedir aumento dele só gasta o
+tempo de todo mundo. O de **números por portfólio** é o que trava o onboarding: em
+14/ago/2026 estava em **1 de 2**, ou seja, cabe mais **uma** escola.
+
+Ele deveria subir para 20 automaticamente com a empresa verificada. Se a verificação está
+aprovada e o teto não subiu depois de alguns dias, aí o chamado se justifica.
+
+**Onde:** [Suporte Direto da Meta Business](https://business.facebook.com/business/help/support)
+→ *WhatsApp Business Platform* → *Account & Phone Numbers*. Exige estar logado com um
+usuário admin do portfólio.
+
+**Dados a ter à mão:**
+
+| Campo | Valor |
+|---|---|
+| Business portfolio ID | `940840332344260` |
+| WABA ID | `2116419572321695` |
+| Número atual | `+55 15 99753-6978` (`phone_number_id` `1231892910008454`) |
+| Qualidade / status | `GREEN` · `CONNECTED` · WABA `account_review_status: APPROVED` |
+
+**Texto sugerido** (em inglês; o suporte responde mais rápido):
+
+> **Subject:** Request to increase phone number limit for verified business portfolio
+>
+> Hello,
+>
+> Our business portfolio (ID `940840332344260`) has completed Business Verification, but
+> our phone number limit is still 2 (currently 1 of 2 used). According to the
+> documentation, a verified business should have this limit raised to 20.
+>
+> We operate a school-communication platform in Brazil. Each school we onboard uses its own
+> dedicated phone number registered under our WABA (ID `2116419572321695`), so the number
+> limit is what caps how many customers we can serve — we can currently onboard only one
+> more school.
+>
+> Our current number (`+55 15 99753-6978`, ID `1231892910008454`) has a GREEN quality
+> rating and CONNECTED status, and the WABA account review status is APPROVED.
+>
+> Could you please raise the registered phone number limit for this portfolio? Happy to
+> provide any additional documentation.
+>
+> Thank you.
+
+> **Antes de abrir:** confirme em *Configurações do Business → Central de Segurança* que a
+> verificação está mesmo **concluída**. Os dois tetos (250 mensagens e 2 números) estão
+> exatamente onde ficam num portfólio **não** verificado — se a verificação não estiver
+> completa, resolvê-la destrava os dois de uma vez, sem chamado nenhum.
+
 ## 3. Forma de pagamento
 
 Adicionar cartão **na WABA de produção** (a de teste não gera cobrança e não precisa).
