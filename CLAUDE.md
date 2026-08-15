@@ -1166,6 +1166,40 @@ Desde 12/ago/2026 o painel (`web/app/admin/templates/`) cria, submete e acompanh
     (`trechoDoPlaceholder`) — sem isso o formulário pede "parâmetro 2" e a secretaria
     adivinha.
 
+### 9a-quinquies. Retomada do disparo na janela seguinte
+
+O teto da Meta é de **destinatários únicos por 24h**, e hoje vale **250 no portfólio
+inteiro** (§9e.3). Uma escola de 600 responsáveis não cabe num dia — e o produto já sabia
+disso: `EnviarBroadcast` conta os excedentes em `bloqueados_por_limite`, deixa os
+destinatários em `PENDENTE` e marca o broadcast como `PARCIAL_LIMITE`.
+
+**O que faltava era alguém voltar no dia seguinte.** "Espera a próxima janela" significava,
+na prática, alguém lembrar de re-disparar à mão — e o aviso da reunião chegava a metade da
+escola. Enquanto o teto era teoricamente 1000 dava para adiar; com 250 real, virou requisito
+para o disparo funcionar como vendido.
+
+- **A retomada é barata porque a idempotência já existia:** `EnviarBroadcast` pula quem está
+  em `ENVIADO`/`ENTREGUE`/`LIDO`, então reexecutar o mesmo broadcast continua de onde parou
+  sem reenviar para ninguém. `RetomarBroadcastsPendentes` só precisa achar os
+  `PARCIAL_LIMITE` (`BroadcastRepository.listar_retomaveis`) e chamá-lo de novo.
+- **`BROADCAST_RETOMADA_JANELA_DIAS` (7) é prazo de validade, não otimização.** Aviso de três
+  semanas atrás entregue hoje é **pior** que aviso não entregue: a reunião já passou e o
+  responsável recebe da escola uma mensagem sem sentido. Vencido o prazo, o disparo é
+  abandonado onde está — o histórico segue mostrando quem recebeu e quem não.
+- **A cota é por escola, então a fila não para por inteiro.** Uma escola que estoure a cota
+  entra num conjunto de "sem cota" e é pulada no resto da passada; as outras continuam. Parar
+  tudo faria uma escola grande calar o aviso das demais.
+- **Tarefa de fundo com advisory lock** (`app/infrastructure/retomada.py`), no mesmo desenho
+  do gravador de logs — o projeto não tem scheduler e subir um só por isto seria caro. Com
+  mais de uma réplica no Render, dois processos acordariam juntos e enviariam **duas vezes
+  para o mesmo responsável**: o destinatário só vira `ENVIADO` depois da chamada à Graph API,
+  então nada impede a corrida. `pg_try_advisory_lock` resolve em uma linha — quem pega roda,
+  quem não pega volta a dormir (`try`, e não `pg_advisory_lock`, porque esperar na trava só
+  empilharia réplicas para fazer o mesmo trabalho). Verificado entre sessões distintas: a
+  segunda recebe `False`.
+- **Rota manual** `POST /api/admin/broadcasts/retomar` (super admin) para não depender só do
+  ciclo — roda na hora em que a cota virar.
+
 ### 9a-quater. O motivo da falha de envio (`DestinatarioBroadcast.erro`)
 
 `EnviarBroadcast` captura a exceção por destinatário para **não derrubar o lote** — o que

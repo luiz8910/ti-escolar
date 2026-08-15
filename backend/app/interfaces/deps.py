@@ -20,6 +20,7 @@ from app.application.templates_use_cases import (
     ReplicarTemplates,
     SincronizarTemplates,
 )
+from app.application.retomada_use_cases import RetomarBroadcastsPendentes
 from app.application.tenant_use_cases import NotificarLicencasAVencer
 from app.application.waba_use_cases import AdotarContaDoWebhook
 from app.application.atendimento_humano_use_cases import (
@@ -446,11 +447,10 @@ def get_llm(settings: Settings = Depends(get_settings_dep)) -> LLMProvider:
     return criar_llm(settings)
 
 
-def get_enviar_para_grupo(
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings_dep),
-) -> EnviarBroadcastParaGrupo:
-    enviar = EnviarBroadcast(
+def _montar_enviar_broadcast(
+    session: AsyncSession, settings: Settings
+) -> EnviarBroadcast:
+    return EnviarBroadcast(
         broadcasts=SqlBroadcastRepository(session),
         templates=SqlTemplateRepository(session),
         canal=criar_canal(settings),
@@ -458,6 +458,36 @@ def get_enviar_para_grupo(
         rate_limiter=_rate_limiter,
         tenants=SqlTenantRepository(session),
     )
+
+
+def montar_retomada(
+    session: AsyncSession, settings: Settings
+) -> RetomarBroadcastsPendentes:
+    """Monta a retomada fora do ciclo de requisição — é a tarefa de fundo que a usa.
+
+    Recebe a sessão em vez de abri-la: quem chama é o `RetomadorDeDisparos`, que já a abriu
+    para segurar o advisory lock. Duas sessões separariam a trava do trabalho que ela
+    protege.
+    """
+    return RetomarBroadcastsPendentes(
+        broadcasts=SqlBroadcastRepository(session),
+        enviar=_montar_enviar_broadcast(session, settings),
+        janela_dias=settings.broadcast_retomada_janela_dias,
+    )
+
+
+def get_retomar_broadcasts(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> RetomarBroadcastsPendentes:
+    return montar_retomada(session, settings)
+
+
+def get_enviar_para_grupo(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> EnviarBroadcastParaGrupo:
+    enviar = _montar_enviar_broadcast(session, settings)
     return EnviarBroadcastParaGrupo(
         grupos=SqlGrupoRepository(session),
         enviar=enviar,

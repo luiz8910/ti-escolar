@@ -114,6 +114,15 @@ class WabaSaida(BaseModel):
     atualizado_em: datetime | None
 
 
+class RetomadaSaida(BaseModel):
+    """Resultado de uma passada de retomada de disparos travados pela cota."""
+
+    broadcasts: int
+    enviados: int
+    falhas: int
+    ainda_bloqueados: int
+
+
 class QuotaSaida(BaseModel):
     tenant_id: UUID
     dia: str
