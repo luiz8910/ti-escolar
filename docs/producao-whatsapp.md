@@ -511,8 +511,22 @@ sinaliza as escolas afetadas.
 > em campanha consome a capacidade das outras. O que segue por número é a **qualidade**.
 > Ver §2 e o CLAUDE.md §9e.3.
 
-- O limite é de **destinatários únicos por 24h**, medido **no portfólio**: 1K → 10K → 100K → ilimitado.
-- Empresa **verificada** (nosso caso) começa em **1.000/24h**; a escala é automática conforme a
+> **Medido em 14/ago/2026, e é menor do que esta seção dizia:** o Gerenciador do WhatsApp
+> mostra "Conversas iniciadas pela empresa: **0 de 250**", e a API confirma
+> `messaging_limit_tier: TIER_250` no número (com `quality_rating: GREEN`,
+> `status: CONNECTED`, WABA `account_review_status: APPROVED`). O teto de números está em
+> **1 de 2**. Ou seja: o portfólio ainda está no patamar inicial, apesar da empresa
+> verificada — e nunca enviou uma única mensagem, que é o insumo da avaliação automática.
+>
+> **Não abra chamado pedindo aumento do limite de mensagens.** A doc da Meta é explícita:
+> *"No support contact is required — Meta automatically analyzes your message quality after
+> you complete a path."* Os caminhos são: empresa verificada, verificação por parceiro, ou
+> 2.000 mensagens entregues em 30 dias. Depois de 2.000, sobe **um nível a cada 6 horas**
+> com qualidade alta e metade do limite usada nos últimos 7 dias. O que **exige** Direct
+> Support é o **teto de números** (§2.2).
+
+- O limite é de **destinatários únicos por 24h**, medido **no portfólio**: 250 → 2K → 10K → 100K → ilimitado.
+- Empresa **verificada** (nosso caso) deveria começar em **2.000/24h**; hoje estamos em 250 — a escala é automática conforme a
   **qualidade** do número.
 - Qualidade cai com bloqueios e denúncias dos pais — por isso opt-in, conteúdo útil e frequência
   moderada são requisito operacional, não boas maneiras.
