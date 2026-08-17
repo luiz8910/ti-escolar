@@ -224,6 +224,52 @@ usuário admin do portfólio.
 > exatamente onde ficam num portfólio **não** verificado — se a verificação não estiver
 > completa, resolvê-la destrava os dois de uma vez, sem chamado nenhum.
 
+#### 2.2.1 Medição contra a Graph API (17/ago/2026)
+
+Feita para responder à ressalva acima sem depender do que o console mostra. O console exibe
+estado derivado e às vezes velho; a API responde o que vale.
+
+| Campo | Valor medido |
+|---|---|
+| `whatsapp_business_manager_messaging_limit` (número) | **`TIER_250`** |
+| `quality_rating` | `GREEN` |
+| `name_status` | `AVAILABLE_WITHOUT_REVIEW` (nome de exibição resolvido) |
+| `account_review_status` (WABA) | `APPROVED` |
+| `on_behalf_of_business_info` | `{name: TiEscolar, id: 940840332344260, status: APPROVED, type: SELF}` |
+| Números na WABA | **1** (`+55 15 99753-6978`) |
+| `verification_status` (portfólio) | **não foi possível ler** — ver abaixo |
+
+**O campo `messaging_limit_tier` foi depreciado**; quem o pedir recebe erro ou nada. O nome
+atual é `whatsapp_business_manager_messaging_limit`, e o "business_manager" no nome é a
+própria confirmação de que o teto é medido no **portfólio** (§9e.3), não no número.
+
+**O que a medição descarta.** O teto não é penalidade de qualidade (`GREEN`) nem pendência
+de revisão da conta (`APPROVED`) nem de nome de exibição (`AVAILABLE_WITHOUT_REVIEW`).
+Sobra a verificação da empresa.
+
+**O que ela não conseguiu responder, e por quê.** `GET /{portfolio-id}?fields=verification_status`
+devolve `(#200) Requires business_management permission`. O token do usuário de sistema
+(`ti_escolar_backend`) tem só `whatsapp_business_management` e `whatsapp_business_messaging`
+— conferido em `/debug_token`. **Falta `business_management`**, que é escopo de portfólio e
+não de WhatsApp, e por isso não veio junto quando o token foi gerado em 10/ago.
+
+O sinal indireto é bom (`on_behalf_of_business_info.status: APPROVED`), mas **não é prova**:
+com `type: SELF` — WABA de propriedade direta, sem parceiro de solução — esse status
+descreve a relação da conta com o portfólio, não a Business Verification.
+
+**Próximo passo:** regerar o token do usuário de sistema **acrescentando `business_management`**
+(*Configurações do Business → Usuários do sistema → `ti_escolar_backend` → Gerar novo token →
+marcar os três escopos*) e repetir a chamada. O escopo é necessário de qualquer forma para
+ler o tier real (§9a-sexies) e para automatizar o registro de número (§9e.3). Com
+`verification_status: verified` e o teto ainda em `TIER_250`, o chamado da §2.2 se justifica;
+com qualquer outro valor, é a verificação que falta e nenhum chamado resolve.
+
+```bash
+# Repita depois de regerar o token:
+curl -s "https://graph.facebook.com/v21.0/940840332344260?fields=verification_status" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ## 3. Forma de pagamento
 
 Adicionar cartão **na WABA de produção** (a de teste não gera cobrança e não precisa).
