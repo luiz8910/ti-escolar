@@ -136,7 +136,72 @@ async def criar_super_admin(settings: Settings | None = None) -> str:
     return f"bootstrap: super admin {email} criado."
 
 
+class ConfiguracaoInsegura(RuntimeError):
+    """Produção pedida com segredo de exemplo ou proteção desligada."""
+
+
+# O que produção **não** aceita, e o porquê de cada um em uma linha. A mensagem é lida por
+# quem está com o deploy vermelho às 22h; dizer só "configuração inválida" custaria a ele a
+# meia hora que este dicionário economiza.
+_EXIGENCIAS_PRODUCAO = {
+    "jwt_secret": (
+        "JWT_SECRET está com o valor de exemplo do repositório. Quem leu o repo forja um "
+        "token de super admin e entra em todas as escolas. Gere um segredo forte."
+    ),
+    "meta_webhook_verify_token": (
+        "META_WEBHOOK_VERIFY_TOKEN está com o valor de exemplo ('changeme'). Com ele, "
+        "qualquer um reassina o webhook da Meta para um endpoint próprio."
+    ),
+}
+
+
+def exigencias_de_producao(settings: Settings) -> list[str]:
+    """O que impede este ambiente de ser produção. Lista vazia = pode subir.
+
+    Devolve **todas** as pendências, não a primeira: quem está configurando um ambiente
+    novo prefere corrigir três coisas de uma vez a descobrir uma por deploy.
+
+    Só vale sob ``APP_ENV=production``. Em desenvolvimento os defaults são o que faz o
+    projeto subir com um ``git clone``, e recusá-los ali seria atrapalhar sem proteger
+    nada — o banco é um container descartável.
+    """
+    if not settings.ambiente_producao:
+        return []
+
+    pendencias = [
+        _EXIGENCIAS_PRODUCAO[campo]
+        for campo in segredos_com_valor_default(settings, tuple(_EXIGENCIAS_PRODUCAO))
+    ]
+    if not settings.meta_validate_signature:
+        # Não é segredo default, é proteção desligada — mas o efeito é o mesmo: endpoint
+        # público aceitando qualquer POST, com status de entrega e conversas forjáveis.
+        pendencias.append(
+            "META_VALIDATE_SIGNATURE está desligado. O webhook aceita qualquer POST, e "
+            "dá para forjar status de entrega e mensagens recebidas. Ligue-o (=true) e "
+            "confira que META_APP_SECRET está preenchido."
+        )
+    return pendencias
+
+
+def exigir_producao_segura(settings: Settings | None = None) -> None:
+    """Falha **fechado** no boot quando produção está mal configurada.
+
+    Recusar-se a subir é agressivo de propósito. As três pendências acima têm em comum
+    não darem sintoma nenhum: o processo sobe, o painel abre, as mensagens saem — e a
+    plataforma fica aberta. Um erro que só aparece quando alguém o explora precisa
+    aparecer antes, e o único momento garantido é o deploy.
+    """
+    settings = settings or get_settings()
+    pendencias = exigencias_de_producao(settings)
+    if pendencias:
+        raise ConfiguracaoInsegura(
+            "APP_ENV=production com configuração insegura — a aplicação não vai subir:\n"
+            + "\n".join(f"  - {p}" for p in pendencias)
+        )
+
+
 async def _main() -> None:
+    exigir_producao_segura()
     print(await criar_super_admin())
 
 

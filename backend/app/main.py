@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.bootstrap import exigir_producao_segura
 from app.config import get_settings
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import canal_efetivo
@@ -72,6 +73,11 @@ async def lifespan(_: FastAPI):
     processo é justamente o que não pode se perder no shutdown.
     """
     configurar_logging(nivel=settings.log_nivel, formato_json=settings.log_json)
+    # **Antes de qualquer coisa.** Sob APP_ENV=production, segredo de exemplo ou assinatura
+    # do webhook desligada derrubam o boot. É verificado aqui, e não só no `bootstrap`,
+    # porque o `CMD` não é o único jeito de subir o processo — e a proteção que depende de
+    # alguém usar o caminho certo não é proteção.
+    exigir_producao_segura(settings)
     if settings.log_persistir:
         logging.getLogger().addHandler(_coletor)
         _gravador.iniciar()
@@ -173,17 +179,22 @@ async def health() -> dict:
 
 
 @app.get("/health/pronto", tags=["infra"])
-async def prontidao() -> dict:
+async def prontidao(resposta: Response) -> dict:
     """Readiness: a aplicação consegue **atender**, o que exige o banco.
 
     O ``/health`` sozinho dizia "ok" com o Neon inteiramente fora do ar — um verde que
     escondia a única dependência que derruba todas as funcionalidades.
+
+    **Degradado responde 503, não 200.** Até 17/ago/2026 esta rota devolvia 200 com
+    ``{"status": "degradado"}`` no corpo, e um health check de plataforma olha o código
+    HTTP, não o JSON: o Fly marcaria como saudável uma máquina que não consegue ler o
+    banco. Um readiness que nunca reprova é decoração.
     """
     try:
         async with SessionLocal() as session:
             await session.execute(text("SELECT 1"))
-        banco = "ok"
     except Exception as erro:  # noqa: BLE001
         logging.getLogger("health").error("Banco indisponível: %s", erro)
+        resposta.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "degradado", "banco": "indisponivel"}
-    return {"status": "ok", "banco": banco}
+    return {"status": "ok", "banco": "ok"}
