@@ -714,6 +714,10 @@ class ResultadoBroadcast:
     bloqueados_por_limite: int
     restante_cota: int
     status: StatusBroadcast
+    # Falharam por motivo transitório e voltaram para a fila. Separado de `falhas` de
+    # propósito: um é "não deu certo agora", o outro é "não vai dar" — e a tela que os
+    # somasse assustaria a secretaria com um número que ainda vai diminuir sozinho.
+    reenfileirados: int = 0
 
 
 class EnviarBroadcast:
@@ -733,12 +737,17 @@ class EnviarBroadcast:
         quota: QuotaPolicy,
         rate_limiter: RateLimiter,
         tenants: TenantRepository | None = None,
+        max_tentativas: int = 3,
     ) -> None:
         self._broadcasts = broadcasts
         self._templates = templates
         self._canal = canal
         self._quota = quota
         self._rate_limiter = rate_limiter
+        # Teto de tentativas por destinatário em falha transitória. Sem ele, um número que
+        # dá timeout para sempre voltaria à fila em toda passada, pelos 7 dias da janela,
+        # tomando a vaga de quem ainda podia receber.
+        self._max_tentativas = max_tentativas
         # Opcional: resolve o número (From) da escola para o outbound sair do próprio
         # número dela. Sem repositório, o canal usa seu número padrão.
         self._tenants = tenants
@@ -776,7 +785,7 @@ class EnviarBroadcast:
                 "O template precisa estar APROVADO pela Meta para disparo fora da janela de 24h."
             )
 
-        enviados = falhas = bloqueados = 0
+        enviados = falhas = bloqueados = reenfileirados = 0
         broadcast.status = StatusBroadcast.EM_ENVIO
 
         # A cota é lida **uma vez** e descontada em memória durante o lote. Reler a cada
@@ -820,20 +829,40 @@ class EnviarBroadcast:
                 # não era: no primeiro disparo real, dois envios falharam porque o template
                 # não existia na conta da escola, e o painel mostrou "Falhou" sem mais nada
                 # — nem log, nem motivo. Sem isto, a única saída é adivinhar.
-                dest.status = StatusEntrega.FALHOU
                 dest.erro = str(exc)[:500]
                 dest.atualizado_em = datetime.now(timezone.utc)
-                falhas += 1
+                transitorio = getattr(exc, "transitorio", False)
+                if transitorio:
+                    dest.tentativas += 1
+                if transitorio and not dest.desistir_de_reenviar(self._max_tentativas):
+                    # Volta para a fila em vez de virar falha: timeout e 5xx passam, e um
+                    # aviso perdido por indisponibilidade de dez segundos é um aviso que a
+                    # escola acredita ter mandado. A espera é a própria passada seguinte —
+                    # **não** um `sleep` aqui dentro, que seguraria o lote inteiro.
+                    dest.status = StatusEntrega.PENDENTE
+                    reenfileirados += 1
+                else:
+                    dest.status = StatusEntrega.FALHOU
+                    falhas += 1
                 _logger.warning(
-                    "Falha ao enviar template %r para %s (broadcast %s): %s",
+                    "Falha ao enviar template %r para %s (broadcast %s, tentativa %d, %s): %s",
                     template.nome,
                     dest.contato,
                     broadcast.id,
+                    dest.tentativas,
+                    "transitória" if transitorio else "definitiva",
                     exc,
                 )
 
+        # `PARCIAL_LIMITE` é o estado "volta para a fila", e vale tanto para quem a cota
+        # barrou quanto para quem falhou por motivo transitório — nos dois casos há
+        # destinatário pendente esperando outra passada, e é esse status que a retomada
+        # procura. Chamá-lo de CONCLUIDO porque a cota não estourou perderia os
+        # reenfileirados de vista.
         broadcast.status = (
-            StatusBroadcast.PARCIAL_LIMITE if bloqueados else StatusBroadcast.CONCLUIDO
+            StatusBroadcast.PARCIAL_LIMITE
+            if (bloqueados or reenfileirados)
+            else StatusBroadcast.CONCLUIDO
         )
         await self._broadcasts.salvar(broadcast)
 
@@ -845,6 +874,7 @@ class EnviarBroadcast:
             bloqueados_por_limite=bloqueados,
             restante_cota=cota_final.restante,
             status=broadcast.status,
+            reenfileirados=reenfileirados,
         )
 
 

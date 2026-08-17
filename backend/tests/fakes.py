@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from app.domain.ports import EnvioRecusado
 from app.domain.entities import (
     Aluno,
     NumeroBloqueado,
@@ -301,12 +302,24 @@ class FakeDocumentSource:
 
 
 class FakeChannel:
-    def __init__(self, *, falhar_em: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        falhar_em: set[str] | None = None,
+        transitorio_em: set[str] | None = None,
+        curar_apos: int | None = None,
+    ) -> None:
         self.enviados: list[tuple[str, str]] = []
         # Os parâmetros de cada envio por template, na ordem — é o que a Meta valida
         # contra o corpo aprovado, e o que o disparo a grupo montava errado.
         self.parametros_enviados: list[list[str]] = []
         self._falhar_em = falhar_em or set()
+        # Falha TRANSITÓRIA (timeout, 5xx): o caso de uso deve reenfileirar, não desistir.
+        self._transitorio_em = transitorio_em or set()
+        # Depois de N tentativas o número volta a funcionar — é o cenário que justifica
+        # reenviar: a indisponibilidade passou.
+        self._curar_apos = curar_apos
+        self.tentativas_por_contato: dict[str, int] = {}
 
     async def enviar_texto(self, *, contato, texto, remetente=None) -> str:
         self.remetente = remetente
@@ -314,8 +327,13 @@ class FakeChannel:
         return "x"
 
     async def enviar_template(self, *, contato, template, parametros, remetente=None) -> str:
+        if contato in self._transitorio_em:
+            vezes = self.tentativas_por_contato.get(contato, 0) + 1
+            self.tentativas_por_contato[contato] = vezes
+            if self._curar_apos is None or vezes <= self._curar_apos:
+                raise EnvioRecusado("indisponível, tente de novo", transitorio=True)
         if contato in self._falhar_em:
-            raise RuntimeError("falha simulada")
+            raise EnvioRecusado("template inexistente na conta", transitorio=False)
         self.remetente = remetente
         self.enviados.append((contato, "template"))
         self.parametros_enviados.append(list(parametros))

@@ -59,6 +59,7 @@ class RetomadorDeDisparos:
         # esperar até terça.
         self._agora = agora
         self._parar = asyncio.Event()
+        self._acordar = asyncio.Event()
         self._tarefa: asyncio.Task | None = None
 
     def iniciar(self) -> None:
@@ -68,8 +69,24 @@ class RetomadorDeDisparos:
                 self._rodar(), name="retomador-de-disparos"
             )
 
+    def cutucar(self) -> None:
+        """Drena agora, sem esperar o próximo horário da grade.
+
+        Quem chama é a rota de disparo, logo depois de gravar o broadcast. Sem isto, um
+        aviso criado às 8h só sairia às 12h30 — a grade existe para o que a **máquina**
+        decide reenviar, não para segurar o que uma pessoa acabou de mandar.
+
+        É um `Event` em memória, não polling: custa zero consulta enquanto ninguém dispara.
+        O preço é depender de rota e tarefa estarem no mesmo processo, o que o `fly.toml`
+        garante ao fixar uma máquina só. Com duas réplicas, o disparo feito na réplica B
+        espera a grade — atraso, nunca envio perdido, e o advisory lock segue impedindo que
+        as duas peguem o mesmo broadcast.
+        """
+        self._acordar.set()
+
     async def parar(self) -> None:
         self._parar.set()
+        self._acordar.set()  # solta a espera imediatamente
         if self._tarefa is not None:
             await asyncio.wait([self._tarefa], timeout=10)
             self._tarefa = None
@@ -81,28 +98,46 @@ class RetomadorDeDisparos:
         # prazo de validade do disparo é de 7 dias e o próximo slot vem em horas.
         alvo = self._janela.proxima_execucao(self._agora())
         while not self._parar.is_set():
-            if alvo is None:  # janela desligada: nada a esperar
-                return
-            espera = (alvo - self._agora()).total_seconds()
-            if espera > 0:
+            espera = (alvo - self._agora()).total_seconds() if alvo else None
+            if espera is None or espera > 0:
                 # Fatias de no máximo 15 min, reavaliando o relógio. Reavaliar é aritmética
                 # em memória e **não abre sessão** — é o que faz a tarefa custar zero
                 # CU-hora fora dos horários. As fatias protegem contra deriva de relógio e
                 # contra suspensão da máquina, sem transformar a espera em polling de banco.
+                #
+                # Espera nos dois eventos: o horário chega OU alguém dispara pelo painel.
+                # Com a janela desligada (`alvo is None`) só o cutucão acorda — a grade some,
+                # o disparo manual continua saindo.
+                limite = 900 if espera is None else min(espera, 900)
                 try:
-                    await asyncio.wait_for(self._parar.wait(), timeout=min(espera, 900))
+                    await asyncio.wait_for(self._acordar.wait(), timeout=limite)
                 except asyncio.TimeoutError:
-                    pass
+                    continue
+                if self._parar.is_set():
+                    return
+                # Cutucão: drena agora e recalcula a grade a partir daqui.
+                self._acordar.clear()
+                alvo = self._janela.proxima_execucao(self._agora())
+                await self._passada_protegida()
                 continue
             if self._parar.is_set():
                 return
             # Calcula o próximo alvo **antes** da passada: se ela demorar além do slot
             # seguinte, o que se perde é uma passada, não a grade inteira.
             alvo = self._janela.proxima_execucao(self._agora())
-            try:
-                await self._passada()
-            except Exception:  # noqa: BLE001 — a tarefa de fundo nunca pode morrer
-                logger.exception("Falha na passada de retomada de disparos")
+            await self._passada_protegida()
+
+    async def _passada_protegida(self) -> None:
+        """A passada sem deixar exceção escapar — a tarefa de fundo nunca pode morrer.
+
+        Se ela morresse, o sintoma seria disparo que simplesmente para de acontecer, sem
+        erro em lugar nenhum: exatamente a classe de falha silenciosa que este projeto já
+        pagou caro para aprender a evitar.
+        """
+        try:
+            await self._passada()
+        except Exception:  # noqa: BLE001
+            logger.exception("Falha na passada de retomada de disparos")
 
     async def _passada(self) -> None:
         async with self._sessionmaker() as sessao:

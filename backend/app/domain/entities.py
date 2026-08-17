@@ -1642,7 +1642,20 @@ class DestinatarioBroadcast:
     # embora a única explicação — foi o que aconteceu no primeiro disparo real, em que dois
     # envios falharam porque o template não existia na conta e ninguém tinha como saber.
     erro: str = ""
+    # Quantas vezes o envio já foi tentado e falhou por motivo **transitório**. Falha
+    # definitiva não conta aqui: ela vai direto para `FALHOU`, porque repetir daria o mesmo
+    # erro e cada repetição queima a qualidade do número.
+    tentativas: int = 0
     id: UUID = field(default_factory=_new_id)
+
+    def desistir_de_reenviar(self, maximo: int) -> bool:
+        """Já se tentou o bastante?
+
+        Um teto é obrigatório: sem ele, um número que dá timeout para sempre voltaria à
+        fila em toda passada, pelos 7 dias da janela de validade, consumindo vaga de quem
+        ainda podia receber.
+        """
+        return self.tentativas >= maximo
 
 
 class StatusBroadcast(str, enum.Enum):

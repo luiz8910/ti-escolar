@@ -193,6 +193,57 @@ perde o instante, e sem instante não há janela corrida nem como dizer quando a
   (`whatsapp_business_manager_messaging_limit` na Graph API — o `messaging_limit_tier` foi
   depreciado) em vez de confiar no `META_DAILY_TIER_LIMIT` cravado em 250.
 
+### 9a-septies. A fila: reenvio, agendamento e o cutucão
+
+Escrito em 17/ago/2026. A "fila" não é broker nem Redis — **é a tabela de destinatários que
+já existia**, drenada pela tarefa de fundo. Subir um Celery para isto seria pagar operação
+de sobra por uma consulta.
+
+**Falha transitória volta para a fila; definitiva não.** Antes, qualquer exceção no envio
+marcava `FALHOU` e o assunto morria ali — o que trata igual duas coisas opostas:
+
+- **Transitória** (timeout, queda de conexão, **5xx**, **429**): a mensagem não saiu por
+  algo que passa. Desistir na primeira perde o aviso por nada, e a escola **acredita** tê-lo
+  mandado. O destinatário volta a `PENDENTE` com `tentativas + 1` (migration `0045`) e a
+  passada seguinte tenta de novo.
+- **Definitiva** (4xx: template inexistente na conta, número inválido, parâmetros a mais):
+  repetir dá exatamente o mesmo erro, gasta cota e **queima a qualidade do número** — que é
+  o que trava a subida do tier (`docs/producao-whatsapp.md` §2.2.2). Vai direto a `FALHOU`,
+  sem contar tentativa.
+
+A distinção vive na exceção `EnvioRecusado`, que ficou no **domínio** (`ports.py`) e não no
+adaptador: quem decide o que fazer com a falha é o caso de uso, e ele não pode importar
+infraestrutura para saber de que tipo ela foi.
+
+**Não há `sleep` de backoff dentro do lote.** O espaçamento entre tentativas é a própria
+passada seguinte. Dormir ali seguraria os outros 249 destinatários por causa de um número
+instável — e, com o disparo ainda dentro do request HTTP, seguraria a requisição junto.
+`max_tentativas` (3) é obrigatório: sem teto, um número que dá timeout para sempre voltaria
+à fila em toda passada, pelos 7 dias da janela, tomando a vaga de quem ainda podia receber.
+
+**`reenfileirados` é contado à parte de `falhas`** — um é "não deu certo agora", o outro é
+"não vai dar". A tela que os somasse assustaria a secretaria com um número que ainda vai
+diminuir sozinho.
+
+**`AGENDADO` deixou de ser funcionalidade morta.** `use_cases.py` gravava o status quando
+havia `agendado_para`, mas `listar_retomaveis` só recolhia `PARCIAL_LIMITE` — nenhum código
+voltava para executá-lo, e a tela prometia um agendamento que nunca acontecia. Agora a
+consulta recolhe também os `AGENDADO` com hora vencida.
+
+**O cutucão** (`RetomadorDeDisparos.cutucar()`). A grade de 3× ao dia existe para o que a
+**máquina** decide reenviar; segurar até 12h30 um aviso que a secretaria acabou de mandar às
+8h seria usar a proteção contra o usuário dela. As rotas de disparo chamam `cutucar()` depois
+de gravar, e a tarefa acorda na hora.
+
+- É um `asyncio.Event` em memória, **não polling**: custa zero consulta enquanto ninguém
+  dispara — que é o ponto inteiro da grade (§9a-quinquies).
+- O preço é rota e tarefa estarem no **mesmo processo**, o que o `fly.toml` garante fixando
+  uma máquina só. Com duas réplicas, o disparo feito na réplica B espera a grade: atraso,
+  nunca envio perdido, e o `pg_try_advisory_lock` segue impedindo que as duas peguem o mesmo
+  broadcast.
+- Por isso a instância vive em `interfaces/deps.py` e não no `main`: as **rotas** precisam
+  alcançá-la, e importar o `main` de dentro de uma rota fecharia um ciclo.
+
 ### 9a-quater. O motivo da falha de envio (`DestinatarioBroadcast.erro`)
 
 `EnviarBroadcast` captura a exceção por destinatário para **não derrubar o lote** — o que

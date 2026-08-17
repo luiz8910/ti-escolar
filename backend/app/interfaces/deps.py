@@ -97,6 +97,7 @@ from app.infrastructure.factories import (
     criar_llm,
 )
 from app.infrastructure.atendimento import SqlRegistroAtendimento
+from app.infrastructure.retomada import RetomadorDeDisparos
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
 from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.rate_limit import SqlControleTaxa
@@ -660,3 +661,24 @@ def get_matricula_repo(
     session: AsyncSession = Depends(get_session),
 ) -> SqlSolicitacaoMatriculaRepository:
     return SqlSolicitacaoMatriculaRepository(session)
+
+
+# --------------------------------------------------------------------------- #
+# Fila de disparos (tarefa de fundo)
+# --------------------------------------------------------------------------- #
+# Mora aqui, e não no `main`, porque as **rotas** precisam cutucá-la depois de gravar um
+# broadcast — e importar o `main` de dentro de uma rota fecharia um ciclo, já que é ele
+# quem monta os routers. O `main` a importa daqui para subir e descer no `lifespan`.
+#
+# Fica no fim do módulo de propósito: `janela_de_retomada` é chamada na hora da definição,
+# então precisa já existir. (O `montar` é lambda e poderia estar em qualquer lugar.)
+_fila_disparos = RetomadorDeDisparos(
+    SessionLocal,
+    montar=lambda sessao: montar_retomada(sessao, get_settings()),
+    janela=janela_de_retomada(get_settings()),
+)
+
+
+def get_fila_disparos() -> RetomadorDeDisparos:
+    """A fila viva do processo. Use `.cutucar()` para drenar sem esperar a grade."""
+    return _fila_disparos

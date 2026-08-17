@@ -249,3 +249,76 @@ async def test_tarefa_nao_abre_sessao_fora_dos_horarios():
     await retomador.parar()
 
     assert aberturas == []
+
+
+async def test_cutucao_drena_sem_esperar_o_horario():
+    """O disparo manual não pode esperar a grade.
+
+    A grade existe para o que a **máquina** decide reenviar; segurar até 12h30 um aviso
+    que a secretaria acabou de mandar às 8h seria usar a proteção contra o usuário dela.
+    """
+    passadas = []
+
+    class _SessaoFalsa:
+        async def __aenter__(self):
+            passadas.append(1)
+            raise RuntimeError("basta contar a passada")
+
+        async def __aexit__(self, *a):
+            return False
+
+    # Sábado: a grade só voltaria na segunda às 7h.
+    retomador = RetomadorDeDisparos(
+        lambda: _SessaoFalsa(),
+        montar=lambda s: None,
+        janela=JanelaDeExecucao(),
+        agora=lambda: datetime(2026, 8, 15, 10, 0, tzinfo=SP),
+    )
+    retomador.iniciar()
+    await asyncio.sleep(0.02)
+    assert passadas == []  # dormindo, como esperado
+
+    retomador.cutucar()
+    await asyncio.sleep(0.02)
+    await retomador.parar()
+
+    assert passadas == [1]  # acordou na hora, e uma vez só
+
+
+async def test_broadcast_agendado_vencido_entra_na_fila():
+    """Era funcionalidade morta: o disparo com `agendado_para` ganhava o status AGENDADO
+    e nenhum código voltava para executá-lo — a tela prometia o que nunca acontecia."""
+    template = _template()
+    vencido = _broadcast(template, n=2)
+    vencido.status = StatusBroadcast.AGENDADO
+    vencido.agendado_para = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    futuro = _broadcast(template, n=2)
+    futuro.status = StatusBroadcast.AGENDADO
+    futuro.agendado_para = datetime.now(timezone.utc) + timedelta(days=1)
+
+    class _RepoComAgendados(_RepoRetomavel):
+        async def listar_retomaveis(self, *, desde):
+            agora = datetime.now(timezone.utc)
+            return [
+                b
+                for b in self.guardados
+                if b.criado_em >= desde
+                and (
+                    b.status is StatusBroadcast.PARCIAL_LIMITE
+                    or (
+                        b.status is StatusBroadcast.AGENDADO
+                        and b.agendado_para is not None
+                        and b.agendado_para <= agora
+                    )
+                )
+            ]
+
+    repo = _RepoComAgendados(vencido, futuro)
+    uc, canal = _retomada(repo, template, limite=100)
+    resultado = await uc.executar()
+
+    assert resultado.broadcasts == 1  # só o vencido
+    assert vencido.status is StatusBroadcast.CONCLUIDO
+    assert futuro.status is StatusBroadcast.AGENDADO  # a hora dele não chegou
+    assert len(canal.enviados) == 2

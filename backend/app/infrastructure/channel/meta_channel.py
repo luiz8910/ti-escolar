@@ -15,12 +15,24 @@ import logging
 import httpx
 
 from app.domain.entities import Documento, MessageTemplate
+from app.domain.ports import EnvioRecusado
 
 logger = logging.getLogger("channel.meta")
 
 
-class EnvioRecusado(RuntimeError):
-    """A Meta recusou o envio, com o motivo dela — não com o código HTTP."""
+# A exceção mora no domínio (é contrato da porta `MessageChannel`); reexportada aqui
+# porque este é o módulo onde ela é levantada, e quem depura o canal a procura por perto.
+__all__ = ["EnvioRecusado", "MetaMessageChannel"]
+
+
+def _transitorio(status: int) -> bool:
+    """Vale a pena tentar de novo?
+
+    **429 e 5xx sim:** limite de taxa e indisponibilidade passam. **4xx não:** template que
+    não existe na conta ou parâmetro a mais dá o mesmo erro na segunda tentativa, e cada
+    repetição gasta cota e derruba a qualidade do número.
+    """
+    return status == 429 or 500 <= status < 600
 
 
 def _erro_do_corpo(resposta: httpx.Response) -> str:
@@ -81,13 +93,22 @@ class MetaMessageChannel:
 
     async def _post(self, payload: dict, *, remetente: str | None) -> str:
         url = f"{_BASE}/{self._origem(remetente)}/messages"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=self._headers, json=payload)
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                raise EnvioRecusado(_erro_do_corpo(exc.response)) from exc
-            data = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(url, headers=self._headers, json=payload)
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise EnvioRecusado(
+                        _erro_do_corpo(exc.response),
+                        transitorio=_transitorio(exc.response.status_code),
+                    ) from exc
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            # Timeout, DNS, conexão recusada: a mensagem não saiu por algo que passa, e
+            # perder o aviso por isso seria perdê-lo por nada. `HTTPStatusError` é subclasse
+            # de `HTTPError`, mas já virou `EnvioRecusado` acima e não chega aqui.
+            raise EnvioRecusado(f"Falha de transporte: {exc}", transitorio=True) from exc
         return data["messages"][0]["id"]
 
     async def enviar_texto(

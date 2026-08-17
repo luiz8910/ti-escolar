@@ -17,8 +17,14 @@
   entrada por um tempo; em 10/ago/2026 **passou a ser o caminho do inbound real** (§6j), e
   `ReceberMensagemRecebida` foi removido no lugar dele.
 - [ ] `docker-compose.yml` com `db` / `backend` / `web` + migrations + seed.
-- [ ] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e **fila**
-  (throttling, retry com backoff e agendamento — §9a).
+- [~] Adaptador **Meta WhatsApp Cloud API** (outbound) com templates, cota e **fila**
+  (throttling, retry e agendamento — §9a). Em 17/ago/2026 a fila ganhou **reenvio de falha
+  transitória** (a definitiva segue indo direto a `FALHOU`, porque repetir queima a
+  qualidade do número), **`AGENDADO` deixou de ser funcionalidade morta** e o disparo manual
+  passou a **cutucar** a tarefa em vez de esperar a grade. Ver §9a-septies.
+  - [ ] **A rota ainda envia dentro do request HTTP.** Até 250 destinatários em sequência
+    numa requisição. Aguenta o piloto (o teto da Meta limita o lote), mas a resposta
+    imediata + acompanhamento pelo histórico é o passo seguinte.
 - [~] **Migração para a Meta Cloud API direta** (canal único desde 27/jul/2026, com a verificação
   da empresa aprovada). Ver §9e:
   - [x] **Validação de `X-Hub-Signature-256`** no webhook (§9e.2) — era **bloqueante para o

@@ -13,8 +13,7 @@ from app.config import get_settings
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import canal_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
-from app.infrastructure.retomada import RetomadorDeDisparos
-from app.interfaces.deps import janela_de_retomada, montar_retomada
+from app.interfaces.deps import get_fila_disparos, janela_de_retomada
 from app.interfaces.api import (
     admin,
     atendimento_humano,
@@ -59,11 +58,9 @@ _gravador = GravadorDeLogs(
     _coletor, SessionLocal, retencao_dias=settings.log_retencao_dias
 )
 _janela_retomada = janela_de_retomada(settings)
-_retomador = RetomadorDeDisparos(
-    SessionLocal,
-    montar=lambda sessao: montar_retomada(sessao, settings),
-    janela=_janela_retomada,
-)
+# A mesma instância que as rotas cutucam ao gravar um broadcast (ver `deps.get_fila_disparos`).
+# Duas instâncias fariam o cutucão acordar um objeto que não é o que está rodando.
+_retomador = get_fila_disparos()
 
 
 @asynccontextmanager

@@ -14,15 +14,26 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.application.use_cases import EnviarBroadcast
-from app.domain.entities import Broadcast, DestinatarioBroadcast, Usuario
+from app.domain.entities import (
+    Broadcast,
+    DestinatarioBroadcast,
+    StatusBroadcast,
+    Usuario,
+)
 from app.infrastructure.db.repositories_admin import SqlTenantRepository
 from app.infrastructure.messaging.quota import SqlQuotaPolicy
+from app.infrastructure.retomada import RetomadorDeDisparos
 from app.interfaces.api.admin import (
     _exige_acesso_tenant,
     _exige_tenant_ativo,
     usuario_autenticado,
 )
-from app.interfaces.deps import get_enviar_broadcast, get_quota_policy, get_tenant_repo
+from app.interfaces.deps import (
+    get_enviar_broadcast,
+    get_fila_disparos,
+    get_quota_policy,
+    get_tenant_repo,
+)
 from app.interfaces.dto import BroadcastEntrada, BroadcastSaida, QuotaSaida
 
 router = APIRouter(prefix="/api/broadcasts", tags=["broadcasts"])
@@ -34,6 +45,7 @@ async def disparar_broadcast(
     solicitante: Usuario = Depends(usuario_autenticado),
     uc: EnviarBroadcast = Depends(get_enviar_broadcast),
     tenants: SqlTenantRepository = Depends(get_tenant_repo),
+    fila: RetomadorDeDisparos = Depends(get_fila_disparos),
 ) -> BroadcastSaida:
     _exige_acesso_tenant(solicitante, payload.tenant_id)
     # Escola suspensa (bloqueada por inadimplência ou cancelada) não dispara mensagens.
@@ -48,6 +60,10 @@ async def disparar_broadcast(
         ],
     )
     resultado = await uc.executar(broadcast=broadcast)
+    if resultado.status is StatusBroadcast.PARCIAL_LIMITE:
+        # Sobrou gente na fila — por cota ou por falha transitória. Cutucar faz a fila
+        # drenar assim que houver capacidade, em vez de esperar o próximo horário da grade.
+        fila.cutucar()
     return BroadcastSaida(
         broadcast_id=resultado.broadcast_id,
         status=resultado.status.value,

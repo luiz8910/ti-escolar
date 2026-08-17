@@ -295,6 +295,10 @@ class DestinatarioORM(Base):
     atualizado_em: Mapped[datetime | None] = mapped_column(nullable=True)
     # Motivo da falha, como a Meta o descreveu. Ver `DestinatarioBroadcast.erro`.
     erro: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Tentativas já feitas para este destinatário em falha TRANSITÓRIA (timeout, 5xx).
+    # Falha definitiva não conta: vai direto para FALHOU, porque repetir dá o mesmo erro
+    # e queima a qualidade do número.
+    tentativas: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     broadcast: Mapped[BroadcastORM] = relationship(back_populates="destinatarios")
 

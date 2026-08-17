@@ -201,7 +201,7 @@ async def test_falha_de_envio_guarda_o_motivo():
 
     assert resultado.falhas == 1
     assert broadcast.destinatarios[0].status is StatusEntrega.FALHOU
-    assert "falha simulada" in broadcast.destinatarios[0].erro
+    assert "template inexistente na conta" in broadcast.destinatarios[0].erro
 
 
 # --------------------------------------------------------------------------- #
@@ -285,3 +285,103 @@ async def test_duas_escolas_do_mesmo_portfolio_somam_no_mesmo_teto():
     assert resultado.enviados == 1
     assert resultado.bloqueados_por_limite == 2
     assert resultado.status is StatusBroadcast.PARCIAL_LIMITE
+
+
+# --------------------------------------------------------------------------- #
+# Fila: reenvio de falha transitória (§9a-septies)
+# --------------------------------------------------------------------------- #
+async def test_falha_transitoria_volta_para_a_fila_em_vez_de_virar_falha():
+    """Timeout e 5xx passam — desistir na primeira perde o aviso por nada.
+
+    A escola acredita ter mandado; o responsável não recebeu; e não há nada a fazer,
+    porque o destinatário está marcado como FALHOU e ninguém volta nele.
+    """
+    template = _template()
+    broadcast = _broadcast(3)
+    broadcast.template_id = template.id
+    instavel = broadcast.destinatarios[1].contato
+    uc = EnviarBroadcast(
+        broadcasts=FakeBroadcastRepo(),
+        templates=FakeTemplateRepo(template),
+        canal=FakeChannel(transitorio_em={instavel}),
+        quota=FakeQuota(limite_diario=100),
+        rate_limiter=FakeRateLimiter(),
+    )
+
+    resultado = await uc.executar(broadcast=broadcast)
+
+    assert resultado.enviados == 2
+    assert resultado.falhas == 0  # não é falha: é "ainda não"
+    assert resultado.reenfileirados == 1
+    # PARCIAL_LIMITE é o estado "volta para a fila" — é o que a retomada procura.
+    assert resultado.status is StatusBroadcast.PARCIAL_LIMITE
+    pendente = broadcast.destinatarios[1]
+    assert pendente.status is StatusEntrega.PENDENTE
+    assert pendente.tentativas == 1
+
+
+async def test_falha_definitiva_nao_e_retentada():
+    """Template inexistente dá o mesmo erro na segunda tentativa — e cada repetição
+    gasta cota e derruba a qualidade do número, que é o que trava a subida do tier."""
+    template = _template()
+    broadcast = _broadcast(2)
+    broadcast.template_id = template.id
+    alvo = broadcast.destinatarios[0].contato
+    uc = _uc(template, limite=100, falhar_em={alvo})
+
+    resultado = await uc.executar(broadcast=broadcast)
+
+    assert resultado.falhas == 1
+    assert resultado.reenfileirados == 0
+    assert broadcast.destinatarios[0].status is StatusEntrega.FALHOU
+    assert broadcast.destinatarios[0].tentativas == 0  # nem contou: não vai tentar
+
+
+async def test_reenvio_desiste_no_teto_de_tentativas():
+    """Sem teto, um número que dá timeout para sempre voltaria à fila em toda passada,
+    pelos 7 dias da janela, tomando a vaga de quem ainda podia receber."""
+    template = _template()
+    broadcast = _broadcast(1)
+    broadcast.template_id = template.id
+    canal = FakeChannel(transitorio_em={broadcast.destinatarios[0].contato})
+    uc = EnviarBroadcast(
+        broadcasts=FakeBroadcastRepo(),
+        templates=FakeTemplateRepo(template),
+        canal=canal,
+        quota=FakeQuota(limite_diario=100),
+        rate_limiter=FakeRateLimiter(),
+        max_tentativas=3,
+    )
+
+    for _ in range(3):
+        await uc.executar(broadcast=broadcast)
+
+    dest = broadcast.destinatarios[0]
+    assert dest.tentativas == 3
+    assert dest.status is StatusEntrega.FALHOU  # desistiu no teto
+    assert canal.tentativas_por_contato[dest.contato] == 3
+
+
+async def test_indisponibilidade_que_passa_acaba_entregando():
+    """O caso que justifica tudo isso: a segunda tentativa dá certo."""
+    template = _template()
+    broadcast = _broadcast(1)
+    broadcast.template_id = template.id
+    alvo = broadcast.destinatarios[0].contato
+    uc = EnviarBroadcast(
+        broadcasts=FakeBroadcastRepo(),
+        templates=FakeTemplateRepo(template),
+        # Falha uma vez e depois volta ao normal.
+        canal=FakeChannel(transitorio_em={alvo}, curar_apos=1),
+        quota=FakeQuota(limite_diario=100),
+        rate_limiter=FakeRateLimiter(),
+    )
+
+    primeira = await uc.executar(broadcast=broadcast)
+    assert primeira.reenfileirados == 1
+    assert broadcast.destinatarios[0].status is StatusEntrega.PENDENTE
+
+    segunda = await uc.executar(broadcast=broadcast)
+    assert segunda.enviados == 1
+    assert broadcast.destinatarios[0].status is StatusEntrega.ENVIADO
+    assert segunda.status is StatusBroadcast.CONCLUIDO
