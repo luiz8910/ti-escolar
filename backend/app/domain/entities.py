@@ -73,6 +73,103 @@ def formatar_hora(h: time) -> str:
     return f"{h.hour}h{h.minute:02d}" if h.minute else f"{h.hour}h"
 
 
+@dataclass(frozen=True)
+class JanelaDeExecucao:
+    """Quando uma tarefa de fundo pode acordar: N passadas por dia, numa faixa, em certos dias.
+
+    Existe por duas razões que se somam, e nenhuma delas sozinha justificaria o desenho.
+
+    **A primeira é o responsável.** Uma tarefa que acorda de hora em hora acaba disparando
+    aviso escolar às 3h da manhã no dia em que a cota liberar de madrugada. A escola fala
+    com pais, e a hora da mensagem é parte da mensagem.
+
+    **A segunda é a conta do banco.** O Postgres é serverless (Neon) e dorme quando ninguém
+    o procura. Uma passada de 30 em 30 minutos abre sessão 48 vezes por dia — inclusive de
+    madrugada, sábado e domingo — e o mantém acordado 24/7 só para descobrir que não havia
+    nada a fazer. Três passadas em dias úteis derrubam esse piso em mais de 90%.
+
+    Espelha de propósito o vocabulário do expediente do `Tenant` (``dias``/``inicio``/
+    ``fim``/``timezone``): é a mesma ideia — uma faixa de horas em certos dias da semana,
+    no relógio de quem lê — e ter dois vocabulários para ela só criaria dúvida sobre qual
+    vale.
+    """
+
+    dias: tuple[int, ...] = (1, 2, 3, 4, 5)  # ISO: 1 = segunda … 7 = domingo
+    inicio: time = time(7, 0)
+    fim: time = time(18, 0)
+    passadas: int = 3
+    timezone: str = TIMEZONE_PADRAO
+
+    @property
+    def _zona(self) -> ZoneInfo:
+        """Mesma queda para o padrão do expediente: fuso inválido não pode parar a tarefa."""
+        try:
+            return ZoneInfo(self.timezone or TIMEZONE_PADRAO)
+        except (ZoneInfoNotFoundError, ValueError):
+            return ZoneInfo(TIMEZONE_PADRAO)
+
+    @property
+    def ativa(self) -> bool:
+        """Há alguma passada configurada. ``passadas <= 0`` desliga sem precisar de flag."""
+        return bool(self.dias) and self.passadas > 0 and self.inicio <= self.fim
+
+    def horarios(self) -> tuple[time, ...]:
+        """As passadas distribuídas uniformemente na faixa, extremos incluídos.
+
+        Três entre 7h e 18h dão **7h, 12h30 e 18h**. Uma única passada roda no ``inicio``:
+        o começo do expediente é a hora mais útil para um disparo travado desde ontem.
+        """
+        if not self.ativa:
+            return ()
+        if self.passadas == 1:
+            return (self.inicio,)
+        base = datetime(2000, 1, 1)
+        span = (
+            datetime.combine(base.date(), self.fim) - datetime.combine(base.date(), self.inicio)
+        ).total_seconds()
+        passo = span / (self.passadas - 1)
+        return tuple(
+            (datetime.combine(base.date(), self.inicio) + timedelta(seconds=passo * i)).time()
+            for i in range(self.passadas)
+        )
+
+    def proxima_execucao(self, depois_de: datetime) -> datetime | None:
+        """Primeiro horário da grade estritamente após ``depois_de``, em UTC.
+
+        ``None`` só quando a janela está desligada. Oito dias de busca bastam: a grade se
+        repete toda semana, e o oitavo cobre o caso de ``depois_de`` cair no fim do último
+        dia útil configurado.
+        """
+        if not self.ativa:
+            return None
+        local = depois_de.astimezone(self._zona)
+        for offset in range(0, 8):
+            dia = (local + timedelta(days=offset)).date()
+            if dia.isoweekday() not in self.dias:
+                continue
+            for hora in self.horarios():
+                quando = datetime.combine(dia, hora, tzinfo=self._zona)
+                if quando > local:
+                    return quando.astimezone(timezone.utc)
+        return None
+
+    @property
+    def descricao(self) -> str:
+        """Como aparece no log de boot — o valor da env não é o horário efetivo.
+
+        Sem isto, conferir a grade em produção exige reproduzir a divisão de cabeça, e
+        ninguém confere o que dá trabalho conferir.
+        """
+        if not self.ativa:
+            return "desligada"
+        horas = ", ".join(formatar_hora(h) for h in self.horarios())
+        dias = "/".join(_DIAS_SEMANA_CURTO.get(d, str(d)) for d in sorted(self.dias))
+        # O fuso **efetivo**, não o configurado: com um nome inválido a tarefa roda em
+        # Brasília, e um log que repetisse o que foi digitado esconderia justamente o erro
+        # que ele existe para revelar.
+        return f"{horas} ({dias}, {self._zona.key})"
+
+
 @dataclass
 class Waba:
     """Uma conta do WhatsApp Business (WABA) sob a qual escolas operam.

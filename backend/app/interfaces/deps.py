@@ -40,6 +40,7 @@ from app.application.use_cases import (
     RecuperarEEnviarDocumento,
 )
 from app.config import Settings, get_settings
+from app.domain.entities import JanelaDeExecucao
 from app.domain.ports import CatalogoTemplates, LLMProvider, MessageChannel
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
@@ -457,6 +458,32 @@ def _montar_enviar_broadcast(
         quota=SqlQuotaPolicy(session, limite_diario=settings.meta_daily_tier_limit),
         rate_limiter=_rate_limiter,
         tenants=SqlTenantRepository(session),
+    )
+
+
+def janela_de_retomada(settings: Settings) -> JanelaDeExecucao:
+    """Traduz as envs da grade para o value object, tolerando o que vier mal escrito.
+
+    Um `BROADCAST_RETOMADA_DIAS` com lixo no meio (`"1,2,x"`) não pode derrubar o processo
+    nem, pior, desligar a retomada em silêncio: o que sobra de válido vale, e se não sobrar
+    nada volta o padrão de segunda a sexta. O mesmo raciocínio do fuso inválido em
+    `JanelaDeExecucao._zona` — a tarefa continua rodando na configuração mais próxima.
+    """
+    dias = tuple(
+        sorted(
+            {
+                int(p)
+                for p in (settings.broadcast_retomada_dias or "").split(",")
+                if p.strip().isdigit() and 1 <= int(p) <= 7
+            }
+        )
+    )
+    return JanelaDeExecucao(
+        dias=dias or (1, 2, 3, 4, 5),
+        inicio=settings.broadcast_retomada_inicio,
+        fim=settings.broadcast_retomada_fim,
+        passadas=settings.broadcast_retomada_passadas,
+        timezone=settings.broadcast_retomada_timezone,
     )
 
 

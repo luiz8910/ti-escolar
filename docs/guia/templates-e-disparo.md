@@ -135,8 +135,25 @@ para o disparo funcionar como vendido.
   quem não pega volta a dormir (`try`, e não `pg_advisory_lock`, porque esperar na trava só
   empilharia réplicas para fazer o mesmo trabalho). Verificado entre sessões distintas: a
   segunda recebe `False`.
+- **A tarefa segue uma grade, não um intervalo** (`JanelaDeExecucao`, 17/ago/2026):
+  **3 passadas entre 7h e 18h, de segunda a sexta** — 7h, 12h30 e 18h no fuso da escola.
+  O intervalo fixo de 30 min tinha dois defeitos que só se enxergam juntos:
+  - **Podia falar com o pai de madrugada.** A cota libera em janela corrida (§9a-sexies), e
+    no dia em que ela virasse às 3h a tarefa mandaria o aviso escolar às 3h. A hora da
+    mensagem é parte da mensagem.
+  - **Mantinha o banco acordado 24/7.** Eram 48 passadas por dia, todos os dias, cada uma
+    abrindo sessão mesmo sem nada a fazer. Com o Postgres serverless (Neon) isso é ~4h/dia
+    de piso de compute que existiam só para descobrir que não havia trabalho. Três passadas
+    em dias úteis derrubam esse piso em mais de 90%.
+
+  A espera é **fatiada em blocos de 15 min que só olham o relógio** — reavaliar é aritmética
+  em memória e não toca no banco, o que protege contra deriva de relógio sem transformar a
+  espera em polling. E a tarefa continua **não rodando no boot**: um deploy às 12h31 pula o
+  slot das 12h30, o que é seguro porque o prazo de validade é de 7 dias e o maior buraco da
+  grade (sexta 18h → segunda 7h) é de ~61h. As chaves vivem no `.env.example`; o boot loga a
+  grade **efetiva**, porque "3 passadas entre 7h e 18h" não diz que a do meio é 12h30.
 - **Rota manual** `POST /api/admin/broadcasts/retomar` (super admin) para não depender só do
-  ciclo — roda na hora em que a cota virar.
+  ciclo — roda na hora em que a cota virar, inclusive fora da grade.
 
 ### 9a-sexies. A cota é uma janela de 24h corridas, medida no portfólio
 

@@ -7,12 +7,15 @@ alguém lembrar de re-disparar à mão — na prática, metade da escola sem o a
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.application.retomada_use_cases import RetomarBroadcastsPendentes
+from app.infrastructure.retomada import RetomadorDeDisparos
 from app.application.use_cases import EnviarBroadcast
 from app.domain.entities import (
     Broadcast,
@@ -21,6 +24,7 @@ from app.domain.entities import (
     MessageTemplate,
     StatusBroadcast,
     StatusEntrega,
+    JanelaDeExecucao,
     StatusTemplate,
     TemplateNaWaba,
 )
@@ -216,3 +220,32 @@ async def test_sem_pendencia_nao_faz_nada():
     template = _template()
     resultado, _ = _retomada(_RepoRetomavel(), template, limite=100)
     assert (await resultado.executar()).broadcasts == 0
+
+
+SP = ZoneInfo("America/Sao_Paulo")
+
+
+async def test_tarefa_nao_abre_sessao_fora_dos_horarios():
+    """O comportamento pelo qual estamos pagando: fora da grade, zero acesso ao banco.
+
+    Um intervalo fixo de 30 min abria sessão 48 vezes por dia, o que mantinha o Postgres
+    serverless acordado 24/7 — e o custo aparecia na fatura, não no log.
+    """
+    aberturas = []
+
+    def _sessionmaker():
+        aberturas.append(1)
+        raise AssertionError("não deveria abrir sessão fora dos horários")
+
+    # Sábado de manhã: a próxima passada só na segunda às 7h.
+    retomador = RetomadorDeDisparos(
+        _sessionmaker,
+        montar=lambda s: None,
+        janela=JanelaDeExecucao(),
+        agora=lambda: datetime(2026, 8, 15, 10, 0, tzinfo=SP),
+    )
+    retomador.iniciar()
+    await asyncio.sleep(0.05)  # tempo de sobra para o laço rodar várias voltas
+    await retomador.parar()
+
+    assert aberturas == []

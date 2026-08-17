@@ -14,7 +14,7 @@ from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import canal_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
 from app.infrastructure.retomada import RetomadorDeDisparos
-from app.interfaces.deps import montar_retomada
+from app.interfaces.deps import janela_de_retomada, montar_retomada
 from app.interfaces.api import (
     admin,
     atendimento_humano,
@@ -58,10 +58,11 @@ _coletor = ColetorDeLogs(
 _gravador = GravadorDeLogs(
     _coletor, SessionLocal, retencao_dias=settings.log_retencao_dias
 )
+_janela_retomada = janela_de_retomada(settings)
 _retomador = RetomadorDeDisparos(
     SessionLocal,
     montar=lambda sessao: montar_retomada(sessao, settings),
-    intervalo_segundos=settings.broadcast_retomada_intervalo_segundos,
+    janela=_janela_retomada,
 )
 
 
@@ -79,6 +80,12 @@ async def lifespan(_: FastAPI):
         _gravador.iniciar()
     if settings.broadcast_retomada_habilitada:
         _retomador.iniciar()
+        # A grade **efetiva**, não os valores das envs: "3 passadas entre 07:00 e 18:00"
+        # não diz que a do meio é 12h30, e conferir isso em produção não pode depender de
+        # refazer a divisão de cabeça.
+        logging.getLogger("broadcast.retomada").info(
+            "Retomada de disparos: %s", _janela_retomada.descricao
+        )
     if canal_efetivo(settings) != settings.message_channel:
         # Um deploy que pede "meta" e recebe "demo" não falha em lugar nenhum: as mensagens
         # são aceitas e descartadas em memória. Gritar no boot é a única chance de alguém ver.
