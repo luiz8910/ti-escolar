@@ -65,11 +65,11 @@ async def consultar_quota(
     policy: SqlQuotaPolicy = Depends(get_quota_policy),
 ) -> QuotaSaida:
     _exige_acesso_tenant(solicitante, tenant_id)
-    cota = await policy.cota_do_dia(tenant_id)
+    cota = await policy.cota(tenant_id)
     return QuotaSaida(
         tenant_id=tenant_id,
-        dia=cota.dia,
         limite_diario=cota.limite_diario,
         enviados=cota.enviados,
         restante=cota.restante,
+        proxima_liberacao=cota.proxima_liberacao,
     )

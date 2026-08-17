@@ -90,9 +90,15 @@
     `DEMO_TEMPLATE_ID` cravado e passou a oferecer só os templates **aprovados na conta
     daquela escola**, com um campo por variável do corpo. Fecha junto o descasamento de
     parâmetros, que a Meta recusava depois de consumir a cota.
-  - [ ] **Cota de envio no nível do portfólio** — o limite diário da Meta é compartilhado
-    entre todos os números do portfólio desde out/2025, e o `MessageQuota` por tenant é
-    contabilidade nossa, que pode divergir do limite real (§9e.3).
+  - [~] **Cota de envio no nível do portfólio** (17/ago/2026) — o contador por tenant/dia
+    virou um **livro de envios** (`envios_iniciados`, migration `0044`) contando
+    **destinatários distintos numa janela de 24h corridas, por portfólio**. Corrige de uma
+    vez os três erros do modelo anterior — dia de calendário, relógio em UTC (o "dia" virava
+    às 21h de Brasília) e contagem por escola, que dava a cinco escolas de teste a impressão
+    de 1250 de capacidade. A retomada de atendimento fora das 24h passou a consumir cota,
+    o que antes acontecia em silêncio. Ver §9a-sexies.
+    - [ ] **Falta ler o tier real da Meta** (`whatsapp_business_manager_messaging_limit`;
+      o `messaging_limit_tier` foi depreciado) em vez do `META_DAILY_TIER_LIMIT` cravado.
   - [ ] **Assinar `message_template_status_update` no console da Meta** — sem isso o status
     só muda pelo botão "Sincronizar". Ver `docs/producao-whatsapp.md` §5.
 - [x] **Transferência de responsáveis** (Onda 2 · F1) Progressão de série na virada de ano:

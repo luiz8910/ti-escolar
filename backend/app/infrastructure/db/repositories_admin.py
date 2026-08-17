@@ -46,7 +46,7 @@ from app.infrastructure.db.models import (
     GrupoORM,
     MensagemORM,
     ProfessorORM,
-    QuotaORM,
+    EnvioIniciadoORM,
     RecadoORM,
     RespostaRapidaORM,
     SolicitacaoImpressaoORM,
@@ -364,7 +364,9 @@ class SqlTenantRepository:
         )
         await self._s.execute(delete(BroadcastORM).where(BroadcastORM.tenant_id == tenant_id))
         await self._s.execute(delete(TemplateORM).where(TemplateORM.tenant_id == tenant_id))
-        await self._s.execute(delete(QuotaORM).where(QuotaORM.tenant_id == tenant_id))
+        await self._s.execute(
+            delete(EnvioIniciadoORM).where(EnvioIniciadoORM.tenant_id == tenant_id)
+        )
         await self._s.execute(
             delete(grupo_contatos).where(
                 grupo_contatos.c.grupo_id.in_(grupos_do_tenant)

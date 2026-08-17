@@ -598,6 +598,7 @@ def get_responder_atendimento(
         tenants=SqlTenantRepository(session),
         templates=SqlTemplateRepository(session),
         template_retomada=settings.template_retomada_atendimento,
+        quota=SqlQuotaPolicy(session, limite_diario=settings.meta_daily_tier_limit),
     )
 
 

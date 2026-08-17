@@ -125,10 +125,12 @@ class RetomadaSaida(BaseModel):
 
 class QuotaSaida(BaseModel):
     tenant_id: UUID
-    dia: str
     limite_diario: int
     enviados: int
     restante: int
+    # Quando a primeira vaga volta. Substitui o antigo `dia`, que prometia uma virada à
+    # meia-noite que a Meta não faz — a janela é de 24h corridas (ver `MessageQuota`).
+    proxima_liberacao: datetime | None = None
 
 
 # --------------------------------------------------------------------------- #

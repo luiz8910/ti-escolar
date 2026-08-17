@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -201,3 +202,86 @@ async def test_falha_de_envio_guarda_o_motivo():
     assert resultado.falhas == 1
     assert broadcast.destinatarios[0].status is StatusEntrega.FALHOU
     assert "falha simulada" in broadcast.destinatarios[0].erro
+
+
+# --------------------------------------------------------------------------- #
+# Janela de 24h corridas, no portfólio (§9e.3)
+# --------------------------------------------------------------------------- #
+async def test_mesmo_responsavel_duas_vezes_consome_uma_vaga():
+    """A Meta cobra **cliente único** na janela, não mensagem enviada.
+
+    Um responsável com dois filhos aparece duas vezes na lista da turma. Contando por
+    mensagem, uma escola com muitos irmãos batia no teto antes da hora e o aviso ficava
+    pela metade sem que nenhuma capacidade real tivesse sido gasta.
+    """
+    template = _template()
+    repetido = "+5511900000001"
+    broadcast = Broadcast(
+        tenant_id=TENANT,
+        template_id=template.id,
+        titulo="Reunião",
+        destinatarios=[
+            DestinatarioBroadcast(contato=repetido, parametros=["Ana"]),
+            DestinatarioBroadcast(contato=repetido, parametros=["Bruno"]),
+            DestinatarioBroadcast(contato="+5511900000002", parametros=["Carla"]),
+        ],
+    )
+    uc = _uc(template, limite=2)
+
+    resultado = await uc.executar(broadcast=broadcast)
+
+    # Três mensagens saem, mas só duas vagas são consumidas — cabe no teto de 2.
+    assert resultado.enviados == 3
+    assert resultado.bloqueados_por_limite == 0
+    assert resultado.status is StatusBroadcast.CONCLUIDO
+
+
+async def test_envio_fora_da_janela_de_24h_nao_conta():
+    """Passadas 24 horas, a vaga volta sozinha — é o que "próxima janela" quer dizer."""
+    quota = FakeQuota(limite_diario=1)
+    # Um envio de 25 horas atrás já saiu da janela; um de 23 ainda ocupa vaga.
+    agora = datetime.now(timezone.utc)
+    quota.envios.append(("", "+5511911111111", agora - timedelta(hours=25)))
+
+    cota = await quota.cota(TENANT)
+    assert cota.enviados == 0
+    assert cota.restante == 1
+    assert cota.proxima_liberacao is None  # nada na janela para liberar
+
+    quota.envios.append(("", "+5511922222222", agora - timedelta(hours=23)))
+    cota = await quota.cota(TENANT)
+    assert cota.enviados == 1
+    assert cota.restante == 0
+    # A vaga volta uma hora à frente, não à meia-noite.
+    assert cota.proxima_liberacao is not None
+    assert timedelta(minutes=50) < (cota.proxima_liberacao - agora) < timedelta(minutes=70)
+
+
+async def test_duas_escolas_do_mesmo_portfolio_somam_no_mesmo_teto():
+    """O teto é do Business Account, compartilhado por todos os números abaixo dele.
+
+    Enquanto a conta era por escola, cadastrar cinco escolas de teste dava a impressão de
+    1250 de capacidade — e a recusa vinha da Graph API, depois de o painel dizer que o
+    disparo tinha saído.
+    """
+    outra_escola = uuid.uuid4()
+    template = _template()
+    quota = FakeQuota(limite_diario=3)  # portfólio único: ambas caem no balde ""
+
+    await quota.registrar_envio(outra_escola, "+5511933333331")
+    await quota.registrar_envio(outra_escola, "+5511933333332")
+
+    broadcast = _broadcast(3)
+    broadcast.template_id = template.id
+    resultado = await EnviarBroadcast(
+        broadcasts=FakeBroadcastRepo(),
+        templates=FakeTemplateRepo(template),
+        canal=FakeChannel(),
+        quota=quota,
+        rate_limiter=FakeRateLimiter(),
+    ).executar(broadcast=broadcast)
+
+    # Sobrava uma vaga das três; as outras duas foram da escola vizinha.
+    assert resultado.enviados == 1
+    assert resultado.bloqueados_por_limite == 2
+    assert resultado.status is StatusBroadcast.PARCIAL_LIMITE

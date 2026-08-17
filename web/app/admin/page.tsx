@@ -83,7 +83,11 @@ export default function AdminDashboard() {
     >
       <div className="flex flex-col gap-[18px]">
         {quota && (
-          <QuotaBar enviados={quota.enviados} limite={quota.limite_diario} dia={quota.dia} />
+          <QuotaBar
+            enviados={quota.enviados}
+            limite={quota.limite_diario}
+            proximaLiberacao={quota.proxima_liberacao}
+          />
         )}
 
         <div className="grid grid-cols-1 gap-[18px] lg:grid-cols-[300px_1fr]">

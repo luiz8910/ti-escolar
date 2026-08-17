@@ -168,11 +168,18 @@ class MessageChannel(Protocol):
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class QuotaPolicy(Protocol):
-    """Controla a cota diária de destinatários (tier Meta) por tenant."""
+    """Cota de conversas iniciadas pelo negócio, em janela de 24h corridas por portfólio.
 
-    async def cota_do_dia(self, tenant_id: UUID) -> MessageQuota: ...
+    ``registrar_envio`` recebe o **contato**, não uma quantidade, porque a unidade que a
+    Meta cobra é *cliente único na janela* — sem saber para quem foi, não há como não
+    contar duas vezes o mesmo responsável. Todo caminho que dispara template precisa
+    chamá-lo: além do broadcast, a retomada de atendimento fora da janela de 24h também
+    inicia conversa e também consome o teto.
+    """
 
-    async def consumir(self, tenant_id: UUID, quantidade: int) -> MessageQuota: ...
+    async def cota(self, tenant_id: UUID) -> MessageQuota: ...
+
+    async def registrar_envio(self, tenant_id: UUID, contato: str) -> None: ...
 
 
 @runtime_checkable

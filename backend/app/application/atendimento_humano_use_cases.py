@@ -48,6 +48,7 @@ from app.domain.ports import (
     ContatoRepository,
     ConversaRepository,
     MessageChannel,
+    QuotaPolicy,
     TemplateRepository,
     TenantRepository,
 )
@@ -467,6 +468,7 @@ class ResponderAtendimento:
         tenants: TenantRepository | None = None,
         templates: TemplateRepository | None = None,
         template_retomada: str = "",
+        quota: QuotaPolicy | None = None,
     ) -> None:
         self._atendimentos = atendimentos
         self._conversas = conversas
@@ -474,6 +476,10 @@ class ResponderAtendimento:
         self._tenants = tenants
         self._templates = templates
         self._template_retomada = template_retomada
+        # Reabrir conversa por template é conversa **iniciada pelo negócio**: consome o
+        # mesmo teto de 24h dos broadcasts. Sem isto o contador mentia para baixo, e a
+        # escola descobria o limite pela recusa da Graph API no meio de um disparo.
+        self._quota = quota
 
     async def executar(
         self,
@@ -548,6 +554,10 @@ class ResponderAtendimento:
             parametros=[nome_escola, texto],
             remetente=remetente,
         )
+        if self._quota is not None:
+            # Depois do envio, nunca antes: cota consumida por mensagem que não saiu é
+            # capacidade jogada fora, e aqui o excedente não tem retomada que o recupere.
+            await self._quota.registrar_envio(atendimento.tenant_id, atendimento.contato)
         logger.info(
             "Atendimento %s respondido por template de retomada (janela de 24h expirada)",
             atendimento.id,

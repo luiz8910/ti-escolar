@@ -1572,13 +1572,33 @@ class Broadcast:
 
 @dataclass
 class MessageQuota:
-    """Cota diária de destinatários únicos por número (tier Meta)."""
+    """Cota de conversas iniciadas pelo negócio na janela de **24h corridas** do portfólio.
+
+    "Diário" aqui quer dizer *por 24 horas*, não *por data*. A distinção não é preciosismo —
+    a versão anterior contava dia de calendário em UTC, por escola, e errava nos três eixos
+    ao mesmo tempo:
+
+    - **A janela é corrida.** A Meta conta as conversas iniciadas nas últimas 24 horas e
+      devolve capacidade continuamente, à medida que cada envio completa 24h. **Não existe
+      reset à meia-noite** — quem esperasse por ele esperaria por nada.
+    - **O relógio era UTC**, então o "dia" virava às 21h de Brasília, no meio do expediente
+      da escola: um disparo às 20h e outro às 22h caíam em cotas diferentes sem que nada na
+      realidade tivesse mudado.
+    - **O teto é do portfólio**, compartilhado por todos os números desde out/2025 (§9e.3).
+      Contando por escola, cinco escolas de teste acreditam ter 1250 de capacidade e a Meta
+      recusa na 251ª.
+
+    ``enviados`` são **destinatários distintos**: a Meta cobra conversa iniciada com cliente
+    único, então dois avisos ao mesmo responsável dentro da janela consomem **um**.
+    """
 
     tenant_id: UUID
     # -1 = ilimitado
     limite_diario: int
-    dia: str  # ISO date "YYYY-MM-DD" (UTC)
     enviados: int = 0
+    # Quando o envio mais antigo da janela completa 24h e devolve uma vaga. ``None`` quando
+    # não há nada na janela — não há o que liberar, a cota já está inteira.
+    proxima_liberacao: datetime | None = None
     id: UUID = field(default_factory=_new_id)
 
     @property

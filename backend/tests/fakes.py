@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.domain.entities import (
     Aluno,
@@ -327,26 +327,39 @@ class FakeChannel:
 
 
 class FakeQuota:
-    def __init__(self, *, limite_diario: int) -> None:
-        self._quotas: dict[uuid.UUID, MessageQuota] = {}
+    """Espelha a contagem real: janela de 24h corridas, por **contato distinto**.
+
+    O teto é compartilhado por todos os tenants — é o que a Meta faz no portfólio, e é
+    justamente o comportamento que o fake anterior (um contador por tenant) escondia.
+    """
+
+    def __init__(self, *, limite_diario: int, portfolios: dict | None = None) -> None:
         self._limite = limite_diario
+        # Portfólio de cada escola. Ausente = ``""``, que é o balde de quem ainda não tem
+        # conta do WhatsApp — por padrão todas caem nele e **dividem o teto**, que é o
+        # comportamento real da Meta desde out/2025.
+        self._portfolios = portfolios or {}
+        # (portfólio, contato, instante) de cada conversa iniciada.
+        self.envios: list[tuple[str, str, datetime]] = []
 
-    def _q(self, tenant_id) -> MessageQuota:
-        if tenant_id not in self._quotas:
-            self._quotas[tenant_id] = MessageQuota(
-                tenant_id=tenant_id,
-                limite_diario=self._limite,
-                dia=datetime.now(timezone.utc).date().isoformat(),
-            )
-        return self._quotas[tenant_id]
+    def _pf(self, tenant_id) -> str:
+        return self._portfolios.get(tenant_id, "")
 
-    async def cota_do_dia(self, tenant_id) -> MessageQuota:
-        return self._q(tenant_id)
+    async def cota(self, tenant_id) -> MessageQuota:
+        pf = self._pf(tenant_id)
+        corte = datetime.now(timezone.utc) - timedelta(hours=24)
+        na_janela = [(c, q) for p, c, q in self.envios if p == pf and q > corte]
+        return MessageQuota(
+            tenant_id=tenant_id,
+            limite_diario=self._limite,
+            enviados=len({c for c, _ in na_janela}),
+            proxima_liberacao=(
+                min(q for _, q in na_janela) + timedelta(hours=24) if na_janela else None
+            ),
+        )
 
-    async def consumir(self, tenant_id, quantidade) -> MessageQuota:
-        q = self._q(tenant_id)
-        q.enviados += quantidade
-        return q
+    async def registrar_envio(self, tenant_id, contato: str) -> None:
+        self.envios.append((self._pf(tenant_id), contato, datetime.now(timezone.utc)))
 
 
 class FakeRateLimiter:

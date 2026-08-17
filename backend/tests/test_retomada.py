@@ -125,16 +125,13 @@ async def test_cota_ainda_curta_deixa_o_resto_para_a_proxima_janela():
     assert broadcast.status is StatusBroadcast.PARCIAL_LIMITE  # volta para a fila
 
 
-async def test_escola_sem_cota_nao_trava_o_aviso_das_outras():
-    """A cota é por escola: parar a fila inteira faria uma escola grande calar as demais."""
+def _duas_escolas(quota):
+    """Duas escolas com broadcast pendente, a maior mais antiga (retomada primeiro)."""
     template_a = _template()
     template_b = _template(tenant_id=OUTRO_TENANT)
-    # A escola A é a mais antiga e vai estourar a cota; a B tem a dela.
     grande = _broadcast(template_a, n=5, dias_atras=2)
     pequeno = _broadcast(template_b, n=1, tenant_id=OUTRO_TENANT, dias_atras=1)
-
     repo = _RepoRetomavel(grande, pequeno)
-    canal = FakeChannel()
 
     class _TemplatesPorTenant:
         async def obter(self, *, tenant_id, template_id):
@@ -146,17 +143,46 @@ async def test_escola_sem_cota_nao_trava_o_aviso_das_outras():
     enviar = EnviarBroadcast(
         broadcasts=repo,
         templates=_TemplatesPorTenant(),
-        canal=canal,
-        quota=FakeQuota(limite_diario=2),
+        canal=FakeChannel(),
+        quota=quota,
         rate_limiter=FakeRateLimiter(),
     )
-    resultado = await RetomarBroadcastsPendentes(
-        broadcasts=repo, enviar=enviar
-    ).executar()
+    return RetomarBroadcastsPendentes(broadcasts=repo, enviar=enviar), grande, pequeno
+
+
+async def test_escolas_do_mesmo_portfolio_dividem_o_teto():
+    """O teto é do portfólio, não da escola — e uma escola grande consome o das outras.
+
+    Era o contrário até 17/ago/2026, e não por decisão nossa: a Meta passou a medir o
+    limite no Business Account em out/2025. Enquanto contávamos por escola, cinco escolas
+    de teste acreditavam ter 1250 de capacidade e a Graph API recusava na 251ª — o painel
+    dizia "enviado" para uma mensagem que não saiu.
+    """
+    uc, grande, pequeno = _duas_escolas(FakeQuota(limite_diario=2))
+    resultado = await uc.executar()
 
     assert resultado.broadcasts == 2
-    assert pequeno.status is StatusBroadcast.CONCLUIDO
     assert grande.status is StatusBroadcast.PARCIAL_LIMITE
+    # A pequena não passa: a grande chegou antes e levou as duas vagas do portfólio.
+    assert pequeno.status is StatusBroadcast.PARCIAL_LIMITE
+    assert resultado.enviados == 2
+
+
+async def test_escolas_de_portfolios_diferentes_nao_se_atrapalham():
+    """Portfólios distintos têm tetos distintos — a fila não pode confundi-los.
+
+    É o que sobra do princípio antigo ("uma escola grande não cala as demais"): ele
+    continua valendo, só que a fronteira é o portfólio, não a escola.
+    """
+    quota = FakeQuota(
+        limite_diario=2, portfolios={TENANT: "portfolio-a", OUTRO_TENANT: "portfolio-b"}
+    )
+    uc, grande, pequeno = _duas_escolas(quota)
+    resultado = await uc.executar()
+
+    assert resultado.broadcasts == 2
+    assert grande.status is StatusBroadcast.PARCIAL_LIMITE  # estourou o teto do A
+    assert pequeno.status is StatusBroadcast.CONCLUIDO  # o teto do B estava inteiro
 
 
 async def test_disparo_vencido_nao_e_retomado():

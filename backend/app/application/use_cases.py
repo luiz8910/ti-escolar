@@ -717,10 +717,11 @@ class ResultadoBroadcast:
 
 
 class EnviarBroadcast:
-    """Dispara um broadcast respeitando template aprovado, rate limit e cota diária.
+    """Dispara um broadcast respeitando template aprovado, rate limit e cota do portfólio.
 
-    Ao atingir a cota diária (tier Meta), os destinatários restantes ficam pendentes e
-    o broadcast é marcado como ``PARCIAL_LIMITE`` para reenvio na próxima janela.
+    Ao esgotar a janela de 24h da Meta, os destinatários restantes ficam pendentes e o
+    broadcast é marcado como ``PARCIAL_LIMITE``. "Próxima janela" não é a meia-noite: a
+    capacidade volta aos poucos, conforme cada envio completa 24 horas (ver `MessageQuota`).
     """
 
     def __init__(
@@ -778,12 +779,23 @@ class EnviarBroadcast:
         enviados = falhas = bloqueados = 0
         broadcast.status = StatusBroadcast.EM_ENVIO
 
+        # A cota é lida **uma vez** e descontada em memória durante o lote. Reler a cada
+        # destinatário custaria um agregado por envio (250 deles num disparo grande) para
+        # confirmar o que já sabemos. `ja_contados` reproduz a contagem por cliente único
+        # da Meta: o mesmo responsável em dois destinatários do lote consome uma vaga só.
+        cota = await self._quota.cota(broadcast.tenant_id)
+        disponivel = cota.restante
+        ja_contados: set[str] = set()
+
         for dest in broadcast.destinatarios:
             if dest.status in (StatusEntrega.ENVIADO, StatusEntrega.ENTREGUE, StatusEntrega.LIDO):
                 continue
 
-            cota = await self._quota.cota_do_dia(broadcast.tenant_id)
-            if not cota.pode_enviar(1):
+            # Contato já alcançado neste lote não consome vaga nova. Quem já foi alcançado
+            # numa janela *anterior* a este lote consome — errando para o lado seguro, que
+            # é enviar de menos e retomar depois, nunca ouvir "não" da Graph API.
+            consome_vaga = dest.contato not in ja_contados
+            if consome_vaga and disponivel <= 0:
                 bloqueados += 1
                 continue  # fica pendente para a próxima janela
 
@@ -798,7 +810,10 @@ class EnviarBroadcast:
                 dest.status = StatusEntrega.ENVIADO
                 dest.mensagem_id_externo = mensagem_id
                 dest.atualizado_em = datetime.now(timezone.utc)
-                await self._quota.consumir(broadcast.tenant_id, 1)
+                await self._quota.registrar_envio(broadcast.tenant_id, dest.contato)
+                if consome_vaga:
+                    ja_contados.add(dest.contato)
+                    disponivel -= 1
                 enviados += 1
             except Exception as exc:  # noqa: BLE001 — falha de envio não derruba o lote
                 # **O motivo é registrado.** Continuar o lote é certo; perder a explicação
@@ -822,7 +837,7 @@ class EnviarBroadcast:
         )
         await self._broadcasts.salvar(broadcast)
 
-        cota_final = await self._quota.cota_do_dia(broadcast.tenant_id)
+        cota_final = await self._quota.cota(broadcast.tenant_id)
         return ResultadoBroadcast(
             broadcast_id=broadcast.id,
             enviados=enviados,

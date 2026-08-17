@@ -1,67 +1,96 @@
-"""Cota diária (tier Meta) persistida e rate limiter por token bucket."""
+"""Cota de conversas iniciadas (janela de 24h do portfólio) e rate limiter por token bucket.
+
+**Por que a janela é corrida e não o dia do calendário.** A Meta conta as conversas que o
+negócio inicia com clientes únicos nas últimas 24 horas, devolvendo capacidade
+continuamente à medida que cada envio completa esse prazo. Não existe virada à meia-noite.
+A versão anterior contava `date()` em UTC, o que além de errado no conceito virava o "dia"
+às 21h de Brasília — no meio do expediente da escola.
+
+**E por que o teto é do portfólio.** Desde out/2025 o limite deixou de ser por número e
+passou a ser do Meta Business Account, compartilhado por todas as WABAs e números abaixo
+dele (§9e.3). Contando por escola, cinco escolas de teste acreditariam ter 1250 de
+capacidade e a Graph API recusaria a 251ª — depois de o painel já ter dito que cabia.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import MessageQuota
-from app.infrastructure.db.models import QuotaORM
+from app.infrastructure.db.models import EnvioIniciadoORM, TenantORM, WabaORM
 
-
-def _hoje() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+# A janela da Meta. Constante e não configuração: mudá-la não ajusta nada nosso, só faz a
+# nossa contabilidade divergir da que vale, que é a deles.
+JANELA_HORAS = 24
 
 
 class SqlQuotaPolicy:
-    """Controla destinatários únicos por dia por tenant (limite do tier Meta)."""
+    """Conta destinatários **distintos** alcançados pelo portfólio nas últimas 24 horas."""
 
     def __init__(self, session: AsyncSession, *, limite_diario: int) -> None:
         self._s = session
         self._limite = limite_diario
 
-    async def _orm_do_dia(self, tenant_id: uuid.UUID) -> QuotaORM:
-        dia = _hoje()
-        stmt = select(QuotaORM).where(QuotaORM.tenant_id == tenant_id, QuotaORM.dia == dia)
-        row = (await self._s.execute(stmt)).scalar_one_or_none()
-        if row is None:
-            row = QuotaORM(
+    async def _portfolio(self, tenant_id: uuid.UUID) -> str:
+        """Portfólio da escola, ou ``""`` quando ela ainda não tem conta do WhatsApp.
+
+        O balde vazio é proposital: escola sem WABA não pode somar com quem tem portfólio
+        conhecido (inflaria o consumo alheio) nem sumir da conta (esconderia envio real).
+        """
+        stmt = (
+            select(WabaORM.meta_business_id)
+            .select_from(TenantORM)
+            .join(WabaORM, TenantORM.waba_id == WabaORM.id)
+            .where(TenantORM.id == tenant_id)
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none() or ""
+
+    async def cota(self, tenant_id: uuid.UUID) -> MessageQuota:
+        portfolio = await self._portfolio(tenant_id)
+        corte = _agora() - timedelta(hours=JANELA_HORAS)
+        stmt = select(
+            func.count(distinct(EnvioIniciadoORM.contato)),
+            func.min(EnvioIniciadoORM.enviado_em),
+        ).where(
+            EnvioIniciadoORM.meta_business_id == portfolio,
+            EnvioIniciadoORM.enviado_em > corte,
+        )
+        enviados, mais_antigo = (await self._s.execute(stmt)).one()
+        return MessageQuota(
+            tenant_id=tenant_id,
+            limite_diario=self._limite,
+            enviados=enviados or 0,
+            # O envio mais antigo ainda na janela é o próximo a sair dela — é ele que
+            # devolve a primeira vaga, e é isso que a tela deve dizer em vez de "amanhã".
+            proxima_liberacao=(
+                (mais_antigo + timedelta(hours=JANELA_HORAS)).replace(tzinfo=timezone.utc)
+                if mais_antigo is not None
+                else None
+            ),
+        )
+
+    async def registrar_envio(self, tenant_id: uuid.UUID, contato: str) -> None:
+        self._s.add(
+            EnvioIniciadoORM(
                 id=uuid.uuid4(),
                 tenant_id=tenant_id,
-                dia=dia,
-                limite_diario=self._limite,
-                enviados=0,
+                meta_business_id=await self._portfolio(tenant_id),
+                contato=contato,
+                enviado_em=_agora(),
             )
-            self._s.add(row)
-            await self._s.flush()
-        return row
-
-    async def cota_do_dia(self, tenant_id: uuid.UUID) -> MessageQuota:
-        row = await self._orm_do_dia(tenant_id)
-        return MessageQuota(
-            id=row.id,
-            tenant_id=row.tenant_id,
-            limite_diario=row.limite_diario,
-            dia=row.dia,
-            enviados=row.enviados,
         )
-
-    async def consumir(self, tenant_id: uuid.UUID, quantidade: int) -> MessageQuota:
-        row = await self._orm_do_dia(tenant_id)
-        row.enviados += quantidade
         await self._s.flush()
-        return MessageQuota(
-            id=row.id,
-            tenant_id=row.tenant_id,
-            limite_diario=row.limite_diario,
-            dia=row.dia,
-            enviados=row.enviados,
-        )
+
+
+def _agora() -> datetime:
+    """UTC sem tzinfo, que é como o projeto grava datas no Postgres."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TokenBucketRateLimiter:

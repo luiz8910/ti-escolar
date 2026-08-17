@@ -299,18 +299,40 @@ class DestinatarioORM(Base):
     broadcast: Mapped[BroadcastORM] = relationship(back_populates="destinatarios")
 
 
-class QuotaORM(Base):
-    __tablename__ = "message_quotas"
+class EnvioIniciadoORM(Base):
+    """Uma conversa iniciada pelo negócio — a unidade que a Meta cobra na janela de 24h.
+
+    Substitui o contador por dia de calendário (`message_quotas`), que não conseguia
+    responder à única pergunta que importa: *quantos clientes distintos foram alcançados
+    nas últimas 24 horas?* Um contador agregado perde o instante de cada envio, e sem o
+    instante não há janela corrida nem previsão de quando a capacidade volta.
+
+    Guardar o `contato` é o que permite contar **distintos**: a Meta cobra cliente único,
+    então o mesmo responsável em dois avisos da mesma janela é uma conversa, não duas.
+
+    Não é derivável de `destinatarios_broadcast`, e essa foi a razão de existir: aquela
+    tabela só conhece broadcast (a retomada de atendimento fora das 24h consome teto e não
+    passa por lá) e seu `atualizado_em` é remexido pelo webhook de status dias depois, o
+    que faria um `delivered` atrasado reescrever a hora do envio.
+    """
+
+    __tablename__ = "envios_iniciados"
 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("tenants.id"), index=True
     )
-    dia: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD
-    limite_diario: Mapped[int] = mapped_column(Integer)
-    enviados: Mapped[int] = mapped_column(Integer, default=0)
+    # Portfólio (Meta Business Account) que carrega o teto. Vazio = escola ainda sem WABA:
+    # conta num balde próprio, para não somar com quem tem portfólio conhecido nem sumir
+    # da contagem.
+    meta_business_id: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    contato: Mapped[str] = mapped_column(String(50))
+    enviado_em: Mapped[datetime] = mapped_column()
 
-    __table_args__ = (UniqueConstraint("tenant_id", "dia", name="uq_quota_tenant_dia"),)
+    __table_args__ = (
+        # A consulta quente é sempre "distintos deste portfólio depois de tal instante".
+        Index("ix_envios_iniciados_janela", "meta_business_id", "enviado_em"),
+    )
 
 
 # --------------------------------------------------------------------------- #
