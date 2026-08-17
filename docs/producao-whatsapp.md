@@ -180,44 +180,70 @@ Meta diz textualmente que não é preciso contatar suporte; pedir aumento dele s
 tempo de todo mundo. O de **números por portfólio** é o que trava o onboarding: em
 14/ago/2026 estava em **1 de 2**, ou seja, cabe mais **uma** escola.
 
-Ele deveria subir para 20 automaticamente com a empresa verificada. Se a verificação está
-aprovada e o teto não subiu depois de alguns dias, aí o chamado se justifica.
+Ele deveria subir para 20 automaticamente com a empresa verificada. **A verificação saiu em
+26/jul/2026 e o teto seguia em 1 de 2 em 17/ago** — três semanas depois. O aumento
+documentado não aconteceu, então o chamado está justificado (§2.2.2).
 
-**Onde:** [Suporte Direto da Meta Business](https://business.facebook.com/business/help/support)
-→ *WhatsApp Business Platform* → *Account & Phone Numbers*. Exige estar logado com um
-usuário admin do portfólio.
+**Onde abrir**, na ordem em que se deve tentar:
 
-**Dados a ter à mão:**
+1. **[Suporte Direto da Meta Business](https://business.facebook.com/business/help/support)**
+   → *WhatsApp Business Platform* → *Account & Phone Numbers* → *Contact Support*. Exige
+   estar logado com um usuário **admin do portfólio** (hoje, o único admin é você — a
+   Central de Segurança avisa isso).
+2. Se a categoria não aparecer, entre pelo
+   **[Gerenciador do WhatsApp](https://business.facebook.com/wa/manage/home/?business_id=940840332344260)**
+   → ícone **?** (canto inferior esquerdo) → *Ajuda* → *Falar com um especialista*. É o mesmo
+   fluxo, com o portfólio já preenchido.
+
+**Dados a ter à mão** (todos conferidos contra a Graph API em 17/ago/2026):
 
 | Campo | Valor |
 |---|---|
-| Business portfolio ID | `940840332344260` |
+| Business portfolio ID | `940840332344260` (TiEscolar) |
+| Business Verification | **Verificada em 26/jul/2026** |
 | WABA ID | `2116419572321695` |
+| `account_review_status` | `APPROVED` |
 | Número atual | `+55 15 99753-6978` (`phone_number_id` `1231892910008454`) |
-| Qualidade / status | `GREEN` · `CONNECTED` · WABA `account_review_status: APPROVED` |
+| Qualidade / nome | `GREEN` · `AVAILABLE_WITHOUT_REVIEW` |
+| Teto de números | **1 de 2** |
+| Tier de mensagens | `TIER_250` (**não citar no chamado** — outra causa, §2.2.2) |
 
-**Texto sugerido** (em inglês; o suporte responde mais rápido):
+**Texto pronto** (em inglês; o suporte responde mais rápido):
 
-> **Subject:** Request to increase phone number limit for verified business portfolio
+> **Subject:** Verified business portfolio still capped at 2 phone numbers
 >
 > Hello,
 >
-> Our business portfolio (ID `940840332344260`) has completed Business Verification, but
-> our phone number limit is still 2 (currently 1 of 2 used). According to the
-> documentation, a verified business should have this limit raised to 20.
+> Our business portfolio **TiEscolar** (ID `940840332344260`) completed Business
+> Verification on **July 26, 2026**, but our registered phone number limit is still **2**
+> (currently 1 of 2 used), three weeks later. Per the documentation, a verified business
+> portfolio should have this limit automatically raised to 20, and that increase has not
+> happened.
 >
 > We operate a school-communication platform in Brazil. Each school we onboard uses its own
-> dedicated phone number registered under our WABA (ID `2116419572321695`), so the number
-> limit is what caps how many customers we can serve — we can currently onboard only one
-> more school.
+> dedicated phone number under our WABA (ID `2116419572321695`), so this cap is what limits
+> how many schools we can serve — we can currently onboard only one more.
 >
-> Our current number (`+55 15 99753-6978`, ID `1231892910008454`) has a GREEN quality
-> rating and CONNECTED status, and the WABA account review status is APPROVED.
+> Our existing number (`+55 15 99753-6978`, ID `1231892910008454`) has a **GREEN** quality
+> rating, its display name is approved (`AVAILABLE_WITHOUT_REVIEW`), and the WABA
+> `account_review_status` is **APPROVED**.
 >
-> Could you please raise the registered phone number limit for this portfolio? Happy to
+> Could you please apply the phone number limit increase for this portfolio? Happy to
 > provide any additional documentation.
 >
 > Thank you.
+
+> **Não peça o teto de mensagens junto.** Ele tem outra causa — falta uso, não papelada — e
+> sobe sozinho (§2.2.2). Misturar os dois pedidos transforma um caso simples e comprovável
+> num caso confuso, e é o simples que se quer aprovado rápido.
+
+> **E não confunda com *Configurações de pagamento → Índia*** no Gerenciador do WhatsApp.
+> Aquilo é **WhatsApp Pay** (o cliente *pagar você* por mensagem de detalhes do pedido),
+> disponível só onde o produto existe — no Brasil o pagamento direto por cartão a empresas
+> foi encerrado em jan/2026, daí a tela inerte com "Nova configuração" desabilitado. Não tem
+> relação com pagar a Meta pelo envio, que fica em *Configurações do Business → Cobrança e
+> pagamentos* e já está ativo (há cobrança registrada nos Insights). **Não abra chamado por
+> isso.**
 
 > **Ressalva resolvida em 17/ago/2026 — o chamado está liberado.** A dúvida era se os dois
 > tetos vinham de uma verificação incompleta. **Não vinham:** a *Central de Segurança* mostra
