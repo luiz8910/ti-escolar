@@ -219,10 +219,14 @@ usuário admin do portfólio.
 >
 > Thank you.
 
-> **Antes de abrir:** confirme em *Configurações do Business → Central de Segurança* que a
-> verificação está mesmo **concluída**. Os dois tetos (250 mensagens e 2 números) estão
-> exatamente onde ficam num portfólio **não** verificado — se a verificação não estiver
-> completa, resolvê-la destrava os dois de uma vez, sem chamado nenhum.
+> **Ressalva resolvida em 17/ago/2026 — o chamado está liberado.** A dúvida era se os dois
+> tetos vinham de uma verificação incompleta. **Não vinham:** a *Central de Segurança* mostra
+> "Verificada originalmente em 26/jul/2026". A verificação está feita, o teto de números não
+> subiu, e é isso que o texto acima afirma — agora com data para citar. Ver §2.2.2.
+>
+> **Não peça aumento do teto de mensagens no mesmo chamado.** Ele tem outra causa (uso, não
+> papelada) e sobe sozinho; pedir só gasta o tempo de todo mundo e enfraquece o pedido que
+> importa.
 
 #### 2.2.1 Medição contra a Graph API (17/ago/2026)
 
@@ -247,28 +251,47 @@ própria confirmação de que o teto é medido no **portfólio** (§9e.3), não 
 de revisão da conta (`APPROVED`) nem de nome de exibição (`AVAILABLE_WITHOUT_REVIEW`).
 Sobra a verificação da empresa.
 
-**O que ela não conseguiu responder, e por quê.** `GET /{portfolio-id}?fields=verification_status`
+**O que ela não conseguiu responder pela API, e por quê.** `GET /{portfolio-id}?fields=verification_status`
 devolve `(#200) Requires business_management permission`. O token do usuário de sistema
 (`ti_escolar_backend`) tem só `whatsapp_business_management` e `whatsapp_business_messaging`
 — conferido em `/debug_token`. **Falta `business_management`**, que é escopo de portfólio e
-não de WhatsApp, e por isso não veio junto quando o token foi gerado em 10/ago.
+não de WhatsApp, e por isso não veio junto quando o token foi gerado em 10/ago. Vale
+acrescentá-lo (*Usuários do sistema → `ti_escolar_backend` → Gerar novo token*), porque é o
+mesmo escopo necessário para ler o tier real (§9a-sexies) e automatizar o registro de número
+(§9e.3) — mas a resposta veio pelo console, abaixo.
 
-O sinal indireto é bom (`on_behalf_of_business_info.status: APPROVED`), mas **não é prova**:
-com `type: SELF` — WABA de propriedade direta, sem parceiro de solução — esse status
-descreve a relação da conta com o portfólio, não a Business Verification.
+#### 2.2.2 A resposta (17/ago/2026): são dois limites com causas diferentes
 
-**Próximo passo:** regerar o token do usuário de sistema **acrescentando `business_management`**
-(*Configurações do Business → Usuários do sistema → `ti_escolar_backend` → Gerar novo token →
-marcar os três escopos*) e repetir a chamada. O escopo é necessário de qualquer forma para
-ler o tier real (§9a-sexies) e para automatizar o registro de número (§9e.3). Com
-`verification_status: verified` e o teto ainda em `TIER_250`, o chamado da §2.2 se justifica;
-com qualquer outro valor, é a verificação que falta e nenhum chamado resolve.
+A ressalva da §2.2 supunha que os dois tetos tinham a mesma causa. **Não têm**, e a
+*Central de Segurança* + *Limites de mensagens* mostram cada uma:
 
-```bash
-# Repita depois de regerar o token:
-curl -s "https://graph.facebook.com/v21.0/940840332344260?fields=verification_status" \
-  -H "Authorization: Bearer $TOKEN"
-```
+**A empresa ESTÁ verificada.** *Central de Segurança → Verificação da empresa*:
+"Verificação para LUIZ FERNANDO SANCHES — **Verificada** originalmente em **26/jul/2026**".
+Some, portanto, a hipótese de que a verificação não estivesse concluída ou não pertencesse a
+este portfólio.
+
+**Teto de mensagens (250 → 2.000): falta USO, não papelada.** A tela *Ferramentas da conta →
+Limites de mensagens* lista um único requisito em aberto:
+
+> ○ **Comece conversas de alta qualidade iniciadas pela empresa**
+> Você iniciou **3 conversas com clientes únicos nos últimos 7 dias**.
+
+Ou seja: o limite sobe sozinho quando o número for **usado de verdade**, com qualidade. Não
+há chamado a abrir — a própria tela diz "as atualizações podem levar até 24 horas". O
+contador é de **clientes únicos em 7 dias**, exatamente a unidade que a cota do produto
+passou a contar em §9a-sexies.
+
+> **Isto inverte a ordem de prioridade que parecia óbvia.** Disparar não é o que se faz
+> *depois* de destravar os limites; é o que **destrava**. E torna a cota correta um
+> pré-requisito, não um refinamento: passar de 250 vira falha de envio, falha derruba a
+> qualidade, e qualidade baixa **trava a subida do tier**. Errar a contagem aqui não custa
+> uma mensagem perdida — custa o desbloqueio.
+
+**Teto de números (2 → 20): aqui o chamado se justifica.** A documentação da Meta diz que o
+teto sobe para 20 **automaticamente** com a empresa verificada. A empresa está verificada
+desde 26/jul e o teto seguia em **1 de 2** em 17/ago — três semanas depois. O aumento
+documentado não aconteceu, que é exatamente a premissa do texto pronto na §2.2: agora ela é
+**verdadeira e comprovável**, e o chamado pode ser aberto citando a data da verificação.
 
 ## 3. Forma de pagamento
 
