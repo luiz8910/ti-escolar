@@ -12,7 +12,7 @@ from sqlalchemy import text
 from app.bootstrap import exigir_producao_segura
 from app.config import get_settings
 from app.infrastructure.db.session import SessionLocal
-from app.infrastructure.factories import canal_efetivo
+from app.infrastructure.factories import canal_efetivo, storage_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
 from app.interfaces.deps import get_fila_disparos, janela_de_retomada
 from app.interfaces.api import (
@@ -49,6 +49,13 @@ _MOTIVO_CANAL_DEGRADADO = (
     "MESSAGE_CHANNEL=meta sem META_ACCESS_TOKEN: a aplicação subiu no canal demo. "
     "Nenhuma mensagem chega ao WhatsApp — o inbound é atendido, cobra LLM e a resposta "
     "se perde. Configure o token do usuário do sistema (docs/producao-whatsapp.md §4)."
+)
+
+# Mesmo desenho, mesma lição: uma env que pede um adaptador e recebe outro, calada.
+_MOTIVO_STORAGE_DEGRADADO = (
+    "ARQUIVO_STORAGE=s3 sem S3_BUCKET_DOCUMENTOS: os arquivos estão indo para o `bytea` do "
+    "Postgres. Atestado e laudo de menor no banco errado, num banco cobrado por GB — e nada "
+    "acusa. Defina o bucket (docs/plano-correcoes-teste-10-08.md §0.4)."
 )
 
 _coletor = ColetorDeLogs(
@@ -93,6 +100,8 @@ async def lifespan(_: FastAPI):
         # Um deploy que pede "meta" e recebe "demo" não falha em lugar nenhum: as mensagens
         # são aceitas e descartadas em memória. Gritar no boot é a única chance de alguém ver.
         logging.getLogger("canal").error(_MOTIVO_CANAL_DEGRADADO)
+    if storage_efetivo(settings) != settings.arquivo_storage:
+        logging.getLogger("storage").error(_MOTIVO_STORAGE_DEGRADADO)
     try:
         yield
     finally:
@@ -171,10 +180,21 @@ async def health() -> dict:
     divergem o corpo diz qual foi pedido e por quê caiu.
     """
     efetivo = canal_efetivo(settings)
-    corpo = {"status": "ok", "llm": settings.llm_provider, "canal": efetivo}
+    storage = storage_efetivo(settings)
+    corpo = {
+        "status": "ok",
+        "llm": settings.llm_provider,
+        "canal": efetivo,
+        # **Efetivo, não a env** — pelo mesmo motivo do canal. Não toca o bucket: um `HEAD`
+        # por health check gera custo e ruído sem dizer nada que o boot já não tenha dito.
+        "storage": storage,
+    }
     if efetivo != settings.message_channel:
         corpo["canal_configurado"] = settings.message_channel
         corpo["canal_alerta"] = _MOTIVO_CANAL_DEGRADADO
+    if storage != settings.arquivo_storage:
+        corpo["storage_configurado"] = settings.arquivo_storage
+        corpo["storage_alerta"] = _MOTIVO_STORAGE_DEGRADADO
     return corpo
 
 

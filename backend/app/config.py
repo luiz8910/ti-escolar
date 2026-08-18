@@ -147,6 +147,21 @@ class Settings(BaseSettings):
     # maior buraco da grade (sexta 18h → segunda 7h, ~61h).
     broadcast_retomada_janela_dias: int = 7
 
+    # ---------- Armazenamento dos arquivos recebidos (§6k / Fase 0 do plano de 10/08) ----
+    # "postgres" (bytea, sem infra nova) | "s3". Trocar aqui é trocar de casa dos bytes;
+    # os metadados ficam no Postgres nos dois casos.
+    arquivo_storage: str = "postgres"
+    aws_region: str = "sa-east-1"
+    s3_bucket_documentos: str = ""
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    # CMK própria: dá auditoria por objeto no CloudTrail e permite destruir a chave para
+    # inutilizar o acervo (crypto-shredding). Vazio = SSE-S3, que já é criptografia em
+    # repouso, só que sem chave nossa.
+    s3_kms_key_id: str = ""
+    # Só para MinIO local / CI. Em produção fica vazio e o boto3 resolve o endpoint da AWS.
+    s3_endpoint_url: str = ""
+
     # Licenciamento / avisos por e-mail
     # Janela (em dias) para avisar que a licença anual está perto de vencer.
     license_warning_days: int = 30

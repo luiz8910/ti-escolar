@@ -199,9 +199,17 @@
   escola, classificado e vinculado a um aluno no painel (`web/app/admin/documentos/`).
 - [x] **Retenção e expurgo** dos arquivos (dado sensível de menor), auditoria de download e
   política de privacidade atualizada.
-- [ ] **Adaptador de object storage (Cloudflare R2)** — hoje os bytes vão para `bytea` no
-  Neon, que cobra por GB. A porta `ArquivoStorage` já existe; falta o bucket, os secrets e
-  o adaptador.
+- [~] **Adaptador de object storage** (17/ago/2026) — **S3, não R2**: na escala do produto a
+  diferença de egress é de poucos dólares, e o S3 entrega lifecycle nativo, SSE-KMS com chave
+  própria (auditoria por objeto e *crypto-shredding*) e Object Lock maduro. `S3ArquivoStorage`
+  + `criar_arquivo_storage`/`storage_efetivo` na fábrica, chave com o tenant no prefixo, e o
+  `/health` + painel §14 acusando o caso "pediu s3, caiu no Postgres".
+  **Testado contra MinIO de verdade** (compose + CI), que era exatamente o impasse que
+  mantinha este item no papel. Ver Fase 0 de `docs/plano-correcoes-teste-10-08.md`.
+  - [ ] **Falta criar o bucket** e preencher os secrets. Produção nasce vazia, então **não há
+    migração de bytes** a fazer lá; trazer os documentos do homolog é opcional (§0.5).
+  - [ ] **Varredor de órfãos** — objeto no S3 cujo metadado não commitou. Não vaza (chave
+    imprevisível, bucket fechado), mas acumula. Ver §0.3.
 - [-] **Job agendado do expurgo** — **decidido em 17/ago/2026 que NÃO entra por ora.** O caso
   de uso está pronto e a rota existe, mas nada de LGPD roda automaticamente neste projeto até
   que haja um plano de execuções definido (§17). A consequência fica escrita: a retenção

@@ -31,14 +31,22 @@ from app.infrastructure.db.models import ArquivoArmazenadoORM
 logger = logging.getLogger("storage")
 
 
-def nova_chave(prefixo: str = "doc") -> str:
-    """Chave opaca e imprevisível para um arquivo.
+def nova_chave(tenant_id, prefixo: str = "doc") -> str:
+    """Chave opaca e imprevisível para um arquivo: ``{prefixo}/{tenant}/{ano}/{mes}/{token}``.
 
     Nada de nome do responsável ou do aluno na chave: ela aparece em log e em URL, e o
     conteúdo aqui é dado sensível de menor. ``token_urlsafe`` porque um id sequencial
     permitiria varrer os arquivos das outras escolas por tentativa.
+
+    **O tenant entra no prefixo** (17/ago/2026), e o UUID dele não é dado pessoal. Dá três
+    coisas de graça no S3: *lifecycle* e inventário por escola, e a remoção de um tenant
+    (`SqlTenantRepository.remover`) vira exclusão por prefixo em vez de varredura. As chaves
+    antigas, sem tenant, continuam válidas — a leitura é por chave exata.
     """
-    return f"{prefixo}/{datetime.now(timezone.utc):%Y/%m}/{secrets.token_urlsafe(24)}"
+    return (
+        f"{prefixo}/{tenant_id}/{datetime.now(timezone.utc):%Y/%m}/"
+        f"{secrets.token_urlsafe(24)}"
+    )
 
 
 class PostgresArquivoStorage:

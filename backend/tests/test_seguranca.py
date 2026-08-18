@@ -322,3 +322,57 @@ def test_todas_as_escolas_com_conta_fica_ativa():
     postura = AvaliarPosturaSeguranca().executar(config=_config())
     medida = next(m for m in postura.medidas if m.chave == "conta_whatsapp_por_escola")
     assert medida.status is StatusMedida.ATIVA
+
+
+# --------------------------------------------------------------------------- #
+# Storage efetivo (§0.7 do plano de 10/08)
+# --------------------------------------------------------------------------- #
+def _medida(postura, chave: str):
+    return next(m for m in postura.medidas if m.chave == chave)
+
+
+def test_storage_postgres_de_proposito_nao_e_alarme():
+    """Rodar no Postgres é o default e o caminho de desenvolvimento. Acusar isso
+    transformaria o painel num alarme que ninguém mais lê."""
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(arquivo_storage="postgres", arquivo_storage_efetivo="postgres")
+    )
+    assert _medida(postura, "storage_efetivo").status is StatusMedida.ATIVA
+
+
+def test_pediu_s3_e_caiu_no_postgres_e_atencao():
+    """O caso híbrido, que é o perigoso: o upload responde sucesso, o painel mostra o
+    documento, e atestado de menor está engordando um banco cobrado por GB."""
+    medida = _medida(
+        AvaliarPosturaSeguranca().executar(
+            config=_config(arquivo_storage="s3", arquivo_storage_efetivo="postgres")
+        ),
+        "storage_efetivo",
+    )
+    assert medida.status is StatusMedida.ATENCAO
+    assert "S3_BUCKET_DOCUMENTOS" in medida.detalhe
+
+
+def test_bucket_fora_do_brasil_e_atencao():
+    """Dado de saúde de criança fora do país é transferência internacional (arts. 33-36)."""
+    medida = _medida(
+        AvaliarPosturaSeguranca().executar(
+            config=_config(
+                arquivo_storage="s3",
+                arquivo_storage_efetivo="s3",
+                aws_region="us-east-1",
+            )
+        ),
+        "storage_efetivo",
+    )
+    assert medida.status is StatusMedida.ATENCAO
+    assert "internacional" in medida.detalhe or "base legal" in medida.detalhe
+
+
+def test_s3_em_sao_paulo_esta_ativo():
+    postura = AvaliarPosturaSeguranca().executar(
+        config=_config(
+            arquivo_storage="s3", arquivo_storage_efetivo="s3", aws_region="sa-east-1"
+        )
+    )
+    assert _medida(postura, "storage_efetivo").status is StatusMedida.ATIVA

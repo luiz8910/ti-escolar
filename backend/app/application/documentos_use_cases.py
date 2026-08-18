@@ -166,7 +166,7 @@ class ReceberDocumentoDoResponsavel:
                 # Reentrega do webhook: não baixa nem grava de novo.
                 return ResultadoRecepcao(documento=existente, duplicado=True)
 
-        chave = nova_chave()
+        chave = nova_chave(tenant_id)
         await self._storage.guardar(
             chave=chave, conteudo=arquivo.conteudo, mime=arquivo.mime
         )

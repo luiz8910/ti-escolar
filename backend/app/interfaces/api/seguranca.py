@@ -21,7 +21,7 @@ from app.application.seguranca_use_cases import (
 )
 from app.config import Settings
 from app.domain.entities import Usuario
-from app.infrastructure.factories import canal_efetivo
+from app.infrastructure.factories import canal_efetivo, storage_efetivo
 from app.interfaces.api.admin import _exige_super_admin, usuario_autenticado
 from app.infrastructure.db.repositories_admin import SqlTenantRepository
 from app.interfaces.deps import get_settings_dep, get_tenant_repo
@@ -62,6 +62,10 @@ def _config_atual(
         logs_persistidos=settings.log_persistir,
         logs_retencao_dias=settings.log_retencao_dias,
         documento_retencao_dias=settings.documento_retencao_dias,
+        # O storage **pedido** e o **efetivo**: é a divergência que a medida acusa.
+        arquivo_storage=settings.arquivo_storage,
+        arquivo_storage_efetivo=storage_efetivo(settings),
+        aws_region=settings.aws_region,
         escolas_sem_conta_whatsapp=escolas_sem_conta,
     )
 

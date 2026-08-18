@@ -31,6 +31,12 @@ dev = [
 llm = [
     "anthropic>=0.39",
 ]
+# Extra próprio, e não dependência base: quem roda com ARQUIVO_STORAGE=postgres (o default,
+# e o docker-compose de desenvolvimento) não precisa carregar o botocore, que é grande.
+# A fábrica importa o adaptador só quando o storage efetivo é "s3".
+s3 = [
+    "boto3>=1.34",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

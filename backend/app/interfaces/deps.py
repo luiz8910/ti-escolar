@@ -88,6 +88,7 @@ from app.infrastructure.db.repositories_onda3 import (
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import (
+    criar_arquivo_storage,
     criar_leitor_documento,
     criar_canal,
     criar_catalogo_templates,
@@ -99,7 +100,6 @@ from app.infrastructure.factories import (
 from app.infrastructure.atendimento import SqlRegistroAtendimento
 from app.infrastructure.retomada import RetomadorDeDisparos
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
-from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.rate_limit import SqlControleTaxa
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
@@ -140,7 +140,7 @@ def get_recepcao_documentos(
     """Persistência de um arquivo recebido: metadados no Postgres, bytes no storage."""
     return ReceberDocumentoDoResponsavel(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         contatos=SqlContatoRepository(session),
         # Anti-spam (§4.5): número bloqueado não manda arquivo; origem desconhecida vai
         # para quarentena.
@@ -170,7 +170,7 @@ def get_receber_impressao(
     solicitacoes = SqlSolicitacaoImpressaoRepository(session)
     return ReceberImpressaoDoProfessor(
         fonte=criar_fonte_midia(settings),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         solicitacoes=solicitacoes,
         saldo=ConsultarSaldoImpressao(
             solicitacoes=solicitacoes, cotas=SqlCotaImpressaoRepository(session)
@@ -192,7 +192,7 @@ def get_ler_documento_ia(
     """Leitura de documento por IA (§4.3) — sob demanda, nunca em todo upload."""
     return LerDocumentoPorIA(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         leitor=criar_leitor_documento(settings),
     )
 
@@ -205,19 +205,21 @@ def get_documento_repo(
 
 def get_baixar_documento(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
 ) -> BaixarDocumentoRecebido:
     return BaixarDocumentoRecebido(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
     )
 
 
 def get_expurgar_documentos(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
 ) -> ExpurgarDocumentosVencidos:
     return ExpurgarDocumentosVencidos(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
     )
 
 

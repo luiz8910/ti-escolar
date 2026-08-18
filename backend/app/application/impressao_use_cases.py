@@ -521,7 +521,7 @@ class ReceberImpressaoDoProfessor:
             )
 
         parametros = interpretar_legenda(legenda)
-        chave = nova_chave()
+        chave = nova_chave(tenant_id)
         await self._storage.guardar(
             chave=chave, conteudo=arquivo.conteudo, mime=arquivo.mime
         )
