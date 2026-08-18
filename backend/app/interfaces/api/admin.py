@@ -52,6 +52,7 @@ from app.domain.entities import (
     Papel,
     ParametroTemplate,
     PlanoTenant,
+    StatusBroadcast,
     Tenant,
     Turno,
     Usuario,
@@ -70,12 +71,14 @@ from app.infrastructure.db.repositories_admin import (
     SqlUsuarioRepository,
 )
 from app.interfaces.api.rate_limit import limitar_login
+from app.infrastructure.retomada import RetomadorDeDisparos
 from app.interfaces.deps import (
     get_audit_repo,
     get_broadcast_repo,
     get_contato_repo,
     get_conversa_repo,
     get_enviar_para_grupo,
+    get_fila_disparos,
     get_retomar_broadcasts,
     get_grupo_repo,
     get_notificar_licencas,
@@ -511,6 +514,7 @@ async def enviar_para_grupo(
     uc: EnviarBroadcastParaGrupo = Depends(get_enviar_para_grupo),
     tenants: SqlTenantRepository = Depends(get_tenant_repo),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+    fila: RetomadorDeDisparos = Depends(get_fila_disparos),
 ) -> EnvioGrupoSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
     await _exige_tenant_ativo(payload.tenant_id, tenants)
@@ -526,6 +530,10 @@ async def enviar_para_grupo(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
     b = resultado.broadcast
+    if b.status is StatusBroadcast.PARCIAL_LIMITE:
+        # Ficou gente na fila (cota ou falha transitória): drena assim que houver
+        # capacidade, sem esperar o próximo horário da grade.
+        fila.cutucar()
     await _auditar_usuario(
         auditoria,
         usuario=usuario,

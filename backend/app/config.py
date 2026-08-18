@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import time
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -132,9 +133,18 @@ class Settings(BaseSettings):
     # destinatários únicos por 24h, então uma escola grande não cabe num dia — e sem esta
     # tarefa "espera a próxima janela" significa alguém lembrar de re-disparar à mão.
     broadcast_retomada_habilitada: bool = True
-    broadcast_retomada_intervalo_segundos: int = 1800
+    # **Grade, não intervalo.** Até 17/ago/2026 era um intervalo fixo de 1800s: 48 passadas
+    # por dia, todos os dias, cada uma abrindo sessão no banco mesmo sem nada a fazer. Isso
+    # mantinha o Postgres serverless acordado 24/7 (custo) e podia disparar aviso escolar de
+    # madrugada, quando a cota liberasse (pior). Ver `JanelaDeExecucao`.
+    broadcast_retomada_passadas: int = 3
+    broadcast_retomada_inicio: time = time(7, 0)
+    broadcast_retomada_fim: time = time(18, 0)
+    broadcast_retomada_dias: str = "1,2,3,4,5"  # ISO: 1 = segunda … 7 = domingo
+    broadcast_retomada_timezone: str = "America/Sao_Paulo"
     # Prazo de validade do disparo, não otimização: aviso de três semanas atrás entregue
-    # hoje é pior que não entregue — a reunião já passou.
+    # hoje é pior que não entregue — a reunião já passou. Sete dias cobrem com folga o
+    # maior buraco da grade (sexta 18h → segunda 7h, ~61h).
     broadcast_retomada_janela_dias: int = 7
 
     # Licenciamento / avisos por e-mail

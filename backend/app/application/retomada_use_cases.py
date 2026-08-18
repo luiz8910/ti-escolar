@@ -62,9 +62,14 @@ class RetomarBroadcastsPendentes:
             return ResultadoRetomada(0, 0, 0, 0)
 
         retomados = enviados = falhas = bloqueados = 0
-        # Escolas cuja cota acabou nesta passada. A cota é **por escola**, então parar a
-        # fila inteira faria uma escola grande travar o aviso das outras — mas insistir na
-        # mesma depois de ela estourar é percorrer destinatários só para contar zeros.
+        # Escolas cuja cota acabou nesta passada; insistir na mesma depois de ela estourar
+        # é percorrer destinatários só para contar zeros.
+        #
+        # A fila **não** para por inteiro no primeiro esgotamento, e isso continua certo
+        # mesmo agora que o teto é do portfólio (§9e.3): escolas em portfólios diferentes
+        # têm tetos independentes, então parar tudo calaria quem ainda tinha capacidade.
+        # Quando estão no mesmo portfólio, o broadcast seguinte encontra zero e sai
+        # bloqueado na primeira volta — o custo é um laço curto, não um envio errado.
         sem_cota: set = set()
         for broadcast in pendentes:
             if broadcast.tenant_id in sem_cota:

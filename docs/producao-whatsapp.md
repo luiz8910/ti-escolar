@@ -180,49 +180,144 @@ Meta diz textualmente que não é preciso contatar suporte; pedir aumento dele s
 tempo de todo mundo. O de **números por portfólio** é o que trava o onboarding: em
 14/ago/2026 estava em **1 de 2**, ou seja, cabe mais **uma** escola.
 
-Ele deveria subir para 20 automaticamente com a empresa verificada. Se a verificação está
-aprovada e o teto não subiu depois de alguns dias, aí o chamado se justifica.
+Ele deveria subir para 20 automaticamente com a empresa verificada. **A verificação saiu em
+26/jul/2026 e o teto seguia em 1 de 2 em 17/ago** — três semanas depois. O aumento
+documentado não aconteceu, então o chamado está justificado (§2.2.2).
 
-**Onde:** [Suporte Direto da Meta Business](https://business.facebook.com/business/help/support)
-→ *WhatsApp Business Platform* → *Account & Phone Numbers*. Exige estar logado com um
-usuário admin do portfólio.
+**Onde abrir**, na ordem em que se deve tentar:
 
-**Dados a ter à mão:**
+1. **[Suporte Direto da Meta Business](https://business.facebook.com/business/help/support)**
+   → *WhatsApp Business Platform* → *Account & Phone Numbers* → *Contact Support*. Exige
+   estar logado com um usuário **admin do portfólio** (hoje, o único admin é você — a
+   Central de Segurança avisa isso).
+2. Se a categoria não aparecer, entre pelo
+   **[Gerenciador do WhatsApp](https://business.facebook.com/wa/manage/home/?business_id=940840332344260)**
+   → ícone **?** (canto inferior esquerdo) → *Ajuda* → *Falar com um especialista*. É o mesmo
+   fluxo, com o portfólio já preenchido.
+
+**Dados a ter à mão** (todos conferidos contra a Graph API em 17/ago/2026):
 
 | Campo | Valor |
 |---|---|
-| Business portfolio ID | `940840332344260` |
+| Business portfolio ID | `940840332344260` (TiEscolar) |
+| Business Verification | **Verificada em 26/jul/2026** |
 | WABA ID | `2116419572321695` |
+| `account_review_status` | `APPROVED` |
 | Número atual | `+55 15 99753-6978` (`phone_number_id` `1231892910008454`) |
-| Qualidade / status | `GREEN` · `CONNECTED` · WABA `account_review_status: APPROVED` |
+| Qualidade / nome | `GREEN` · `AVAILABLE_WITHOUT_REVIEW` |
+| Teto de números | **1 de 2** |
+| Tier de mensagens | `TIER_250` (**não citar no chamado** — outra causa, §2.2.2) |
 
-**Texto sugerido** (em inglês; o suporte responde mais rápido):
+**Texto pronto** (em inglês; o suporte responde mais rápido):
 
-> **Subject:** Request to increase phone number limit for verified business portfolio
+> **Subject:** Verified business portfolio still capped at 2 phone numbers
 >
 > Hello,
 >
-> Our business portfolio (ID `940840332344260`) has completed Business Verification, but
-> our phone number limit is still 2 (currently 1 of 2 used). According to the
-> documentation, a verified business should have this limit raised to 20.
+> Our business portfolio **TiEscolar** (ID `940840332344260`) completed Business
+> Verification on **July 26, 2026**, but our registered phone number limit is still **2**
+> (currently 1 of 2 used), three weeks later. Per the documentation, a verified business
+> portfolio should have this limit automatically raised to 20, and that increase has not
+> happened.
 >
 > We operate a school-communication platform in Brazil. Each school we onboard uses its own
-> dedicated phone number registered under our WABA (ID `2116419572321695`), so the number
-> limit is what caps how many customers we can serve — we can currently onboard only one
-> more school.
+> dedicated phone number under our WABA (ID `2116419572321695`), so this cap is what limits
+> how many schools we can serve — we can currently onboard only one more.
 >
-> Our current number (`+55 15 99753-6978`, ID `1231892910008454`) has a GREEN quality
-> rating and CONNECTED status, and the WABA account review status is APPROVED.
+> Our existing number (`+55 15 99753-6978`, ID `1231892910008454`) has a **GREEN** quality
+> rating, its display name is approved (`AVAILABLE_WITHOUT_REVIEW`), and the WABA
+> `account_review_status` is **APPROVED**.
 >
-> Could you please raise the registered phone number limit for this portfolio? Happy to
+> Could you please apply the phone number limit increase for this portfolio? Happy to
 > provide any additional documentation.
 >
 > Thank you.
 
-> **Antes de abrir:** confirme em *Configurações do Business → Central de Segurança* que a
-> verificação está mesmo **concluída**. Os dois tetos (250 mensagens e 2 números) estão
-> exatamente onde ficam num portfólio **não** verificado — se a verificação não estiver
-> completa, resolvê-la destrava os dois de uma vez, sem chamado nenhum.
+> **Não peça o teto de mensagens junto.** Ele tem outra causa — falta uso, não papelada — e
+> sobe sozinho (§2.2.2). Misturar os dois pedidos transforma um caso simples e comprovável
+> num caso confuso, e é o simples que se quer aprovado rápido.
+
+> **E não confunda com *Configurações de pagamento → Índia*** no Gerenciador do WhatsApp.
+> Aquilo é **WhatsApp Pay** (o cliente *pagar você* por mensagem de detalhes do pedido),
+> disponível só onde o produto existe — no Brasil o pagamento direto por cartão a empresas
+> foi encerrado em jan/2026, daí a tela inerte com "Nova configuração" desabilitado. Não tem
+> relação com pagar a Meta pelo envio, que fica em *Configurações do Business → Cobrança e
+> pagamentos* e já está ativo (há cobrança registrada nos Insights). **Não abra chamado por
+> isso.**
+
+> **Ressalva resolvida em 17/ago/2026 — o chamado está liberado.** A dúvida era se os dois
+> tetos vinham de uma verificação incompleta. **Não vinham:** a *Central de Segurança* mostra
+> "Verificada originalmente em 26/jul/2026". A verificação está feita, o teto de números não
+> subiu, e é isso que o texto acima afirma — agora com data para citar. Ver §2.2.2.
+>
+> **Não peça aumento do teto de mensagens no mesmo chamado.** Ele tem outra causa (uso, não
+> papelada) e sobe sozinho; pedir só gasta o tempo de todo mundo e enfraquece o pedido que
+> importa.
+
+#### 2.2.1 Medição contra a Graph API (17/ago/2026)
+
+Feita para responder à ressalva acima sem depender do que o console mostra. O console exibe
+estado derivado e às vezes velho; a API responde o que vale.
+
+| Campo | Valor medido |
+|---|---|
+| `whatsapp_business_manager_messaging_limit` (número) | **`TIER_250`** |
+| `quality_rating` | `GREEN` |
+| `name_status` | `AVAILABLE_WITHOUT_REVIEW` (nome de exibição resolvido) |
+| `account_review_status` (WABA) | `APPROVED` |
+| `on_behalf_of_business_info` | `{name: TiEscolar, id: 940840332344260, status: APPROVED, type: SELF}` |
+| Números na WABA | **1** (`+55 15 99753-6978`) |
+| `verification_status` (portfólio) | **não foi possível ler** — ver abaixo |
+
+**O campo `messaging_limit_tier` foi depreciado**; quem o pedir recebe erro ou nada. O nome
+atual é `whatsapp_business_manager_messaging_limit`, e o "business_manager" no nome é a
+própria confirmação de que o teto é medido no **portfólio** (§9e.3), não no número.
+
+**O que a medição descarta.** O teto não é penalidade de qualidade (`GREEN`) nem pendência
+de revisão da conta (`APPROVED`) nem de nome de exibição (`AVAILABLE_WITHOUT_REVIEW`).
+Sobra a verificação da empresa.
+
+**O que ela não conseguiu responder pela API, e por quê.** `GET /{portfolio-id}?fields=verification_status`
+devolve `(#200) Requires business_management permission`. O token do usuário de sistema
+(`ti_escolar_backend`) tem só `whatsapp_business_management` e `whatsapp_business_messaging`
+— conferido em `/debug_token`. **Falta `business_management`**, que é escopo de portfólio e
+não de WhatsApp, e por isso não veio junto quando o token foi gerado em 10/ago. Vale
+acrescentá-lo (*Usuários do sistema → `ti_escolar_backend` → Gerar novo token*), porque é o
+mesmo escopo necessário para ler o tier real (§9a-sexies) e automatizar o registro de número
+(§9e.3) — mas a resposta veio pelo console, abaixo.
+
+#### 2.2.2 A resposta (17/ago/2026): são dois limites com causas diferentes
+
+A ressalva da §2.2 supunha que os dois tetos tinham a mesma causa. **Não têm**, e a
+*Central de Segurança* + *Limites de mensagens* mostram cada uma:
+
+**A empresa ESTÁ verificada.** *Central de Segurança → Verificação da empresa*:
+"Verificação para LUIZ FERNANDO SANCHES — **Verificada** originalmente em **26/jul/2026**".
+Some, portanto, a hipótese de que a verificação não estivesse concluída ou não pertencesse a
+este portfólio.
+
+**Teto de mensagens (250 → 2.000): falta USO, não papelada.** A tela *Ferramentas da conta →
+Limites de mensagens* lista um único requisito em aberto:
+
+> ○ **Comece conversas de alta qualidade iniciadas pela empresa**
+> Você iniciou **3 conversas com clientes únicos nos últimos 7 dias**.
+
+Ou seja: o limite sobe sozinho quando o número for **usado de verdade**, com qualidade. Não
+há chamado a abrir — a própria tela diz "as atualizações podem levar até 24 horas". O
+contador é de **clientes únicos em 7 dias**, exatamente a unidade que a cota do produto
+passou a contar em §9a-sexies.
+
+> **Isto inverte a ordem de prioridade que parecia óbvia.** Disparar não é o que se faz
+> *depois* de destravar os limites; é o que **destrava**. E torna a cota correta um
+> pré-requisito, não um refinamento: passar de 250 vira falha de envio, falha derruba a
+> qualidade, e qualidade baixa **trava a subida do tier**. Errar a contagem aqui não custa
+> uma mensagem perdida — custa o desbloqueio.
+
+**Teto de números (2 → 20): aqui o chamado se justifica.** A documentação da Meta diz que o
+teto sobe para 20 **automaticamente** com a empresa verificada. A empresa está verificada
+desde 26/jul e o teto seguia em **1 de 2** em 17/ago — três semanas depois. O aumento
+documentado não aconteceu, que é exatamente a premissa do texto pronto na §2.2: agora ela é
+**verdadeira e comprovável**, e o chamado pode ser aberto citando a data da verificação.
 
 ## 3. Forma de pagamento
 

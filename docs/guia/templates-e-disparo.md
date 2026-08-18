@@ -121,9 +121,12 @@ para o disparo funcionar como vendido.
   semanas atrás entregue hoje é **pior** que aviso não entregue: a reunião já passou e o
   responsável recebe da escola uma mensagem sem sentido. Vencido o prazo, o disparo é
   abandonado onde está — o histórico segue mostrando quem recebeu e quem não.
-- **A cota é por escola, então a fila não para por inteiro.** Uma escola que estoure a cota
-  entra num conjunto de "sem cota" e é pulada no resto da passada; as outras continuam. Parar
-  tudo faria uma escola grande calar o aviso das demais.
+- **A fila não para por inteiro quando uma escola estoura.** Ela entra num conjunto de "sem
+  cota" e é pulada no resto da passada; as outras continuam. O motivo mudou em 17/ago/2026:
+  já não é "cada escola tem a sua cota" (não tem — ver §9a-sexies), e sim que **escolas em
+  portfólios diferentes têm tetos independentes**. No mesmo portfólio, o broadcast seguinte
+  encontra zero e sai bloqueado na primeira volta: o custo é um laço curto, nunca um envio
+  errado.
 - **Tarefa de fundo com advisory lock** (`app/infrastructure/retomada.py`), no mesmo desenho
   do gravador de logs — o projeto não tem scheduler e subir um só por isto seria caro. Com
   mais de uma réplica no Render, dois processos acordariam juntos e enviariam **duas vezes
@@ -132,8 +135,114 @@ para o disparo funcionar como vendido.
   quem não pega volta a dormir (`try`, e não `pg_advisory_lock`, porque esperar na trava só
   empilharia réplicas para fazer o mesmo trabalho). Verificado entre sessões distintas: a
   segunda recebe `False`.
+- **A tarefa segue uma grade, não um intervalo** (`JanelaDeExecucao`, 17/ago/2026):
+  **3 passadas entre 7h e 18h, de segunda a sexta** — 7h, 12h30 e 18h no fuso da escola.
+  O intervalo fixo de 30 min tinha dois defeitos que só se enxergam juntos:
+  - **Podia falar com o pai de madrugada.** A cota libera em janela corrida (§9a-sexies), e
+    no dia em que ela virasse às 3h a tarefa mandaria o aviso escolar às 3h. A hora da
+    mensagem é parte da mensagem.
+  - **Mantinha o banco acordado 24/7.** Eram 48 passadas por dia, todos os dias, cada uma
+    abrindo sessão mesmo sem nada a fazer. Com o Postgres serverless (Neon) isso é ~4h/dia
+    de piso de compute que existiam só para descobrir que não havia trabalho. Três passadas
+    em dias úteis derrubam esse piso em mais de 90%.
+
+  A espera é **fatiada em blocos de 15 min que só olham o relógio** — reavaliar é aritmética
+  em memória e não toca no banco, o que protege contra deriva de relógio sem transformar a
+  espera em polling. E a tarefa continua **não rodando no boot**: um deploy às 12h31 pula o
+  slot das 12h30, o que é seguro porque o prazo de validade é de 7 dias e o maior buraco da
+  grade (sexta 18h → segunda 7h) é de ~61h. As chaves vivem no `.env.example`; o boot loga a
+  grade **efetiva**, porque "3 passadas entre 7h e 18h" não diz que a do meio é 12h30.
 - **Rota manual** `POST /api/admin/broadcasts/retomar` (super admin) para não depender só do
-  ciclo — roda na hora em que a cota virar.
+  ciclo — roda na hora em que a cota virar, inclusive fora da grade.
+
+### 9a-sexies. A cota é uma janela de 24h corridas, medida no portfólio
+
+Escrito em 17/ago/2026, depois de conferir a documentação da Meta. O contador anterior
+(`message_quotas`, uma linha por tenant/dia) errava nos **três** eixos ao mesmo tempo, e
+cada erro puxava o resultado para um lado diferente:
+
+1. **Contava dia de calendário.** A Meta conta as conversas iniciadas nas **últimas 24
+   horas** e devolve capacidade continuamente, à medida que cada envio completa o prazo.
+   **Não existe reset à meia-noite** — quem esperasse por ele esperaria pela hora errada.
+2. **Contava em UTC.** O "dia" virava às **21h de Brasília**, no meio do expediente: dois
+   disparos às 20h e às 22h caíam em cotas diferentes sem que nada tivesse mudado.
+3. **Contava por escola.** O teto é do **portfólio** (Meta Business Account), compartilhado
+   por todos os números desde out/2025 (§9e.3). Com cinco escolas de teste, o sistema
+   acreditava ter 1250 de capacidade e a Graph API recusava a 251ª — **depois** de o painel
+   ter dito que o disparo saiu.
+
+O contador virou um **livro de envios** (`envios_iniciados`, migration `0044`): uma linha
+por conversa iniciada, com portfólio, contato e instante. Um agregado não servia porque
+perde o instante, e sem instante não há janela corrida nem como dizer quando a vaga volta.
+
+- **A unidade é cliente único, não mensagem.** `COUNT(DISTINCT contato)` na janela: um
+  responsável com dois filhos aparece duas vezes na lista da turma e consome **uma** vaga.
+  Contando por mensagem, escola com muitos irmãos batia no teto antes da hora.
+- **A tabela não é derivável de `destinatarios_broadcast`**, e essa é a razão de existir:
+  aquela só conhece broadcast, e a **retomada de atendimento** fora das 24h também inicia
+  conversa e também consome teto — antes disso, em silêncio. Além disso o `atualizado_em`
+  de lá é remexido pelo webhook de status dias depois, o que faria um `delivered` atrasado
+  reescrever a hora do envio.
+- **A cota é lida uma vez por lote** e descontada em memória, com um conjunto de contatos já
+  contados. Reler a cada destinatário custaria um agregado por envio (250 num disparo
+  grande) para confirmar o que já se sabe.
+- **`proxima_liberacao`** (envio mais antigo da janela + 24h) substituiu o campo `dia` na
+  API e no painel: a barra de cota agora diz *quando a próxima vaga volta*, em vez de uma
+  data que prometia uma virada inexistente.
+- **Falta ainda** ler o tier real da Meta
+  (`whatsapp_business_manager_messaging_limit` na Graph API — o `messaging_limit_tier` foi
+  depreciado) em vez de confiar no `META_DAILY_TIER_LIMIT` cravado em 250.
+
+### 9a-septies. A fila: reenvio, agendamento e o cutucão
+
+Escrito em 17/ago/2026. A "fila" não é broker nem Redis — **é a tabela de destinatários que
+já existia**, drenada pela tarefa de fundo. Subir um Celery para isto seria pagar operação
+de sobra por uma consulta.
+
+**Falha transitória volta para a fila; definitiva não.** Antes, qualquer exceção no envio
+marcava `FALHOU` e o assunto morria ali — o que trata igual duas coisas opostas:
+
+- **Transitória** (timeout, queda de conexão, **5xx**, **429**): a mensagem não saiu por
+  algo que passa. Desistir na primeira perde o aviso por nada, e a escola **acredita** tê-lo
+  mandado. O destinatário volta a `PENDENTE` com `tentativas + 1` (migration `0045`) e a
+  passada seguinte tenta de novo.
+- **Definitiva** (4xx: template inexistente na conta, número inválido, parâmetros a mais):
+  repetir dá exatamente o mesmo erro, gasta cota e **queima a qualidade do número** — que é
+  o que trava a subida do tier (`docs/producao-whatsapp.md` §2.2.2). Vai direto a `FALHOU`,
+  sem contar tentativa.
+
+A distinção vive na exceção `EnvioRecusado`, que ficou no **domínio** (`ports.py`) e não no
+adaptador: quem decide o que fazer com a falha é o caso de uso, e ele não pode importar
+infraestrutura para saber de que tipo ela foi.
+
+**Não há `sleep` de backoff dentro do lote.** O espaçamento entre tentativas é a própria
+passada seguinte. Dormir ali seguraria os outros 249 destinatários por causa de um número
+instável — e, com o disparo ainda dentro do request HTTP, seguraria a requisição junto.
+`max_tentativas` (3) é obrigatório: sem teto, um número que dá timeout para sempre voltaria
+à fila em toda passada, pelos 7 dias da janela, tomando a vaga de quem ainda podia receber.
+
+**`reenfileirados` é contado à parte de `falhas`** — um é "não deu certo agora", o outro é
+"não vai dar". A tela que os somasse assustaria a secretaria com um número que ainda vai
+diminuir sozinho.
+
+**`AGENDADO` deixou de ser funcionalidade morta.** `use_cases.py` gravava o status quando
+havia `agendado_para`, mas `listar_retomaveis` só recolhia `PARCIAL_LIMITE` — nenhum código
+voltava para executá-lo, e a tela prometia um agendamento que nunca acontecia. Agora a
+consulta recolhe também os `AGENDADO` com hora vencida.
+
+**O cutucão** (`RetomadorDeDisparos.cutucar()`). A grade de 3× ao dia existe para o que a
+**máquina** decide reenviar; segurar até 12h30 um aviso que a secretaria acabou de mandar às
+8h seria usar a proteção contra o usuário dela. As rotas de disparo chamam `cutucar()` depois
+de gravar, e a tarefa acorda na hora.
+
+- É um `asyncio.Event` em memória, **não polling**: custa zero consulta enquanto ninguém
+  dispara — que é o ponto inteiro da grade (§9a-quinquies).
+- O preço é rota e tarefa estarem no **mesmo processo**, o que o `fly.toml` garante fixando
+  uma máquina só. Com duas réplicas, o disparo feito na réplica B espera a grade: atraso,
+  nunca envio perdido, e o `pg_try_advisory_lock` segue impedindo que as duas peguem o mesmo
+  broadcast.
+- Por isso a instância vive em `interfaces/deps.py` e não no `main`: as **rotas** precisam
+  alcançá-la, e importar o `main` de dentro de uma rota fecharia um ciclo.
 
 ### 9a-quater. O motivo da falha de envio (`DestinatarioBroadcast.erro`)
 

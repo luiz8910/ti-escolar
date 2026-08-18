@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from app.domain.ports import EnvioRecusado
 from app.domain.entities import (
     Aluno,
     NumeroBloqueado,
@@ -301,12 +302,24 @@ class FakeDocumentSource:
 
 
 class FakeChannel:
-    def __init__(self, *, falhar_em: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        falhar_em: set[str] | None = None,
+        transitorio_em: set[str] | None = None,
+        curar_apos: int | None = None,
+    ) -> None:
         self.enviados: list[tuple[str, str]] = []
         # Os parâmetros de cada envio por template, na ordem — é o que a Meta valida
         # contra o corpo aprovado, e o que o disparo a grupo montava errado.
         self.parametros_enviados: list[list[str]] = []
         self._falhar_em = falhar_em or set()
+        # Falha TRANSITÓRIA (timeout, 5xx): o caso de uso deve reenfileirar, não desistir.
+        self._transitorio_em = transitorio_em or set()
+        # Depois de N tentativas o número volta a funcionar — é o cenário que justifica
+        # reenviar: a indisponibilidade passou.
+        self._curar_apos = curar_apos
+        self.tentativas_por_contato: dict[str, int] = {}
 
     async def enviar_texto(self, *, contato, texto, remetente=None) -> str:
         self.remetente = remetente
@@ -314,8 +327,13 @@ class FakeChannel:
         return "x"
 
     async def enviar_template(self, *, contato, template, parametros, remetente=None) -> str:
+        if contato in self._transitorio_em:
+            vezes = self.tentativas_por_contato.get(contato, 0) + 1
+            self.tentativas_por_contato[contato] = vezes
+            if self._curar_apos is None or vezes <= self._curar_apos:
+                raise EnvioRecusado("indisponível, tente de novo", transitorio=True)
         if contato in self._falhar_em:
-            raise RuntimeError("falha simulada")
+            raise EnvioRecusado("template inexistente na conta", transitorio=False)
         self.remetente = remetente
         self.enviados.append((contato, "template"))
         self.parametros_enviados.append(list(parametros))
@@ -327,26 +345,39 @@ class FakeChannel:
 
 
 class FakeQuota:
-    def __init__(self, *, limite_diario: int) -> None:
-        self._quotas: dict[uuid.UUID, MessageQuota] = {}
+    """Espelha a contagem real: janela de 24h corridas, por **contato distinto**.
+
+    O teto é compartilhado por todos os tenants — é o que a Meta faz no portfólio, e é
+    justamente o comportamento que o fake anterior (um contador por tenant) escondia.
+    """
+
+    def __init__(self, *, limite_diario: int, portfolios: dict | None = None) -> None:
         self._limite = limite_diario
+        # Portfólio de cada escola. Ausente = ``""``, que é o balde de quem ainda não tem
+        # conta do WhatsApp — por padrão todas caem nele e **dividem o teto**, que é o
+        # comportamento real da Meta desde out/2025.
+        self._portfolios = portfolios or {}
+        # (portfólio, contato, instante) de cada conversa iniciada.
+        self.envios: list[tuple[str, str, datetime]] = []
 
-    def _q(self, tenant_id) -> MessageQuota:
-        if tenant_id not in self._quotas:
-            self._quotas[tenant_id] = MessageQuota(
-                tenant_id=tenant_id,
-                limite_diario=self._limite,
-                dia=datetime.now(timezone.utc).date().isoformat(),
-            )
-        return self._quotas[tenant_id]
+    def _pf(self, tenant_id) -> str:
+        return self._portfolios.get(tenant_id, "")
 
-    async def cota_do_dia(self, tenant_id) -> MessageQuota:
-        return self._q(tenant_id)
+    async def cota(self, tenant_id) -> MessageQuota:
+        pf = self._pf(tenant_id)
+        corte = datetime.now(timezone.utc) - timedelta(hours=24)
+        na_janela = [(c, q) for p, c, q in self.envios if p == pf and q > corte]
+        return MessageQuota(
+            tenant_id=tenant_id,
+            limite_diario=self._limite,
+            enviados=len({c for c, _ in na_janela}),
+            proxima_liberacao=(
+                min(q for _, q in na_janela) + timedelta(hours=24) if na_janela else None
+            ),
+        )
 
-    async def consumir(self, tenant_id, quantidade) -> MessageQuota:
-        q = self._q(tenant_id)
-        q.enviados += quantidade
-        return q
+    async def registrar_envio(self, tenant_id, contato: str) -> None:
+        self.envios.append((self._pf(tenant_id), contato, datetime.now(timezone.utc)))
 
 
 class FakeRateLimiter:

@@ -40,6 +40,7 @@ from app.application.use_cases import (
     RecuperarEEnviarDocumento,
 )
 from app.config import Settings, get_settings
+from app.domain.entities import JanelaDeExecucao
 from app.domain.ports import CatalogoTemplates, LLMProvider, MessageChannel
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
@@ -96,6 +97,7 @@ from app.infrastructure.factories import (
     criar_llm,
 )
 from app.infrastructure.atendimento import SqlRegistroAtendimento
+from app.infrastructure.retomada import RetomadorDeDisparos
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
 from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.rate_limit import SqlControleTaxa
@@ -460,6 +462,32 @@ def _montar_enviar_broadcast(
     )
 
 
+def janela_de_retomada(settings: Settings) -> JanelaDeExecucao:
+    """Traduz as envs da grade para o value object, tolerando o que vier mal escrito.
+
+    Um `BROADCAST_RETOMADA_DIAS` com lixo no meio (`"1,2,x"`) não pode derrubar o processo
+    nem, pior, desligar a retomada em silêncio: o que sobra de válido vale, e se não sobrar
+    nada volta o padrão de segunda a sexta. O mesmo raciocínio do fuso inválido em
+    `JanelaDeExecucao._zona` — a tarefa continua rodando na configuração mais próxima.
+    """
+    dias = tuple(
+        sorted(
+            {
+                int(p)
+                for p in (settings.broadcast_retomada_dias or "").split(",")
+                if p.strip().isdigit() and 1 <= int(p) <= 7
+            }
+        )
+    )
+    return JanelaDeExecucao(
+        dias=dias or (1, 2, 3, 4, 5),
+        inicio=settings.broadcast_retomada_inicio,
+        fim=settings.broadcast_retomada_fim,
+        passadas=settings.broadcast_retomada_passadas,
+        timezone=settings.broadcast_retomada_timezone,
+    )
+
+
 def montar_retomada(
     session: AsyncSession, settings: Settings
 ) -> RetomarBroadcastsPendentes:
@@ -598,6 +626,7 @@ def get_responder_atendimento(
         tenants=SqlTenantRepository(session),
         templates=SqlTemplateRepository(session),
         template_retomada=settings.template_retomada_atendimento,
+        quota=SqlQuotaPolicy(session, limite_diario=settings.meta_daily_tier_limit),
     )
 
 
@@ -632,3 +661,24 @@ def get_matricula_repo(
     session: AsyncSession = Depends(get_session),
 ) -> SqlSolicitacaoMatriculaRepository:
     return SqlSolicitacaoMatriculaRepository(session)
+
+
+# --------------------------------------------------------------------------- #
+# Fila de disparos (tarefa de fundo)
+# --------------------------------------------------------------------------- #
+# Mora aqui, e não no `main`, porque as **rotas** precisam cutucá-la depois de gravar um
+# broadcast — e importar o `main` de dentro de uma rota fecharia um ciclo, já que é ele
+# quem monta os routers. O `main` a importa daqui para subir e descer no `lifespan`.
+#
+# Fica no fim do módulo de propósito: `janela_de_retomada` é chamada na hora da definição,
+# então precisa já existir. (O `montar` é lambda e poderia estar em qualquer lugar.)
+_fila_disparos = RetomadorDeDisparos(
+    SessionLocal,
+    montar=lambda sessao: montar_retomada(sessao, get_settings()),
+    janela=janela_de_retomada(get_settings()),
+)
+
+
+def get_fila_disparos() -> RetomadorDeDisparos:
+    """A fila viva do processo. Use `.cutucar()` para drenar sem esperar a grade."""
+    return _fila_disparos

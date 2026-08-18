@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -510,6 +510,7 @@ class SqlBroadcastRepository:
                     mensagem_id_externo=dest.mensagem_id_externo,
                     atualizado_em=dest.atualizado_em,
                     erro=dest.erro,
+                    tentativas=dest.tentativas,
                 )
             )
         await self._s.flush()
@@ -529,6 +530,7 @@ class SqlBroadcastRepository:
                 mensagem_id_externo=d.mensagem_id_externo or "",
                 atualizado_em=d.atualizado_em,
                 erro=d.erro or "",
+                tentativas=d.tentativas or 0,
             )
             for d in row.destinatarios
         ]
@@ -582,10 +584,21 @@ class SqlBroadcastRepository:
         return [self._to_broadcast(r) for r in rows]
 
     async def listar_retomaveis(self, *, desde: datetime) -> list[Broadcast]:
+        agora = datetime.now(timezone.utc)
         stmt = (
             select(BroadcastORM)
             .where(
-                BroadcastORM.status == StatusBroadcast.PARCIAL_LIMITE.value,
+                or_(
+                    BroadcastORM.status == StatusBroadcast.PARCIAL_LIMITE.value,
+                    # **AGENDADO vencido.** Era funcionalidade morta: o disparo com
+                    # `agendado_para` ganhava esse status e nenhum código voltava para
+                    # executá-lo — a tela prometia um agendamento que nunca acontecia.
+                    and_(
+                        BroadcastORM.status == StatusBroadcast.AGENDADO.value,
+                        BroadcastORM.agendado_para.is_not(None),
+                        BroadcastORM.agendado_para <= agora,
+                    ),
+                ),
                 BroadcastORM.criado_em >= desde,
             )
             .options(selectinload(BroadcastORM.destinatarios))

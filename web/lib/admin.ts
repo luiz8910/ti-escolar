@@ -75,10 +75,11 @@ export interface Grupo {
 
 export interface Quota {
   tenant_id: string;
-  dia: string;
   limite_diario: number;
   enviados: number;
   restante: number;
+  /** Quando a primeira vaga volta (ISO). `null` = nada na janela, cota inteira. */
+  proxima_liberacao: string | null;
 }
 
 export interface Licenca {

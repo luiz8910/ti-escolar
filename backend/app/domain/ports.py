@@ -135,6 +135,29 @@ class DocumentSource(Protocol):
 # --------------------------------------------------------------------------- #
 # Canal de mensagens (inbound + outbound)
 # --------------------------------------------------------------------------- #
+class EnvioRecusado(RuntimeError):
+    """O envio não saiu, com o motivo de quem recusou — não com o código HTTP.
+
+    Mora no domínio, e não no adaptador da Meta, porque **é parte do contrato da porta**:
+    quem decide o que fazer com uma falha é o caso de uso, e ele não pode importar
+    infraestrutura para saber de que tipo ela foi.
+
+    ``transitorio`` é a distinção que faz a diferença entre reenviar e desistir:
+
+    - **Transitório** (timeout, queda de conexão, 5xx, 429): a mensagem não saiu por algo
+      que passa. Tentar de novo resolve, e desistir custa um aviso que a escola acha que
+      mandou.
+    - **Definitivo** (4xx: template inexistente na conta, número inválido, parâmetros em
+      número errado): tentar de novo dá exatamente o mesmo erro, gasta cota e ainda por
+      cima **queima a qualidade do número** — que é o que trava a subida do tier (§2.2.2 de
+      `docs/producao-whatsapp.md`). Aqui insistir é pior que falhar.
+    """
+
+    def __init__(self, motivo: str, *, transitorio: bool = False) -> None:
+        super().__init__(motivo)
+        self.transitorio = transitorio
+
+
 @runtime_checkable
 class MessageChannel(Protocol):
     # ``remetente`` identifica o número da escola no canal (multi-tenant), tal como
@@ -168,11 +191,18 @@ class MessageChannel(Protocol):
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class QuotaPolicy(Protocol):
-    """Controla a cota diária de destinatários (tier Meta) por tenant."""
+    """Cota de conversas iniciadas pelo negócio, em janela de 24h corridas por portfólio.
 
-    async def cota_do_dia(self, tenant_id: UUID) -> MessageQuota: ...
+    ``registrar_envio`` recebe o **contato**, não uma quantidade, porque a unidade que a
+    Meta cobra é *cliente único na janela* — sem saber para quem foi, não há como não
+    contar duas vezes o mesmo responsável. Todo caminho que dispara template precisa
+    chamá-lo: além do broadcast, a retomada de atendimento fora da janela de 24h também
+    inicia conversa e também consome o teto.
+    """
 
-    async def consumir(self, tenant_id: UUID, quantidade: int) -> MessageQuota: ...
+    async def cota(self, tenant_id: UUID) -> MessageQuota: ...
+
+    async def registrar_envio(self, tenant_id: UUID, contato: str) -> None: ...
 
 
 @runtime_checkable

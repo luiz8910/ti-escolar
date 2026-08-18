@@ -714,13 +714,18 @@ class ResultadoBroadcast:
     bloqueados_por_limite: int
     restante_cota: int
     status: StatusBroadcast
+    # Falharam por motivo transitório e voltaram para a fila. Separado de `falhas` de
+    # propósito: um é "não deu certo agora", o outro é "não vai dar" — e a tela que os
+    # somasse assustaria a secretaria com um número que ainda vai diminuir sozinho.
+    reenfileirados: int = 0
 
 
 class EnviarBroadcast:
-    """Dispara um broadcast respeitando template aprovado, rate limit e cota diária.
+    """Dispara um broadcast respeitando template aprovado, rate limit e cota do portfólio.
 
-    Ao atingir a cota diária (tier Meta), os destinatários restantes ficam pendentes e
-    o broadcast é marcado como ``PARCIAL_LIMITE`` para reenvio na próxima janela.
+    Ao esgotar a janela de 24h da Meta, os destinatários restantes ficam pendentes e o
+    broadcast é marcado como ``PARCIAL_LIMITE``. "Próxima janela" não é a meia-noite: a
+    capacidade volta aos poucos, conforme cada envio completa 24 horas (ver `MessageQuota`).
     """
 
     def __init__(
@@ -732,12 +737,17 @@ class EnviarBroadcast:
         quota: QuotaPolicy,
         rate_limiter: RateLimiter,
         tenants: TenantRepository | None = None,
+        max_tentativas: int = 3,
     ) -> None:
         self._broadcasts = broadcasts
         self._templates = templates
         self._canal = canal
         self._quota = quota
         self._rate_limiter = rate_limiter
+        # Teto de tentativas por destinatário em falha transitória. Sem ele, um número que
+        # dá timeout para sempre voltaria à fila em toda passada, pelos 7 dias da janela,
+        # tomando a vaga de quem ainda podia receber.
+        self._max_tentativas = max_tentativas
         # Opcional: resolve o número (From) da escola para o outbound sair do próprio
         # número dela. Sem repositório, o canal usa seu número padrão.
         self._tenants = tenants
@@ -775,15 +785,26 @@ class EnviarBroadcast:
                 "O template precisa estar APROVADO pela Meta para disparo fora da janela de 24h."
             )
 
-        enviados = falhas = bloqueados = 0
+        enviados = falhas = bloqueados = reenfileirados = 0
         broadcast.status = StatusBroadcast.EM_ENVIO
+
+        # A cota é lida **uma vez** e descontada em memória durante o lote. Reler a cada
+        # destinatário custaria um agregado por envio (250 deles num disparo grande) para
+        # confirmar o que já sabemos. `ja_contados` reproduz a contagem por cliente único
+        # da Meta: o mesmo responsável em dois destinatários do lote consome uma vaga só.
+        cota = await self._quota.cota(broadcast.tenant_id)
+        disponivel = cota.restante
+        ja_contados: set[str] = set()
 
         for dest in broadcast.destinatarios:
             if dest.status in (StatusEntrega.ENVIADO, StatusEntrega.ENTREGUE, StatusEntrega.LIDO):
                 continue
 
-            cota = await self._quota.cota_do_dia(broadcast.tenant_id)
-            if not cota.pode_enviar(1):
+            # Contato já alcançado neste lote não consome vaga nova. Quem já foi alcançado
+            # numa janela *anterior* a este lote consome — errando para o lado seguro, que
+            # é enviar de menos e retomar depois, nunca ouvir "não" da Graph API.
+            consome_vaga = dest.contato not in ja_contados
+            if consome_vaga and disponivel <= 0:
                 bloqueados += 1
                 continue  # fica pendente para a próxima janela
 
@@ -798,31 +819,54 @@ class EnviarBroadcast:
                 dest.status = StatusEntrega.ENVIADO
                 dest.mensagem_id_externo = mensagem_id
                 dest.atualizado_em = datetime.now(timezone.utc)
-                await self._quota.consumir(broadcast.tenant_id, 1)
+                await self._quota.registrar_envio(broadcast.tenant_id, dest.contato)
+                if consome_vaga:
+                    ja_contados.add(dest.contato)
+                    disponivel -= 1
                 enviados += 1
             except Exception as exc:  # noqa: BLE001 — falha de envio não derruba o lote
                 # **O motivo é registrado.** Continuar o lote é certo; perder a explicação
                 # não era: no primeiro disparo real, dois envios falharam porque o template
                 # não existia na conta da escola, e o painel mostrou "Falhou" sem mais nada
                 # — nem log, nem motivo. Sem isto, a única saída é adivinhar.
-                dest.status = StatusEntrega.FALHOU
                 dest.erro = str(exc)[:500]
                 dest.atualizado_em = datetime.now(timezone.utc)
-                falhas += 1
+                transitorio = getattr(exc, "transitorio", False)
+                if transitorio:
+                    dest.tentativas += 1
+                if transitorio and not dest.desistir_de_reenviar(self._max_tentativas):
+                    # Volta para a fila em vez de virar falha: timeout e 5xx passam, e um
+                    # aviso perdido por indisponibilidade de dez segundos é um aviso que a
+                    # escola acredita ter mandado. A espera é a própria passada seguinte —
+                    # **não** um `sleep` aqui dentro, que seguraria o lote inteiro.
+                    dest.status = StatusEntrega.PENDENTE
+                    reenfileirados += 1
+                else:
+                    dest.status = StatusEntrega.FALHOU
+                    falhas += 1
                 _logger.warning(
-                    "Falha ao enviar template %r para %s (broadcast %s): %s",
+                    "Falha ao enviar template %r para %s (broadcast %s, tentativa %d, %s): %s",
                     template.nome,
                     dest.contato,
                     broadcast.id,
+                    dest.tentativas,
+                    "transitória" if transitorio else "definitiva",
                     exc,
                 )
 
+        # `PARCIAL_LIMITE` é o estado "volta para a fila", e vale tanto para quem a cota
+        # barrou quanto para quem falhou por motivo transitório — nos dois casos há
+        # destinatário pendente esperando outra passada, e é esse status que a retomada
+        # procura. Chamá-lo de CONCLUIDO porque a cota não estourou perderia os
+        # reenfileirados de vista.
         broadcast.status = (
-            StatusBroadcast.PARCIAL_LIMITE if bloqueados else StatusBroadcast.CONCLUIDO
+            StatusBroadcast.PARCIAL_LIMITE
+            if (bloqueados or reenfileirados)
+            else StatusBroadcast.CONCLUIDO
         )
         await self._broadcasts.salvar(broadcast)
 
-        cota_final = await self._quota.cota_do_dia(broadcast.tenant_id)
+        cota_final = await self._quota.cota(broadcast.tenant_id)
         return ResultadoBroadcast(
             broadcast_id=broadcast.id,
             enviados=enviados,
@@ -830,6 +874,7 @@ class EnviarBroadcast:
             bloqueados_por_limite=bloqueados,
             restante_cota=cota_final.restante,
             status=broadcast.status,
+            reenfileirados=reenfileirados,
         )
 
 
