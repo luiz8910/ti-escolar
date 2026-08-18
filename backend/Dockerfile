@@ -11,7 +11,7 @@ COPY pyproject.toml ./
 # O extra "s3" traz o boto3, para ARQUIVO_STORAGE=s3.
 # **Sem o extra "dev":** pytest e ruff não têm o que fazer numa imagem de produção, e cada
 # pacote a mais é superfície que alguém precisa acompanhar por CVE.
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir ".[llm,s3]"
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir ".[llm,s3,obs]"
 
 COPY . .
 

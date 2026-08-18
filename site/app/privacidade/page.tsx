@@ -145,8 +145,15 @@ export default function PrivacidadePage() {
           para gerar a resposta, conforme a seção 6.
         </li>
         <li>
-          <strong>Infraestrutura de nuvem:</strong> hospedagem da aplicação e do banco de
-          dados.
+          <strong>Infraestrutura de nuvem:</strong> hospedagem da aplicação, do banco de
+          dados e do armazenamento dos arquivos enviados.
+        </li>
+        <li>
+          <strong>Monitoramento de falhas:</strong> quando ocorre um erro na plataforma,
+          um serviço de monitoramento recebe o registro técnico da falha (tipo do erro,
+          rota e rastreamento de pilha) para que a equipe seja avisada e possa corrigi-la.
+          Dados pessoais são <strong>removidos antes do envio</strong>: identificadores
+          como nome, telefone, CPF e informações de saúde não são transmitidos.
         </li>
         <li>
           <strong>Autoridades:</strong> quando houver determinação legal ou judicial.

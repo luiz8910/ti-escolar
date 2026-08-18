@@ -37,6 +37,11 @@ llm = [
 s3 = [
     "boto3>=1.34",
 ]
+# Alerta ativo de falha. Extra próprio: quem roda sem SENTRY_DSN (desenvolvimento, ou
+# quem não quer o subprocessador) não precisa do pacote.
+obs = [
+    "sentry-sdk[fastapi]>=2.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

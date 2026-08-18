@@ -63,6 +63,10 @@ def _config_atual(
         logs_retencao_dias=settings.log_retencao_dias,
         documento_retencao_dias=settings.documento_retencao_dias,
         # O storage **pedido** e o **efetivo**: é a divergência que a medida acusa.
+        # O DSN estar definido é o que se pode saber daqui; se o SDK subiu de fato, o
+        # log de boot diz. Um `ping` no Sentry a cada abertura do painel seria custo
+        # e ruído sem informar nada novo.
+        alerta_ativo=bool(settings.sentry_dsn),
         arquivo_storage=settings.arquivo_storage,
         arquivo_storage_efetivo=storage_efetivo(settings),
         aws_region=settings.aws_region,
