@@ -1,0 +1,110 @@
+name: Painel — build & deploy (Cloudflare Pages)
+
+# Painel admin (`web/`, app.tiescolar.com.br) — o ambiente de PRODUÇÃO.
+#
+# **Por que não é a Vercel.** O plano Hobby dela proíbe uso comercial, e o painel atende
+# escola pagante; o conserto oficial seria Pro a US$ 20/assento, mais caro que toda a
+# infraestrutura restante somada. Como export estático, o painel roda na Cloudflare Pages de
+# graça e com uso comercial permitido — no mesmo lugar onde o DNS de tiescolar.com.br já
+# está por causa da landing page.
+#
+# **O homolog continua na Vercel, sem fork de código.** O mesmo `next build` gera o `out/`
+# que os dois publicam; o que muda entre ambientes é só o NEXT_PUBLIC_API_URL.
+#
+# Pré-requisitos (uma vez só):
+#   1. Projeto Pages criado na Cloudflare com o nome de CF_PROJECT_NAME abaixo.
+#   2. Secrets: CLOUDFLARE_API_TOKEN e CLOUDFLARE_ACCOUNT_ID (os mesmos do site).
+#   3. Variável de repositório PAINEL_API_URL = https://api.tiescolar.com.br
+#   4. Domínio app.tiescolar.com.br apontado para o projeto Pages.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CF_PROJECT_NAME: ti-escolar-painel
+
+jobs:
+  build-deploy:
+    name: Build e publica
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    permissions:
+      contents: read
+      pull-requests: write
+      deployments: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instala dependências
+        run: npm ci
+
+      - name: Checagem de tipos
+        run: npx tsc --noEmit
+
+      - name: Build (export estático → web/out)
+        env:
+          # A URL da API é **embutida no bundle** em tempo de build (NEXT_PUBLIC_*), então
+          # ela precisa estar certa aqui — não há runtime para lê-la depois. Sem a variável,
+          # cai no localhost, que só serve para o build de PR não quebrar.
+          NEXT_PUBLIC_API_URL: ${{ vars.PAINEL_API_URL || 'http://localhost:8000' }}
+        run: npm run build
+
+      # A partir daqui só roda com credenciais — um PR de fork ainda valida o build.
+      - name: Verifica credenciais da Cloudflare
+        id: cf
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets da Cloudflare ausentes — deploy ignorado."
+          fi
+
+      - name: Publica em produção
+        if: steps.cf.outputs.ok == 'true' && github.event_name != 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=${{ env.CF_PROJECT_NAME }} --branch=main
+          workingDirectory: web
+
+      - name: Publica preview do PR
+        if: steps.cf.outputs.ok == 'true' && github.event_name == 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy out
+            --project-name=${{ env.CF_PROJECT_NAME }}
+            --branch=pr-${{ github.event.pull_request.number }}
+          workingDirectory: web
