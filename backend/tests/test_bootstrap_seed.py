@@ -7,9 +7,14 @@ rodava no ``CMD`` do container, ou seja, em produção, a cada deploy.
 
 from __future__ import annotations
 
+import pytest
+
 from app.bootstrap import (
     CAMPOS_SENHA_DEMO,
+    ConfiguracaoInsegura,
     avaliar_seed,
+    exigencias_de_producao,
+    exigir_producao_segura,
     segredos_com_valor_default,
     valor_default,
 )
@@ -71,3 +76,64 @@ def test_desenvolvimento_aceita_senha_de_exemplo():
 def test_deteccao_de_segredo_default_e_por_campo():
     settings = _settings(demo_admin_senha=valor_default("demo_admin_senha"))
     assert segredos_com_valor_default(settings, CAMPOS_SENHA_DEMO) == ["demo_admin_senha"]
+
+
+# --------------------------------------------------------------------------- #
+# Guardas de boot em produção (§15, itens 18.5–18.7 do checklist)
+# --------------------------------------------------------------------------- #
+_PRODUCAO_OK = {
+    "app_env": "production",
+    "jwt_secret": "segredo-forte-de-verdade",
+    "meta_webhook_verify_token": "token-forte-de-verdade",
+    "meta_validate_signature": True,
+}
+
+
+def test_producao_bem_configurada_sobe():
+    assert exigencias_de_producao(Settings(**_PRODUCAO_OK)) == []
+    exigir_producao_segura(Settings(**_PRODUCAO_OK))  # não levanta
+
+
+def test_desenvolvimento_aceita_todos_os_defaults():
+    """Os defaults são o que faz o projeto subir com um `git clone`. Recusá-los em
+    desenvolvimento atrapalharia sem proteger nada — o banco é container descartável."""
+    assert exigencias_de_producao(Settings(app_env="development")) == []
+
+
+def test_jwt_secret_de_exemplo_derruba_producao():
+    """Quem leu o repositório forja um token de super admin e entra em todas as escolas."""
+    s = Settings(**{**_PRODUCAO_OK, "jwt_secret": valor_default("jwt_secret")})
+    assert any("JWT_SECRET" in p for p in exigencias_de_producao(s))
+    with pytest.raises(ConfiguracaoInsegura, match="JWT_SECRET"):
+        exigir_producao_segura(s)
+
+
+def test_verify_token_de_exemplo_derruba_producao():
+    s = Settings(
+        **{
+            **_PRODUCAO_OK,
+            "meta_webhook_verify_token": valor_default("meta_webhook_verify_token"),
+        }
+    )
+    with pytest.raises(ConfiguracaoInsegura, match="META_WEBHOOK_VERIFY_TOKEN"):
+        exigir_producao_segura(s)
+
+
+def test_assinatura_desligada_derruba_producao():
+    """Não é segredo default, é proteção desligada — mas o efeito é o mesmo: endpoint
+    público aceitando qualquer POST, com status de entrega e conversas forjáveis."""
+    s = Settings(**{**_PRODUCAO_OK, "meta_validate_signature": False})
+    with pytest.raises(ConfiguracaoInsegura, match="META_VALIDATE_SIGNATURE"):
+        exigir_producao_segura(s)
+
+
+def test_lista_todas_as_pendencias_de_uma_vez():
+    """Quem configura um ambiente novo prefere corrigir três coisas juntas a descobrir
+    uma por deploy."""
+    s = Settings(
+        app_env="production",
+        jwt_secret=valor_default("jwt_secret"),
+        meta_webhook_verify_token=valor_default("meta_webhook_verify_token"),
+        meta_validate_signature=False,
+    )
+    assert len(exigencias_de_producao(s)) == 3

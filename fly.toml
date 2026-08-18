@@ -1,0 +1,62 @@
+# Back-end do TI-Escolar no Fly.io — ambiente de PRODUÇÃO.
+#
+# O homolog continua no Render, intocado: são ambientes paralelos, com bancos e números da
+# Meta diferentes. Mergear aqui não publica nada; o deploy é `fly deploy`.
+#
+# Três escolhas abaixo não são detalhe de configuração, e desfazê-las quebra o produto de
+# formas que não dão erro. Estão comentadas onde aparecem.
+
+app = "ti-escolar-api"
+primary_region = "gru" # São Paulo: a secretaria paga a latência em cada clique do painel.
+
+[build]
+dockerfile = "backend/Dockerfile"
+
+[deploy]
+# **Migration fora do CMD.** No Render ela vivia no `CMD`, então TODO restart rodava
+# `alembic upgrade head` — o que desfaz um `downgrade` sozinho no meio de um rollback
+# (§15 item 9). Como `release_command`, roda uma vez por deploy, antes das máquinas novas
+# entrarem, e um erro aqui aborta o deploy em vez de derrubar o serviço no ar.
+release_command = "sh -c 'alembic upgrade head && python -m app.bootstrap'"
+
+[env]
+APP_ENV = "production"
+PORT = "8000"
+# Os segredos vão por `fly secrets set`, nunca aqui: este arquivo é versionado.
+
+[http_service]
+internal_port = 8000
+force_https = true
+
+# **A máquina não pode dormir.** O `lifespan` sobe duas tarefas asyncio — o gravador de
+# logs e a fila de disparos — que morrem se a máquina parar; e o webhook da Meta responde
+# só depois da LLM, então somar cold start a isso faz a Meta reentregar e penalizar a
+# saúde do endpoint. Ligar auto_stop aqui economiza centavos e quebra o outbound.
+auto_stop_machines = false
+auto_start_machines = false
+min_machines_running = 1
+
+# **Uma máquina só**, e isso é contrato com o código: o "cutucão" que faz o disparo manual
+# sair na hora é um `asyncio.Event` em memória (§9a-septies), que só alcança a fila do
+# próprio processo. Com duas, o disparo feito na réplica B espera a grade — atraso, não
+# perda, porque o `pg_try_advisory_lock` impede envio em dobro. Antes de escalar, leia
+# §9a-septies e decida o que fazer com o cutucão.
+[http_service.concurrency]
+type = "requests"
+soft_limit = 200
+hard_limit = 250
+
+[[http_service.checks]]
+# `/health/pronto` toca o banco e responde **503** quando ele não vem (desde 17/ago/2026).
+# `/health` não serve aqui: ele é liveness e responde 200 com o Postgres inteiramente fora.
+path = "/health/pronto"
+interval = "30s"
+timeout = "5s"
+grace_period = "20s"
+
+[[vm]]
+size = "shared-cpu-1x"
+# 1 GB com folga: as dependências são leves (fastapi, sqlalchemy, httpx, anthropic — nada
+# de torch, os embeddings são por API). 512 MB provavelmente basta e custa ~US$ 2,50/mês a
+# menos; medir o RSS em uso antes de descer.
+memory = "1gb"

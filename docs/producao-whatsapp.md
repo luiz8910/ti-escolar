@@ -708,6 +708,53 @@ sinaliza as escolas afetadas.
 
 ---
 
+## 9b. Subir o ambiente de produção no Fly.io
+
+Escrito em 17/ago/2026, **antes de as contas existirem** — a ideia é que ligar produção seja
+executar uma lista, não relembrar decisões. O `fly.toml` está versionado na raiz e comentado
+onde a escolha não é óbvia.
+
+> **O homolog não é tocado em nenhum passo.** Render, Vercel e o Neon atual continuam de pé
+> com o webhook antigo. Os dois ambientes coexistem, o que exige **números diferentes na
+> Meta** — mais um motivo para o teto de números (§2.2) vir antes.
+
+**Contas a criar (fora daqui):** projeto no Fly.io, um banco **novo** no Neon (produção nasce
+vazia; não reaproveite o de homolog) e um bucket S3 em `sa-east-1`.
+
+1. **Segredos.** `fly secrets set` para cada um — nunca no `fly.toml`, que é versionado:
+   `DATABASE_URL` (Neon novo), `JWT_SECRET` (**gerado**, não copiado do homolog),
+   `META_ACCESS_TOKEN`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`,
+   `META_VALIDATE_SIGNATURE=true`, `MESSAGE_CHANNEL=meta`, `ANTHROPIC_API_KEY`,
+   `EMBEDDINGS_PROVIDER` + `EMBEDDINGS_API_KEY` (atenção ao **plural**, §3.4 do plano),
+   `RESEND_*`, `AWS_*`/`S3_BUCKET`, `BACKEND_CORS_ORIGINS=https://app.tiescolar.com.br`.
+   `APP_ENV=production` já está no `[env]`.
+2. **`fly deploy`.** O `release_command` roda `alembic upgrade head` + `python -m app.bootstrap`
+   uma vez, antes de a máquina nova entrar. Migration com erro **aborta o deploy** em vez de
+   derrubar o que está no ar.
+3. **A guarda vai reprovar se algo faltou.** Com `APP_ENV=production`, `JWT_SECRET` ou
+   `META_WEBHOOK_VERIFY_TOKEN` de exemplo, ou `META_VALIDATE_SIGNATURE` desligado, o processo
+   **não sobe** e o log lista as três pendências de uma vez. É proposital: as três não dão
+   sintoma nenhum — tudo funciona e a plataforma fica aberta.
+4. **DNS na Cloudflare:** `api.tiescolar.com.br` → Fly (`fly certs add`), e
+   `app.tiescolar.com.br` → painel (ver a fase do painel no plano).
+5. **Webhook da Meta** apontado para `https://api.tiescolar.com.br/api/webhook/meta`, e
+   **`POST /{waba-id}/subscribed_apps` repetido** — ele não tem interface no console e nada
+   dá erro quando falta (§5.1).
+6. **Conferir:** `/health` respondendo `{"canal": "meta"}` (não `demo`); `/health/pronto` em
+   200; `fly logs` mostrando a grade da retomada ("7h, 12h30, 18h…").
+
+**O que muda em relação ao Render**, e vale saber antes de precisar:
+
+- **A migration saiu do `CMD`.** No Render ela rodava a cada restart, o que **desfaz um
+  `downgrade` sozinho** no meio de um rollback (§15 item 9). No Fly é `release_command`: uma
+  vez por deploy. O `CMD` do Dockerfile ainda a tem, para o Render e o compose continuarem
+  funcionando — ao mexer num, confira o outro.
+- **Não existe "Manual Deploy".** O deploy é `fly deploy`; o aviso do `CLAUDE.md` sobre
+  mergear não publicar vale para o Render (homolog).
+- **A máquina não dorme e é uma só.** `auto_stop_machines = false` porque as tarefas de fundo
+  morrem com ela; máquina única porque o cutucão do disparo manual é um `asyncio.Event` em
+  memória (§9a-septies). As duas coisas estão comentadas no `fly.toml`.
+
 ## 10. Checklist consolidado
 
 - [x] Verificação da empresa aprovada
