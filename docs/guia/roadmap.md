@@ -126,6 +126,20 @@
   preenchidos a partir do Cartão CNPJ. **Pendente:** criar o projeto Pages + secrets e
   apontar `tiescolar.com.br` (hoje sem registro A/CNAME) — pré-requisito para reenviar a
   verificação da empresa na Meta.
+- [~] **Painel de produção em `app.tiescolar.com.br`** (17/ago/2026) — `web/` passou a
+  **export estático** e ganhou pipeline própria para a **Cloudflare Pages**
+  (`.github/workflows/web.yml`). Motivo: o plano Hobby da Vercel **proíbe uso comercial**, e
+  o painel atende escola pagante; o conserto oficial seria Pro a US$ 20/assento, mais caro
+  que toda a infraestrutura restante. **O homolog continua na Vercel sem fork de código** —
+  o mesmo `out/` serve os dois, e o que muda é o `NEXT_PUBLIC_API_URL`.
+  - A rota `admin/escolas/[tenantId]` virou `admin/escolas/detalhe?tenant=…`: o export
+    estático exige `generateStaticParams`, e a lista de escolas só existe em execução. A
+    página já lia o id no cliente, então mudou de onde o id vem, não como.
+  - **Bug encontrado só na saída real:** a raiz `/` usava `redirect()` de server component,
+    que sem servidor gerava um `index.html` de erro. Agora é `_redirects` no CDN + fallback
+    no cliente.
+  - [ ] **Falta criar o projeto Pages**, apontar `app.tiescolar.com.br` e definir a variável
+    `PAINEL_API_URL`.
 - [x] **Deploy automatizado**: são **três destinos**, um por camada —
   **back-end (FastAPI) → Render**, que **NÃO tem Auto-Deploy**: apesar do que esta linha
   afirmava, todo evento na aba *Events* do serviço é *"Manually triggered by you via

@@ -1,7 +1,7 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import {
   BroadcastResumo,
   ConversaDetalhe,
@@ -46,11 +46,25 @@ function formatar(data: string | null): string {
   });
 }
 
+// `useSearchParams` obriga a um limite de Suspense no export estático: sem ele, o
+// `next build` recusa a página. O conteúdo real fica em `EscolaDetalheConteudo`.
 export default function EscolaDetalhePage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-n-400">Carregando…</div>}>
+      <EscolaDetalheConteudo />
+    </Suspense>
+  );
+}
+
+function EscolaDetalheConteudo() {
   const router = useRouter();
   const toast = useToast();
-  const params = useParams<{ tenantId: string }>();
-  const tenantId = params.tenantId;
+  // Query string, e não segmento dinâmico (`[tenantId]`), porque o painel é publicado
+  // como **export estático**: o Next exige `generateStaticParams` para gerar uma página por
+  // segmento, e a lista de escolas só existe em tempo de execução. A página já lia o id no
+  // cliente, então a troca não mudou de onde o dado vem — só de onde o id é lido.
+  const params = useSearchParams();
+  const tenantId = params.get("tenant") ?? "";
 
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [escola, setEscola] = useState<Escola | null>(null);
@@ -61,6 +75,13 @@ export default function EscolaDetalhePage() {
   const [carregando, setCarregando] = useState(true);
 
   const recarregar = useCallback(async () => {
+    // Sem `?tenant=`, não há o que carregar. Com o segmento dinâmico isso era impossível
+    // (a rota não casava); com query string, alguém digitando a URL na mão chega aqui — e
+    // chamar a API com id vazio daria um 404 sem explicação em vez de um caminho de volta.
+    if (!tenantId) {
+      router.replace("/admin/escolas");
+      return;
+    }
     const [e, f, cs, bs] = await Promise.all([
       obterEscola(tenantId),
       obterFichaFinanceira(tenantId),

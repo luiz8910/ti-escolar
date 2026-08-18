@@ -1,0 +1,4 @@
+# Cloudflare Pages — regras resolvidas no CDN, antes de qualquer JS.
+# A raiz vai para o painel: o simulador de chat que morava aqui foi removido quando o canal
+# real entrou no ar, e devolver 404 no domínio nu seria perder quem tem `/` nos favoritos.
+/    /admin/    302
