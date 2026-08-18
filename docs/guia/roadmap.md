@@ -202,8 +202,11 @@
 - [ ] **Adaptador de object storage (Cloudflare R2)** — hoje os bytes vão para `bytea` no
   Neon, que cobra por GB. A porta `ArquivoStorage` já existe; falta o bucket, os secrets e
   o adaptador.
-- [ ] **Job agendado do expurgo** — o caso de uso está pronto, mas depende de alguém
-  chamar `POST /api/admin/documentos/expurgar`.
+- [-] **Job agendado do expurgo** — **decidido em 17/ago/2026 que NÃO entra por ora.** O caso
+  de uso está pronto e a rota existe, mas nada de LGPD roda automaticamente neste projeto até
+  que haja um plano de execuções definido (§17). A consequência fica escrita: a retenção
+  prometida na política de privacidade **não se cumpre sozinha** — documento de menor vencido
+  só sai da base quando alguém clicar em `POST /api/admin/documentos/expurgar`.
 - [ ] **Áudio** (exige transcrição) e ligação automática com `SolicitacaoMatricula` (§E1).
 
 **Limpeza de UI (remoções)**
