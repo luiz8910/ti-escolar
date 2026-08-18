@@ -225,14 +225,23 @@ lugares diferentes:
     o **somente leitura** — no Actions isso dependia do mandato no prompt, porque o sandbox
     da Codex não subia em runner hospedado.
   - **A troca é o esquecimento.** Sem gatilho, uma mudança que mexe em dado pessoal só é
-    auditada se alguém pedir. O que continua automático é a camada de ambiente abaixo, e o
-    painel §14, que mede a postura de dentro — nenhum dos dois lê diff.
-- **Configuração, a cada deploy** — `.github/workflows/lgpd.yml`,
+    auditada se alguém pedir. Desde 17/ago/2026 isso vale para **as duas camadas**: nem a
+    de código nem a de ambiente têm gatilho. O único automático que sobrou é o painel §14,
+    que mede a postura de dentro e não lê diff.
+- **Configuração, sob demanda** — `.github/workflows/lgpd.yml`,
   `scripts/postura_ambiente.py` mede o **ambiente no ar**.
   O código é o mesmo em homolog e em produção; o que difere é a config, e ela muda **por
-  fora do git** (alguém edita uma env var no painel do Render), por isso há também um
-  disparo semanal. É **determinístico e sem LLM** — pagar inferência para reler o mesmo
-  repo a cada deploy seria caro e não repetível.
+  fora do git** (alguém edita uma env var no painel do Render). É **determinístico e sem
+  LLM** — pagar inferência para reler o mesmo repo seria caro e não repetível.
+  - **Perdeu o gatilho em 17/ago/2026**, por decisão do responsável, até que exista um plano
+    de execuções definido. Saíram o `push` na `main` e o `cron` semanal; ficou o
+    `workflow_dispatch` (aba Actions → *Run workflow*), e o script segue rodável no terminal.
+  - **O que se perde, dito em voz alta:** a configuração muda por fora do git, e era
+    justamente essa janela que o cron cobria. Alguém desligar `META_VALIDATE_SIGNATURE` no
+    painel do Render agora só é descoberto quando alguém for olhar. Em **produção** o risco
+    é menor por outro caminho: a guarda de boot (§15) **recusa subir** com a assinatura
+    desligada ou segredo de exemplo — mas ela não cobre homolog nem uma env alterada com o
+    serviço já no ar.
 
 **As verificações de ambiente são caixa-preta, sem nenhuma credencial**, e isso é decisão de
 projeto: guardar um login de super admin num secret do CI abriria um caminho novo para a
@@ -244,11 +253,17 @@ origem forjada; rota administrativa exigindo token; e as **senhas versionadas no
 `.env.example` não autenticando** — se autenticam, o seed de demonstração rodou ali e quem
 leu o repositório entra.
 
-**Ambientes.** O serviço do Render hoje é **homolog**; **produção ainda não existe**. Por
-isso o job roda em **modo observação** (relata sem reprovar). Quando produção subir,
-acrescente um job igual apontando para a outra URL e com **`--estrito`**, que faz a
-regressão de configuração falhar o build. A URL vem da variável de repositório
+**Ambientes.** O serviço do Render é **homolog**, e o job roda ali em **modo observação**
+(relata sem reprovar). **Produção passou a existir** no Fly.io (`docs/producao-whatsapp.md`
+§9b): para medi-la, acrescente um job igual apontando para a outra URL e com **`--estrito`**,
+que faz a regressão de configuração falhar. A URL de homolog vem da variável de repositório
 `HOMOLOG_BASE_URL`; sem ela, o job avisa e passa.
+
+**Expurgo de documentos continua manual.** O caso de uso está pronto e a rota existe
+(`POST /api/admin/documentos/expurgar`), mas **não há job agendado** e, pela mesma decisão
+acima, não haverá até que o plano de execuções exista. A consequência precisa ficar escrita:
+**a retenção prometida na política de privacidade não se cumpre sozinha** — documento de
+menor vencido só sai da base quando alguém clicar. Ver §6k.
 
 Distinto do painel `/admin/seguranca` (§14), que avalia a postura **de dentro** e serve à
 auditoria interna dos sócios: aqui a leitura é **externa**, é a visão de quem está do lado

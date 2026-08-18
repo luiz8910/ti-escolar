@@ -2,9 +2,19 @@ name: LGPD — postura do ambiente
 
 # Este workflow mede **configuração**, e só isso. O código é o mesmo em todo ambiente; o que
 # muda é a CONFIGURAÇÃO, e ela muda por fora do git — alguém edita uma env var no painel do
-# Render e nenhum commit registra. Por isso roda a cada deploy e também numa agenda semanal.
-# É determinístico, sem LLM e sem credencial (scripts/postura_ambiente.py): custo zero e
-# resultado repetível.
+# Render e nenhum commit registra. É determinístico, sem LLM e sem credencial
+# (scripts/postura_ambiente.py): custo zero e resultado repetível.
+#
+# **RODA SÓ QUANDO ALGUÉM MANDA** (17/ago/2026). Saíram o gatilho por push na main e o cron
+# semanal: nenhuma verificação de LGPD acontece por conta própria neste projeto, por decisão
+# do responsável, até que exista um plano de execuções definido. O script continua aqui e
+# continua rodável — pela aba Actions ("Run workflow") ou direto no terminal:
+#
+#     python scripts/postura_ambiente.py --base-url https://...
+#
+# **O que se perde, dito em voz alta:** a configuração muda por fora do git, então sem
+# gatilho uma regressão (alguém desliga META_VALIDATE_SIGNATURE no painel do Render) só é
+# descoberta quando alguém for olhar. Era exatamente essa janela que o cron cobria.
 #
 # **A auditoria do código por LLM não mora mais aqui** (13/ago/2026). O agente
 # `lgpd-auditor` segue versionado em `.claude/agents/lgpd-auditor.md` e é executado **sob
@@ -14,18 +24,15 @@ name: LGPD — postura do ambiente
 # ganha é rodar quando a mudança de fato mexe com dado pessoal, com a conversa junto e sem
 # arrastar o diff para uma API de terceiro (a OpenAI deixa de ser operadora sobre o diff).
 #
-# Hoje o serviço do Render é o ambiente de HOMOLOG; produção ainda não existe. Quando
-# existir, basta acrescentar um job igual ao `ambiente`, apontando para a outra URL e com
-# `--estrito` (em homolog o modo é observação, para não travar a esteira).
+# O serviço do Render é o ambiente de HOMOLOG. Produção passou a existir no Fly.io
+# (docs/producao-whatsapp.md §9b): para medi-la, acrescente um job igual ao `ambiente`
+# apontando para `PRODUCAO_BASE_URL` e com `--estrito` — em homolog o modo é observação,
+# para não travar a esteira. Feito isso, decida também se ele volta a ter gatilho; hoje,
+# por decisão do responsável, nada de LGPD roda sozinho.
 
 on:
-  push:
-    branches: [main] # push na main = deploy do Render
+  # Manual, e só. Ver o cabeçalho: nada de LGPD dispara sozinho neste repositório.
   workflow_dispatch:
-  schedule:
-    # Segunda, 09:00 BRT. A configuração de um ambiente muda por fora do git, então checar
-    # só no deploy deixa janela.
-    - cron: "0 12 * * 1"
 
 concurrency:
   group: lgpd-${{ github.ref }}
@@ -45,7 +52,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Aguarda o deploy do Render subir
+      # A espera de 10 min pelo deploy do Render saiu junto com o gatilho por push: sem
+      # push, não há deploy subindo para esperar. Quem roda à mão roda quando quer, e
+      # ficam só 3 tentativas para o caso de o serviço estar hibernando.
+      - name: Confere que o ambiente responde
         env:
           BASE_URL: ${{ vars.HOMOLOG_BASE_URL }}
         run: |
@@ -59,16 +69,14 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # O Render leva alguns minutos para publicar depois do push; sem esperar, o
-          # script mediria a versão ANTERIOR e daria um verde enganoso.
-          for i in $(seq 1 30); do
+          for i in 1 2 3; do
             if curl -fsS --max-time 10 "$BASE_URL/health" > /dev/null; then
               echo "Ambiente respondendo (tentativa $i)."
               exit 0
             fi
-            sleep 20
+            sleep 10
           done
-          echo "::warning::/health não respondeu em 10 min; seguindo assim mesmo."
+          echo "::warning::/health não respondeu; seguindo assim mesmo."
 
       - name: Verifica a postura de proteção de dados
         env:
