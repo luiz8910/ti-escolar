@@ -6,7 +6,10 @@ Mantêm a seleção de provedor fora do domínio e das interfaces.
 from __future__ import annotations
 
 from app.config import Settings
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.domain.ports import (
+    ArquivoStorage,
     CatalogoTemplates,
     EmailSender,
     Embedder,
@@ -103,6 +106,47 @@ def criar_canal(settings: Settings) -> MessageChannel:
             access_token=settings.meta_access_token or "",
         )
     return _demo_channel
+
+
+def storage_efetivo(settings: Settings) -> str:
+    """Qual adaptador ``criar_arquivo_storage`` devolve **de fato** — nem sempre o da env.
+
+    Espelha o ``canal_efetivo`` acima, e pela mesma lição: ``MESSAGE_CHANNEL=meta`` sem token
+    caía no demo **sem erro nenhum**, e o WhatsApp simplesmente não estava no ar. Um
+    ``ARQUIVO_STORAGE=s3`` sem bucket ou sem credencial que caísse no Postgres em silêncio
+    repetiria a falha — só que com atestado médico de criança indo para o banco errado, e
+    inflando um banco cobrado por GB sem ninguém notar.
+
+    Credencial vazia **não** é motivo para reprovar: em EC2/ECS o boto3 pega a role da
+    instância, e exigir chave explícita quebraria o caminho mais seguro. O que se exige é o
+    bucket, sem o qual não há para onde escrever.
+    """
+    if settings.arquivo_storage == "s3" and settings.s3_bucket_documentos:
+        return "s3"
+    return "postgres"
+
+
+def criar_arquivo_storage(settings: Settings, session: AsyncSession) -> ArquivoStorage:
+    """O storage dos bytes dos arquivos recebidos (§6k).
+
+    Recebe a sessão porque o adaptador Postgres precisa dela — é o que lhe dá a
+    atomicidade entre bytes e metadado. O adaptador S3 a ignora, e essa assimetria é o
+    próprio ponto da §0.3: com o S3 a transação deixa de cobrir os dois.
+    """
+    if storage_efetivo(settings) == "s3":
+        from app.infrastructure.storage_s3 import S3ArquivoStorage
+
+        return S3ArquivoStorage(
+            bucket=settings.s3_bucket_documentos,
+            region=settings.aws_region,
+            access_key=settings.aws_access_key_id or "",
+            secret_key=settings.aws_secret_access_key or "",
+            endpoint_url=settings.s3_endpoint_url,
+            kms_key_id=settings.s3_kms_key_id,
+        )
+    from app.infrastructure.storage import PostgresArquivoStorage
+
+    return PostgresArquivoStorage(session)
 
 
 def criar_fonte_midia(settings: Settings) -> FonteMidia:
