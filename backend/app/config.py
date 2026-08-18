@@ -147,6 +147,16 @@ class Settings(BaseSettings):
     # maior buraco da grade (sexta 18h → segunda 7h, ~61h).
     broadcast_retomada_janela_dias: int = 7
 
+    # ---------- Alerta ativo de falha (§15, item 8) ----------
+    # Vazio = desligado, e é o default: sem DSN não há subprocessador novo, e o produto
+    # funciona igual — só não avisa ninguém de um erro.
+    sentry_dsn: str = ""
+    # Separa produção de homolog no painel do Sentry. Vazio = usa o APP_ENV.
+    sentry_environment: str = ""
+    # Trace de performance. 0 de propósito: o valor aqui é o alerta de ERRO, e transação é
+    # o que consome a franquia do plano free depressa.
+    sentry_traces_sample_rate: float = 0.0
+
     # ---------- Armazenamento dos arquivos recebidos (§6k / Fase 0 do plano de 10/08) ----
     # "postgres" (bytea, sem infra nova) | "s3". Trocar aqui é trocar de casa dos bytes;
     # os metadados ficam no Postgres nos dois casos.

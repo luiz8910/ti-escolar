@@ -155,7 +155,12 @@
 - [x] **Front no CI** (typecheck + build de `web/` e `site/`).
 - [x] **Runbook de rollback** (`docs/runbook-rollback.md`) — falta o **ensaio**.
 - [ ] **Política de backup** (`docs/backup.md`) — proposta escrita, **aguardando decisão**.
-- [ ] **Alerta ativo** de falha crítica (e-mail/push/Sentry) — o que mantém o item 8 em ⚠️.
+- [x] **Alerta ativo** de falha crítica (17/ago/2026) — **Sentry**, com três camadas de
+  limpeza antes de o evento sair (`send_default_pii=False`, `before_send` removendo chaves
+  sensíveis e telefone/CPF em texto livre, e descarte do evento inteiro se a limpeza falhar).
+  Fecha o último ⚠️ do §15. Escolhido porque **não prende**: o GlitchTip fala o mesmo
+  protocolo, então trocar é mudar o DSN. **Default desligado** — ligar acrescenta um
+  subprocessador nos EUA, e isso é decisão de negócio.
 
 **Observabilidade / histórico** _(ver §13)_
 - [x] **Histórico completo de mensagens em massa (broadcasts)** enviadas no admin da escola —

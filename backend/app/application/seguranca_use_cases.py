@@ -58,6 +58,8 @@ class ConfiguracaoSeguranca:
     # Retenção dos documentos que os pais enviam (§6k). 0 = sem expurgo, e o que fica
     # guardado para sempre é dado sensível de criança.
     documento_retencao_dias: int = 0
+    # Alerta ativo de falha (§15, item 8): há SENTRY_DSN configurado e o SDK subiu?
+    alerta_ativo: bool = False
     # Onde os bytes dos arquivos moram: o **pedido** (ARQUIVO_STORAGE) e o **efetivo**. A
     # divergência entre os dois é o que a medida `storage_efetivo` acusa.
     arquivo_storage: str = "postgres"
@@ -200,15 +202,23 @@ class AvaliarPosturaSeguranca:
                 numero=8,
                 titulo="Logging e monitoramento",
                 exigencia="Log estruturado somado a alerta de falha crítica.",
-                status=StatusMedida.ATENCAO,
+                status=(
+                    StatusMedida.ATIVA
+                    if (c.logs_persistidos and c.alerta_ativo)
+                    else StatusMedida.ATENCAO
+                ),
                 situacao=(
                     (
-                        "A metade do logging está feita: logging configurado, id de correlação "
-                        "por requisição, persistência no Postgres e painel em /admin/logs, com "
-                        f"retenção de {c.logs_retencao_dias} dias. Falta a outra metade — "
-                        "**alerta ativo**: ninguém é avisado de um erro; é preciso alguém abrir "
-                        "o painel para descobrir. Fica ATENÇÃO até haver notificação "
-                        "(e-mail/push) em falha crítica."
+                        "Completo: logging configurado, id de correlação por requisição, "
+                        "persistência no Postgres com painel em /admin/logs "
+                        f"(retenção de {c.logs_retencao_dias} dias) e **alerta ativo** — o "
+                        "Sentry notifica a falha, com o dado pessoal removido antes do envio."
+                        if c.alerta_ativo
+                        else "A metade do logging está feita: logging configurado, id de "
+                        "correlação por requisição, persistência no Postgres e painel em "
+                        f"/admin/logs, com retenção de {c.logs_retencao_dias} dias. Falta a "
+                        "outra metade — **alerta ativo**: ninguém é avisado de um erro; é "
+                        "preciso alguém abrir o painel para descobrir. Defina SENTRY_DSN."
                     )
                     if c.logs_persistidos
                     else (

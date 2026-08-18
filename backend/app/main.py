@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import canal_efetivo, storage_efetivo
 from app.infrastructure.logs import ColetorDeLogs, GravadorDeLogs, configurar_logging
+from app.infrastructure.observabilidade import iniciar_sentry
 from app.interfaces.deps import get_fila_disparos, janela_de_retomada
 from app.interfaces.api import (
     admin,
@@ -85,6 +86,9 @@ async def lifespan(_: FastAPI):
     # porque o `CMD` não é o único jeito de subir o processo — e a proteção que depende de
     # alguém usar o caminho certo não é proteção.
     exigir_producao_segura(settings)
+    # Logo depois da guarda e antes de tudo mais: um erro na subida das tarefas de fundo
+    # é justamente o tipo de falha que ninguém vê, e é ela que se quer capturar.
+    iniciar_sentry(settings)
     if settings.log_persistir:
         logging.getLogger().addHandler(_coletor)
         _gravador.iniciar()

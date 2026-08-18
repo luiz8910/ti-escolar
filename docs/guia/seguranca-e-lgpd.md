@@ -154,12 +154,38 @@ Implementado em 29/jul/2026.
 conhecido; refinar com **índices compostos** (ex.: `(tenant_id, criado_em)` nas listagens
 paginadas) é otimização, não pendência.
 
-### 8. ⚠️ Logging e monitoramento
+### 8. ✅ Logging e monitoramento
 
-**Metade feita** (29/jul/2026): logging configurado, id de correlação por requisição,
-persistência no Postgres e painel em `/admin/logs` (§16). **Falta a outra metade — alerta
-ativo:** ninguém é avisado de um erro; é preciso alguém abrir o painel para descobrir. Segue
-⚠️ até haver notificação (e-mail/push, ou Sentry) em falha crítica.
+A primeira metade saiu em 29/jul/2026: logging configurado, id de correlação por requisição,
+persistência no Postgres e painel em `/admin/logs` (§16). **A segunda metade — alerta ativo —
+saiu em 17/ago/2026, com o Sentry.**
+
+**Por que Sentry, e por que isso não prende ninguém.** No plano free são 5 mil erros/mês, de
+sobra para uma escola-piloto. E o **GlitchTip fala o mesmo protocolo**: se o volume crescer
+ou o preço incomodar, migrar é trocar o DSN — nenhuma linha de código muda. Foi o argumento
+decisivo contra alternativas mais baratas de partida.
+
+**O ponto delicado é a LGPD, não a integração.** O Sentry é operador nos **Estados Unidos**,
+e um evento de erro carrega, sem pedir licença, o corpo da requisição, os cabeçalhos e as
+**variáveis locais do traceback** — que numa base como esta significam laudo, CPF e telefone
+de responsável. Três camadas antes de o dado sair
+(`app/infrastructure/observabilidade.py`):
+
+1. `send_default_pii=False` e `max_request_body_size="never"` — o SDK não anexa corpo,
+   cookie nem IP.
+2. `before_send` remove o que sobrar: valores de chaves sensíveis por nome, e telefone/CPF
+   **embutidos em texto livre**, que a limpeza por chave não alcançaria (mensagem de erro
+   costuma citar justamente o dado que causou o problema).
+3. **Falha fechado:** erro na limpeza descarta o evento inteiro. Perder um alerta é
+   incômodo; vazar laudo de criança é incidente de dados.
+
+Provado ponta a ponta com transporte espião: um `ValueError` citando telefone, com o CID numa
+variável local do frame, sai com **os dois redigidos** e o tipo da exceção preservado.
+
+**Ligar o Sentry é decisão de negócio, não de configuração:** acrescenta um subprocessador ao
+registro — justamente o que o §17 reduziu ao tirar a OpenAI da auditoria de diff. Por isso o
+default é **desligado** (`SENTRY_DSN` vazio) e a política de privacidade em `site/` passou a
+declarar o monitoramento de falhas e o que ele **não** recebe.
 
 ### 9. ⚠️ Estratégia de rollback
 
@@ -185,7 +211,7 @@ decisão**.
    demo~~ — **feitos** em 27/jul/2026 (item 1).
 2. ~~**Rate limit no login e no inbound**~~ (item 5) — **feito** em 29/jul/2026.
 3. ~~**Telas de erro + handler com id de correlação**~~ (item 6) — **feito** em 29/jul/2026.
-4. ~~**Logging estruturado**~~ (item 8) — **feito**; falta o **alerta ativo**.
+4. ~~**Logging estruturado**~~ e ~~**alerta ativo**~~ (item 8) — **feitos** (29/jul e 17/ago).
 5. **Testar o rollback** uma vez, com migration envolvida (item 9) — o runbook existe, o
    ensaio não.
 6. **Decidir e implementar a política de backup** (item 10).
