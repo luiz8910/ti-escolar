@@ -164,7 +164,8 @@ preciso ler tudo.
 | [`docs/guia/seguranca-e-lgpd.md`](docs/guia/seguranca-e-lgpd.md) | §14, §15, §17 | postura de segurança do super admin, checklist de pré-deploy, auditoria LGPD contínua |
 | [`docs/guia/roadmap.md`](docs/guia/roadmap.md) | §12, §12a | o que está feito, o que falta e em que ordem |
 
-**Operação** (fora do guia, em `docs/`): [`producao-whatsapp.md`](docs/producao-whatsapp.md)
+**Operação** (fora do guia, em `docs/`): [`producao-fly.md`](docs/producao-fly.md)
+(o back-end de produção na Fly), [`producao-whatsapp.md`](docs/producao-whatsapp.md)
 (go-live do canal), [`runbook-rollback.md`](docs/runbook-rollback.md),
 [`backup.md`](docs/backup.md), [`checklist-teste-manual.md`](docs/checklist-teste-manual.md).
 
@@ -188,8 +189,10 @@ tarde já foi pago uma vez.
 - **`MESSAGE_CHANNEL=meta` sem `META_ACCESS_TOKEN` cai no canal demo em silêncio:** o processo
   sobe, o WhatsApp não está no ar e nada acusa erro. `canal_efetivo(settings)` é a fonte única
   de qual adaptador está em uso. (§9c)
-- **O back-end no Render não tem auto-deploy:** mergear na `main` não publica a API — é
-  preciso *Manual Deploy → Deploy latest commit*. (§12a)
+- **Nenhum dos dois back-ends publica sozinho:** mergear na `main` não sobe a API. No
+  **homolog** (Render) é *Manual Deploy → Deploy latest commit*; na **produção**
+  (Fly.io, app `ti-escolar`) é `cd backend && fly deploy`. (§12a,
+  [`docs/producao-fly.md`](docs/producao-fly.md))
 - **O dado mais sensível da base é documento de menor** (atestado, laudo, `cor_raca`, NIS):
   nenhuma URL pública, download auditado, prazo de retenção com expurgo. (§6k, §17)
 

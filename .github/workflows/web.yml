@@ -1,0 +1,98 @@
+name: Painel (web) — build & deploy (Cloudflare Pages)
+
+# Painel admin + portal do professor (`web/`) em **produção**: app.tiescolar.com.br.
+#
+# O ambiente de HOMOLOGAÇÃO continua na Vercel, apontando para a API do Render, e não é
+# tocado por este workflow. Produção saiu da Vercel porque o plano Hobby proíbe uso
+# comercial e o painel atende escola pagante; como export estático o mesmo build roda na
+# Cloudflare Pages, onde o uso comercial é permitido. **Não há fork de código** — o que
+# muda entre os dois é `NEXT_PUBLIC_API_URL`.
+#
+# Pré-requisitos (uma vez só):
+#   1. Projeto Pages criado na Cloudflare com o nome de CF_PROJECT_NAME abaixo.
+#   2. Secrets no repositório: CLOUDFLARE_API_TOKEN e CLOUDFLARE_ACCOUNT_ID.
+#
+# Não há deploy de preview de PR, ao contrário da landing page: o CORS da API de produção
+# só libera `https://app.tiescolar.com.br`, então um painel em `*.pages.dev` não
+# conseguiria falar com o back-end. Publicar uma tela que não carrega nada confundiria
+# mais do que ajudaria — no PR este workflow só valida tipos e build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  # Permite republicar manualmente sem precisar de um commit novo — é assim que uma troca
+  # de `NEXT_PUBLIC_API_URL` chega ao ar, já que ela é assada no build.
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CF_PROJECT_NAME: ti-escolar-web
+
+jobs:
+  build-deploy:
+    name: Build e publica
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configura Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instala dependências
+        run: npm ci
+
+      # O build já checa tipos, mas o `tsc` isolado falha mais rápido e com erro legível.
+      - name: Typecheck (tsc)
+        run: npx tsc --noEmit
+
+      - name: Build (export estático → web/out)
+        run: npx next build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.tiescolar.com.br
+
+      # A partir daqui só roda quando há credenciais da Cloudflare — assim um PR de fork
+      # ainda valida o build sem quebrar por falta de secret.
+      - name: Verifica credenciais da Cloudflare
+        id: cf
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets da Cloudflare ausentes — deploy ignorado."
+          fi
+
+      - name: Publica em produção
+        if: steps.cf.outputs.ok == 'true' && github.event_name != 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=${{ env.CF_PROJECT_NAME }} --branch=main
+          workingDirectory: web

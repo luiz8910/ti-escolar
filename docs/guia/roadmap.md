@@ -144,6 +144,31 @@
   > instalava a versão mais nova a cada execução e a 0.16.0 quebrou a build sem que o
   > código mudasse (358 dos 424 achados eram `B008`, o `Depends()` do FastAPI).
 
+- [x] **Back-end de produção na Fly.io** (20/ago/2026) — app `ti-escolar`, região `gru`,
+  config em `backend/fly.toml`, receita em [`docs/producao-fly.md`](../producao-fly.md). O
+  **Render vira homolog** e fica como está. Duas diferenças que importam: a migration saiu do
+  `CMD` e virou `release_command` (roda uma vez, aborta o deploy se falhar, e **não desfaz
+  mais um `downgrade` de rollback sozinho**), e o `[processes]` sobrescreve o `CMD` para tirar
+  o alembic do boot — ao mexer num dos dois, conferir o outro. **Pendente:** o CNAME
+  `api` → `8wxg2m8.ti-escolar.fly.dev` na Cloudflare (**DNS only**, senão o desafio ACME não
+  chega e o certificado nunca sai) e os segredos de LLM e da Meta. O canal sobe em
+  `MESSAGE_CHANNEL=demo` de propósito: a Meta só aceita uma URL de webhook por app, e ligá-lo
+  aqui tiraria o inbound do homolog do ar.
+
+- [x] **Painel (`web/`) em produção na Cloudflare Pages** (21/ago/2026) — projeto
+  `ti-escolar-web`, domínio `app.tiescolar.com.br`, publicado por
+  `.github/workflows/web.yml`. A Vercel continua sendo o **homolog**. Três coisas que o
+  `output: "export"` do `next.config.js` trouxe junto: rota dinâmica passa a exigir
+  `generateStaticParams()`, então o detalhe da escola virou `/admin/escolas/detalhe?tenant=`
+  (ids de escola não existem em tempo de build); o `_redirects` mudou de `out/` — que é
+  gerado e ignorado pelo git — para `web/public/`, senão o primeiro deploy pela CI o perderia
+  sem avisar; e **não há preview de PR**, porque o CORS da API de produção só libera
+  `app.tiescolar.com.br` e um painel em `*.pages.dev` não carregaria nada.
+  **Pendente:** o secret `CLOUDFLARE_API_TOKEN` no repositório — sem ele o workflow roda,
+  imprime "Secrets da Cloudflare ausentes" e **pula o deploy em silêncio**. É o que já
+  acontece com o `site.yml` desde 26/jul/2026: as execuções ficam verdes e a landing page
+  no ar é a do último upload manual.
+
 **Prontidão para produção** _(ver §15 e §16)_
 - [x] **Seed restrito a homologação** + `app.bootstrap` para o super admin (§10).
 - [x] **Rate limiting** no login e no inbound, com contador no Postgres (§15, item 5).

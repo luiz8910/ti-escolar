@@ -421,7 +421,7 @@ function EscolaLinha({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <Link
-            href={`/admin/escolas/${escola.id}`}
+            href={`/admin/escolas/detalhe?tenant=${escola.id}`}
             className="text-sm font-bold text-n-900 hover:text-brand-700 hover:underline"
           >
             {escola.nome}
@@ -478,7 +478,7 @@ function EscolaLinha({
           variant="secondary"
           size="sm"
           leftIcon={<ExternalIcon size={14} />}
-          onClick={() => router.push(`/admin/escolas/${escola.id}`)}
+          onClick={() => router.push(`/admin/escolas/detalhe?tenant=${escola.id}`)}
         >
           Abrir
         </Button>

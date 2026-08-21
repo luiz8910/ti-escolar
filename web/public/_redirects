@@ -1,0 +1,10 @@
+# Cloudflare Pages — regras resolvidas no CDN, antes de qualquer JS.
+#
+# Mora em `public/` porque o `next build` só copia para o `out/` o que está aqui: até
+# 21/ago/2026 este arquivo existia solto dentro do `out/`, que é gerado e ignorado pelo
+# git — ou seja, o primeiro deploy pela CI o teria perdido sem aviso.
+#
+# A raiz vai para o painel: o simulador de chat que morava aqui foi removido quando o
+# canal real entrou no ar, e devolver 404 no domínio nu seria perder quem tem `/` nos
+# favoritos. Sem barra no fim: o export gera `admin.html`, não `admin/index.html`.
+/    /admin    302
