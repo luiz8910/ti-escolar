@@ -1,0 +1,82 @@
+# Fly.io — ambiente de PRODUÇÃO do back-end (§12a).
+#
+# O homolog continua no Render; este arquivo não o toca. Deploy a partir de `backend/`
+# (o contexto do build é o diretório deste arquivo, e o Dockerfile faz `COPY pyproject.toml ./`
+# — com o fly.toml na raiz do repositório o build quebraria).
+#
+#   cd backend && fly deploy
+#
+app = "ti-escolar"
+# São Paulo: a escola, o Neon e o usuário estão todos no Brasil; qualquer outra região
+# põe ~185 ms em cada clique da secretaria.
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # A migration sai do `CMD` e vira release_command: aqui ela roda UMA vez, numa máquina
+  # temporária, antes da nova versão receber tráfego. No `CMD` (Render/compose) ela roda a
+  # cada restart — e desfaz um `downgrade` de rollback sozinho, sem ninguém pedir.
+  # `bootstrap` cria só o super admin, é idempotente e recusa senha de exemplo em produção.
+  release_command = "sh -c 'alembic upgrade head && python -m app.bootstrap'"
+  # Com uma máquina só não há para onde "rolar": rolling apenas alongaria a troca.
+  strategy = "immediate"
+
+[processes]
+  # Sobrescreve o `CMD` da imagem justamente para tirar o `alembic upgrade head` do boot —
+  # ver o comentário do release_command acima. O resto do comando é o mesmo.
+  app = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+[env]
+  APP_ENV = "production"
+  PORT = "8000"
+  # Sobe em demo de propósito: a Meta aceita UMA URL de webhook por app, e apontá-la para
+  # cá tiraria o inbound do homolog do ar. Trocar para "meta" (junto com os segredos
+  # META_*) quando o domínio e o certificado estiverem de pé — ver docs/producao-fly.md.
+  MESSAGE_CHANNEL = "demo"
+  # Assinatura do webhook ligada desde o primeiro deploy: sem ela o endpoint aceita
+  # qualquer POST, e "ligo depois" é exatamente o que ninguém lembra de fazer.
+  META_VALIDATE_SIGNATURE = "true"
+  BACKEND_CORS_ORIGINS = "https://app.tiescolar.com.br"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # A máquina NÃO dorme. O processo tem trabalho de fundo (gravador de logs e retomada de
+  # disparos, ambos no lifespan) e o webhook da Meta não espera cold start — suspender a
+  # máquina economizaria centavos e perderia mensagem de pai.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  # Uma máquina só, e é de propósito: o cutucão que faz o disparo manual sair na hora é um
+  # `asyncio.Event` em memória, que só alcança a fila do próprio processo. Duas máquinas
+  # fariam metade dos disparos esperar a próxima passada da retomada.
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 60
+    hard_limit = 80
+
+  [[http_service.checks]]
+    # /health é liveness e não toca no banco de propósito (ver app/main.py): com o Neon
+    # fora do ar, derrubar também o processo em laço só piora. A prontidão real, que
+    # consulta o banco, é /health/pronto — para o olho humano, não para o supervisor.
+    interval = "15s"
+    timeout = "4s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+# Tempo para o lifespan drenar a fila de logs no shutdown: o log do erro que derrubou o
+# processo é justamente o que não pode se perder. O default de 5s corta essa drenagem.
+kill_signal = "SIGINT"
+kill_timeout = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  # Colchão contra OOM em pico (importação de planilha, PDF grande). Disco é barato;
+  # máquina morta no meio de um disparo, não.
+  swap_size_mb = 512

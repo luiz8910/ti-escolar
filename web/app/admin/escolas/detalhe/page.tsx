@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   BroadcastResumo,
@@ -49,8 +49,11 @@ function formatar(data: string | null): string {
 export default function EscolaDetalhePage() {
   const router = useRouter();
   const toast = useToast();
-  const params = useParams<{ tenantId: string }>();
-  const tenantId = params.tenantId;
+  // A escola vem de `?tenant=`, e não de um segmento `[tenantId]`: com `output: "export"`
+  // uma rota dinâmica exige `generateStaticParams()`, e os ids das escolas só existem em
+  // tempo de execução. Lido do `location` e não de `useSearchParams` para não arrastar a
+  // tela inteira para uma fronteira de Suspense — mesmo caminho de `/admin/usuarios`.
+  const [tenantId, setTenantId] = useState("");
 
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [escola, setEscola] = useState<Escola | null>(null);
@@ -79,6 +82,14 @@ export default function EscolaDetalhePage() {
   }, [tenantId]);
 
   useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("tenant") ?? "";
+    // Sem escola na URL não há o que mostrar; a lista é o lugar de escolher uma.
+    if (!id) router.replace("/admin/escolas");
+    else setTenantId(id);
+  }, [router]);
+
+  useEffect(() => {
+    if (!tenantId) return;
     const s = getSessao();
     if (!s) {
       router.replace("/admin/login");
@@ -93,7 +104,7 @@ export default function EscolaDetalhePage() {
         })
       )
       .finally(() => setCarregando(false));
-  }, [router, recarregar, toast]);
+  }, [router, recarregar, toast, tenantId]);
 
   function sair() {
     logout();

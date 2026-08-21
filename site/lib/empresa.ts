@@ -77,13 +77,17 @@ export const EMPRESA: DadosEmpresa = {
   site: "https://tiescolar.com.br",
 
   /**
-   * URL do painel administrativo (produto), publicado na Vercel. O endereço do Render é o
-   * back-end (API/webhook) e não serve o painel — apontar para lá deixava o botão "Entrar no
-   * painel" caindo em 404. Aponta para `/admin/login` e não para a raiz porque a raiz só
-   * redireciona pelo cliente (responde 307 sem `Location`, com o shell do Next); o login é
-   * 200 direto, que é o destino de quem clica no botão.
+   * URL do painel administrativo (produto), em **produção**: Cloudflare Pages, desde
+   * 21/ago/2026. Antes apontava para a Vercel, que virou o ambiente de HOMOLOGAÇÃO — mandar
+   * cliente para lá é mandá-lo ao ambiente de teste. E antes disso apontava para o Render,
+   * que é o back-end (API/webhook) e não serve o painel: o botão "Entrar no painel" caía em
+   * 404. Esse 404 **ainda está no ar** hoje, porque o `site.yml` vinha pulando o deploy em
+   * silêncio por falta do secret `CLOUDFLARE_API_TOKEN` (§12a).
+   *
+   * Aponta para `/admin/login` e não para a raiz porque a raiz só redireciona pelo cliente;
+   * o login é 200 direto, que é o destino de quem clica no botão.
    */
-  painelUrl: "https://ti-escolar.vercel.app/admin/login",
+  painelUrl: "https://app.tiescolar.com.br/admin/login",
 };
 
 /** Endereço em uma linha, para o rodapé. Omite o que ainda está pendente. */

@@ -1,0 +1,15 @@
+# Nada de segredo local nem lixo de build dentro da imagem — o Dockerfile faz `COPY . .`,
+# e um `.env` esquecido aqui viraria camada publicada.
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+htmlcov/
+.coverage

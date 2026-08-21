@@ -2,8 +2,8 @@ name: Site — build & deploy (Cloudflare Pages)
 
 # Landing page institucional (`site/`, tiescolar.com.br).
 #
-# Diferente do back-end — que o Render publica sozinho no push à main — a LP é um
-# export estático publicado na Cloudflare Pages por este workflow.
+# Como o back-end (que também não publica sozinho: Render é deploy manual, Fly é
+# `fly deploy`), a LP é um export estático publicado na Cloudflare Pages por este workflow.
 #
 # Pré-requisitos (uma vez só, ver site/README.md):
 #   1. Projeto Pages criado na Cloudflare com o nome de CF_PROJECT_NAME abaixo.
