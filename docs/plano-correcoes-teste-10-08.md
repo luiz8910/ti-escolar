@@ -55,6 +55,23 @@ construir do zero.
 > (decisão D) e o volume inicial é pequeno —, mas fica registrado que **a migração de bytes
 > ganhou um segundo tipo de arquivo** para mover.
 
+> **29/ago/2026 — os buckets saíram do papel.** `ti-escolar-190446415519-sa-east-1-an`
+> (produção) e `ti-escolar-homolog-190446415519-sa-east-1-an` (homolog), em `sa-east-1`,
+> criados pelo console com o que o §0.4 pede e com configuração idêntica: acesso público
+> bloqueado nas quatro chaves — **e também no nível da conta**, que estava desligado —, ACLs
+> desligadas, versionamento **desligado**, política que nega `aws:SecureTransport = false` e
+> lifecycle `rede-de-seguranca-doc-395d` expirando `doc/` em **395 dias** (365 de
+> `DOCUMENTO_RETENCAO_DIAS` + 30 de folga), mais o descarte de uploads multipart incompletos
+> em 7 dias. **Uma divergência consciente:** a criptografia ficou na chave gerenciada
+> `aws/s3` em vez de CMK própria — sem *crypto-shredding*, portanto. **Continua faltando** o
+> usuário IAM de cada ambiente, que é o que destrava o adaptador (§0.6). Enquanto o adaptador
+> não existir, nada disso tem efeito: os bytes seguem no `bytea`.
+>
+> **A armadilha do IAM com SSE-KMS:** como o bucket criptografa com KMS, uma policy só de
+> `s3:PutObject`/`GetObject` **não basta** — o `PutObject` falha com `AccessDenied` na hora
+> de gerar a chave de dados. A policy precisa de `kms:GenerateDataKey` e `kms:Decrypt`,
+> restritos por `kms:ViaService = s3.sa-east-1.amazonaws.com`.
+
 Não veio do teste: é a troca de casa dos bytes dos documentos. Entraria **antes da Fase 2**
 por uma razão prática — a Fase 2 acrescenta a **foto do aluno**, e fazer isso com o storage
 antigo significa gravar as fotos no Postgres para migrá-las de novo depois.
@@ -144,11 +161,11 @@ transação**, e ou os dois existem ou nenhum existe. Com o S3 isso acaba.
 | **Block Public Access** | ligado na conta **e** no bucket | o conteúdo é dado de saúde de menor |
 | **Object Ownership** | `BucketOwnerEnforced` (ACLs desligadas) | ACL é a forma clássica de abrir um bucket sem perceber |
 | **Bucket policy** | `Deny` quando `aws:SecureTransport = false` | recusa qualquer acesso fora de TLS |
-| **Criptografia** | SSE-KMS com CMK própria | auditoria por objeto no CloudTrail + *crypto-shredding* |
+| **Criptografia** | SSE-KMS — hoje com a chave gerenciada `aws/s3`, não com CMK própria | auditoria por objeto no CloudTrail + *crypto-shredding* — este segundo, com `aws/s3`, **não se tem** |
 | **Versionamento** | **desligado** — ou ligado com expiração de versões antigas em ≤ 7 dias | ver o alerta abaixo |
 | **Lifecycle** | expiração em `DOCUMENTO_RETENCAO_DIAS + 30` | **rede de segurança**, nunca o mecanismo principal |
 | **IAM** | usuário dedicado; só `PutObject`/`GetObject`/`DeleteObject`/`ListBucket` no ARN do bucket | nada de `s3:*` |
-| **Ambientes** | buckets separados para homolog e produção | hoje o Render é homolog e produção não existe |
+| **Ambientes** | buckets separados para homolog e produção | os dois existem, com a mesma configuração — falta só a credencial de cada um |
 
 > ⚠️ **A armadilha do versionamento.** Com versionamento ligado e sem regra de expiração de
 > versões não-correntes, o `DeleteObject` do expurgo **não apaga nada**: cria um *delete
@@ -664,7 +681,7 @@ bytes já estiverem no bucket. É de propósito — é o que torna a troca rever
 | **C** | Blacklist: a recorrência | **Recomendação aceita** | 3 documentos descartados do mesmo número em 7 dias → o painel **sugere** o bloqueio. O bloqueio é sempre humano. Número bloqueado continua sendo atendido em texto; só a mídia é recusada. |
 | **D** | Foto do aluno | **Opcional** | Sem campo obrigatório e sem "dispensa registrada" — o formulário aceita aluno sem foto, e a tela não cobra. Simplifica a validação e reduz o dado sensível guardado por padrão, o que é bom para a LGPD. |
 | **E** | `telefone_2` nos disparos | **Recomendação aceita** | Não entra. `telefone` segue sendo o único número que roteia inbound e recebe outbound; `telefone_2` é contato de emergência, e a tela diz isso em texto para a secretaria não supor o contrário. |
-| **F** | Região do bucket | **`sa-east-1`** (registrado) | Fase adiada. A env `AWS_REGION` já nasce com `sa-east-1` como valor de exemplo, para que a escolha não se perca. |
+| **F** | Região do bucket | **`sa-east-1`** (feito) | Bucket criado em 29/ago/2026 nessa região — `ti-escolar-190446415519-sa-east-1-an`, no *namespace regional da conta*, em que o console anexa `-<conta>-<região>-an` ao prefixo e o nome não é editável depois. |
 | **G** | SDK da AWS | **`aioboto3`** (registrado) | Fase adiada. Nenhuma dependência entra no `pyproject.toml` agora — acrescentar SDK sem adaptador seria peso morto no build. |
 
 ---
