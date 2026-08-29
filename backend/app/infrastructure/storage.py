@@ -8,10 +8,48 @@ byte de verdade.
 
 **Por que isso não pode ficar assim:** o que se guarda aqui é atestado médico de criança e
 documento de matrícula, e o Neon cobra por GB. Uma escola em época de matrícula sobe
-centenas de fotos; dez escolas fazem isso todo fevereiro. O adaptador de object storage
-(Cloudflare R2, que não cobra egress e mora na conta que já existe por causa da landing
-page) é o próximo passo, e a porta existe justamente para que ele entre sem tocar em
-``documentos_recebidos``.
+centenas de fotos; dez escolas fazem isso todo fevereiro.
+
+**Destino decidido: Amazon S3** (Fase 0 de ``docs/plano-correcoes-teste-10-08.md``), bucket
+``ti-escolar-190446415519-sa-east-1-an`` em ``sa-east-1`` — mesma região do Fly (``gru``) e
+do Neon. Este docstring apontava o **Cloudflare R2**, pelo egress gratuito; a escolha mudou
+e o senão fica registrado: a AWS cobra egress, e como o §6k proíbe URL pública **todo
+download passa pela API — paga-se saída duas vezes** (S3 → Fly → navegador). Na escala do
+TI-Escolar isso é da ordem de poucos dólares ao mês, e o S3 dá em troca três coisas que
+pesam mais aqui: **lifecycle** nativo como rede de segurança do prazo de retenção (§6k),
+**SSE-KMS** com chave própria — auditoria por objeto e *crypto-shredding* se um dia for
+preciso inutilizar o acervo — e **versionamento/Object Lock** maduros para quando a
+política de backup sair do papel. R2 volta a fazer sentido se o egress virar linha de
+custo real.
+
+**Os buckets existem desde 29/ago/2026** — ``ti-escolar-190446415519-sa-east-1-an``
+(produção) e ``ti-escolar-homolog-190446415519-sa-east-1-an`` (homolog), em ``sa-east-1`` e
+com configuração idêntica: acesso público bloqueado nas quatro chaves **e também no nível da
+conta**, ACLs desligadas (``BucketOwnerEnforced``), política que nega qualquer acesso com
+``aws:SecureTransport = false``, e uma regra de lifecycle ``rede-de-seguranca-doc-395d``
+que expira o prefixo ``doc/`` em **395 dias** — ``DOCUMENTO_RETENCAO_DIAS`` (365) mais 30 de
+folga. O lifecycle é **rede de segurança, não mecanismo**: ele expira por idade do objeto,
+enquanto o ``expira_em`` do §6k é por documento e apaga o metadado junto. Ele filtra por
+``doc/`` de propósito — a foto do aluno mora em ``foto/`` e vive enquanto ele estiver
+matriculado; uma regra sem prefixo apagaria a foto de quem está na escola.
+
+**Criptografia: SSE-KMS com a chave gerenciada** ``aws/s3``, não com CMK própria — decisão de
+29/ago/2026 para não pagar a chave antes de o adaptador existir. É o senão a registrar: sem
+CMK não há política de chave própria nem *crypto-shredding*, que foi metade do argumento para
+preferir o S3 ao R2. Trocar depois só vale para objetos novos.
+
+**Duas escolhas do bucket que o adaptador não pode desfazer:** acesso público bloqueado nas
+quatro chaves (§6k — os bytes saem pelo endpoint autenticado da API, que audita
+``documento.baixar``; **nada de URL pré-assinada**, que passaria por fora do escopo por
+tenant e da auditoria) e **versionamento desativado de propósito** — com versionamento,
+``DeleteObject`` só cria um *delete marker* e o atestado sobreviveria ao expurgo de
+``DOCUMENTO_RETENCAO_DIAS``.
+
+**O que ainda falta:** o adaptador em si (``boto3`` não é dependência), a fábrica
+``criar_arquivo_storage(settings)`` escolhendo pelo ``ARQUIVO_STORAGE``
+(``postgres`` | ``s3``) — hoje ``PostgresArquivoStorage`` é instanciado à mão em quatro
+pontos de ``interfaces/deps.py`` —, a credencial IAM escopada só nesse ARN e a migração dos
+bytes que já estão no ``bytea``.
 
 ``ArquivoStorageMemoria`` cobre teste e execução sem banco.
 """
