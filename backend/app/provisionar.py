@@ -47,13 +47,14 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from app.application.use_cases import IndexarConhecimento
+from app.application.conhecimento_use_cases import IngerirDocumento
 from app.bootstrap import CAMPOS_SENHA_DEMO, valor_default
 from app.config import Settings, get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
-from app.infrastructure.db.models import ConhecimentoORM, TenantORM, WabaORM
+from app.infrastructure.db.models import TenantORM, WabaORM
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories_admin import SqlUsuarioRepository
+from app.infrastructure.db.repositories_conhecimento import SqlFonteConhecimentoRepository
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.factories import criar_embedder
 from app.infrastructure.security import hash_senha
@@ -333,21 +334,31 @@ async def provisionar(
             )
 
         # --- Base de conhecimento (RAG) ---------------------------------------------- #
+        # **Via ``IngerirDocumento``, e não ``IndexarConhecimento``.** A diferença não é de
+        # estilo: `IndexarConhecimento` escreve trechos soltos no vector store, sem a
+        # ``FonteConhecimento`` que os agrupa — e o painel `/admin/conhecimento` lista
+        # fontes. Conteúdo indexado pelo caminho curto **não aparece na tela** e, portanto,
+        # não pode ser editado, desativado nem reindexado por ninguém.
+        #
+        # No seed isso é inócuo (banco descartável). Aqui era um defeito de verdade: a
+        # escola nasceria com uma base invisível, indexada com embeddings `fake`, que só
+        # sairia dali por `DELETE` no banco de produção. Ver a nota sobre o provedor abaixo,
+        # que só é acionável **porque** existe fonte para reindexar.
         if conhecimento:
-            ja_tem = (
-                await session.execute(
-                    select(ConhecimentoORM)
-                    .where(ConhecimentoORM.tenant_id == escola.id)
-                    .limit(1)
+            fontes = SqlFonteConhecimentoRepository(session)
+            if await fontes.listar(tenant_id=escola.id):
+                resultado.notas.append(
+                    "a escola já tem conhecimento cadastrado; nada foi acrescentado."
                 )
-            ).scalar_one_or_none()
-            if ja_tem is None:
-                indexar = IndexarConhecimento(
-                    embedder=criar_embedder(settings), store=PgVectorStore(session)
+            else:
+                ingerir = IngerirDocumento(
+                    embedder=criar_embedder(settings),
+                    store=PgVectorStore(session),
+                    fontes=fontes,
                 )
                 for tipo, titulo, conteudo in conhecimento:
-                    await indexar.executar(
-                        tenant_id=escola.id, tipo=tipo, titulo=titulo, conteudo=conteudo
+                    await ingerir.executar(
+                        tenant_id=escola.id, nome=titulo, conteudo=conteudo, tipo=tipo
                     )
                 resultado.conhecimento_indexado = len(conhecimento)
                 if settings.embeddings_provider not in ("openai", "openai_compatible"):
@@ -357,12 +368,9 @@ async def provisionar(
                     resultado.notas.append(
                         "ATENÇÃO: EMBEDDINGS_PROVIDER está em 'fake' — o conteúdo foi "
                         "indexado com vetores sem semântica e a busca não vai recuperar "
-                        "o trecho certo. Configure o provedor e reindexe pelo painel."
+                        "o trecho certo. Configure o provedor e reindexe abrindo cada "
+                        "documento em /admin/conhecimento e salvando (salvar reindexa)."
                     )
-            else:
-                resultado.notas.append(
-                    "a escola já tem conhecimento indexado; nada foi acrescentado."
-                )
 
         await session.commit()
     return resultado
