@@ -22,17 +22,18 @@
 | **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ✅ **Cartão adicionado** (10/ago/2026) |
 | **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management`. Desde 29/ago também na **Fly** (produção): o token é do portfólio, não do ambiente |
-| **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Apontado para a PRODUÇÃO** (29/ago/2026) — `https://api.tiescolar.com.br/api/webhook/meta`. Era o Render até então; a Meta aceita **uma URL por app**, então a troca tirou o homolog do ar de propósito (§11) |
-| **Canal ligado** | ✅ **Na produção** (Fly, 29/ago/2026) — `/health` de `api.tiescolar.com.br` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso. O **homolog voltou para `demo`** (§11.2) |
+| **Webhook apontado na Meta** (callback + campo `messages`) | ⏸️ **Ainda no Render** — a troca para `https://api.tiescolar.com.br/api/webhook/meta` está **bloqueada pelo `META_APP_SECRET`**, que falta na Fly. Com `META_VALIDATE_SIGNATURE=true` e sem o segredo, a produção responderia **403 a todo evento**: apontar agora derrubaria o canal inteiro em vez de migrá-lo (§11.1) |
+| **Canal ligado** | ✅ **Na produção** (Fly, 29/ago/2026) — `/health` de `api.tiescolar.com.br` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso. O homolog **ainda** está em `meta`; volta para `demo` junto com a troca do webhook (§11.2) |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **WABA inscrita no app** (`subscribed_apps`) | ✅ **Feita** (10/ago/2026) — sem interface no console, ver §5.1 |
 | **Inbound real ponta a ponta** | ✅ **Funcionando** (10/ago/2026) — mensagem de WhatsApp real recebida, respondida pelo bot e registrada no histórico da escola |
 | **Templates aprovados** | ⚠️ `retomada_atendimento` **submetido em 10/ago/2026, em análise**; `hello_world` ativo. Ver §7.1 |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
-| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada e **ligada** na produção (`META_VALIDATE_SIGNATURE=true` no `fly.toml` desde o primeiro deploy) |
+| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada e ligada por config (`META_VALIDATE_SIGNATURE=true` no `fly.toml` desde o primeiro deploy) — ⚠️ mas **sem `META_APP_SECRET` gravado**, então hoje ela recusa tudo. É o item que trava a troca do webhook |
+| **Provedor de LLM na produção** | ⏸️ **`fake`** — o transporte funciona e o **conteúdo é mentira**. A base de conhecimento da escola demo foi indexada com embeddings `fake` (vetores sem semântica) e **precisa ser reindexada** quando a chave entrar |
 | **Onboarding de escola pelo painel** | ✅ **Implementado** (29/ago/2026) — cadastro, verificação, inscrição e conclusão pela Graph API, em `/admin/escolas/whatsapp` (§12) |
-| **Escola de demonstração na produção** | ✅ **Provisionada** (29/ago/2026) via `python -m app.provisionar` — sem dado fictício de aluno (§11.3) |
+| **Escola de demonstração na produção** | ✅ **Provisionada** (29/ago/2026) via `python -m app.provisionar` — tenant `53de82fb-e3d1-4ba6-826c-651a99b9c644`, número `1231892910008454` vinculado, `aviso_geral` e `retomada_atendimento` importados e **aprovados**. O diagnóstico do painel responde **pronta** nos 6 passos. Sem dado fictício de aluno (§11.3) |
 
 > ✅ **O produto atende e dispara pela Meta.** O webhook trata os dois caminhos do envelope:
 > status de entrega e **mensagens recebidas**, roteadas para a escola dona do
@@ -725,8 +726,10 @@ sinaliza as escolas afetadas.
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)
 - [x] Nome de exibição aprovado (`AVAILABLE_WITHOUT_REVIEW`, medido pela API)
 - [x] Forma de pagamento na WABA de produção (cartão, 10/ago)
-- [x] **Canal migrado para a produção** (29/ago) — webhook, segredos e `MESSAGE_CHANNEL`
-      na Fly; homolog de volta em `demo` (§11)
+- [~] **Canal migrado para a produção** (29/ago) — `MESSAGE_CHANNEL=meta`,
+      `META_ACCESS_TOKEN` e `META_PHONE_NUMBER_ID` na Fly, deploy feito, `/health`
+      responde `canal: meta`. **Faltam** os dois passos que dependem do
+      `META_APP_SECRET`: apontar o webhook e desligar o homolog (§11.1)
 - [x] **Escola de demonstração provisionada na produção** com o `phone_number_id`
       cadastrado — sem ela o inbound chega e é descartado (§11.3)
 - [x] **Onboarding de número automatizado no painel** (§12) — o roteiro das §§2 e 5.1
