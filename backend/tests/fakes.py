@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from app.domain.ports import EnvioRecusado
 from app.domain.entities import (
     Aluno,
+    EtapaOnboarding,
     NumeroBloqueado,
+    NumeroNaMeta,
     AvisoTemporizado,
     Broadcast,
     Contato,
@@ -1399,3 +1402,121 @@ def template_aprovado(template: MessageTemplate, *, waba_id=WABA_PADRAO_ID) -> M
     """Marca o template como aprovado **naquela conta** — o estado que libera o disparo."""
     template.wabas = [TemplateNaWaba(waba_id=waba_id, status=StatusTemplate.APROVADO)]
     return template
+
+
+class FakeGestorDeNumeros:
+    """Meta de mentira para o onboarding: guarda o número e avança a etapa a cada passo.
+
+    Modela a coisa que o adaptador real tem de acertar e que é fácil de errar: **as etapas
+    são sequenciais**. Verificar sem ter cadastrado, ou registrar sem ter verificado, é o
+    que a Meta recusa — e é o que o teste precisa poder reproduzir sem rede.
+    """
+
+    def __init__(self, *, erro: Exception | None = None) -> None:
+        self.numeros: dict[str, NumeroNaMeta] = {}
+        self.codigos_pedidos: list[tuple[str, str]] = []
+        self.contas_inscritas: list[str] = []
+        self.perfis: list[str] = []
+        self._erro = erro
+        self._proximo_id = 1
+
+    def _falhar_se_preciso(self) -> None:
+        if self._erro:
+            raise self._erro
+
+    def registrar_numero(self, numero: NumeroNaMeta) -> NumeroNaMeta:
+        """Semeia um número já existente na Meta (para testar o diagnóstico)."""
+        self.numeros[numero.phone_number_id] = numero
+        return numero
+
+    async def descrever(self, *, phone_number_id: str) -> NumeroNaMeta | None:
+        return self.numeros.get(phone_number_id)
+
+    async def listar(self, *, meta_waba_id: str) -> list[NumeroNaMeta]:
+        return list(self.numeros.values())
+
+    async def adicionar(
+        self, *, meta_waba_id: str, codigo_pais: str, numero: str, nome_exibicao: str
+    ) -> NumeroNaMeta:
+        self._falhar_se_preciso()
+        novo_id = f"pnid-{self._proximo_id}"
+        self._proximo_id += 1
+        criado = NumeroNaMeta(
+            phone_number_id=novo_id,
+            numero_exibicao=f"+{codigo_pais}{numero}",
+            nome_exibicao=nome_exibicao,
+            etapa=EtapaOnboarding.NAO_VERIFICADO,
+            status_nome="PENDING_REVIEW",
+        )
+        self.numeros[novo_id] = criado
+        return criado
+
+    async def solicitar_codigo(
+        self, *, phone_number_id: str, metodo: str = "SMS", idioma: str = "pt_BR"
+    ) -> None:
+        self._falhar_se_preciso()
+        self.codigos_pedidos.append((phone_number_id, metodo))
+
+    async def confirmar_codigo(self, *, phone_number_id: str, codigo: str) -> NumeroNaMeta:
+        self._falhar_se_preciso()
+        atual = self.numeros[phone_number_id]
+        novo = replace(atual, etapa=EtapaOnboarding.NAO_REGISTRADO)
+        self.numeros[phone_number_id] = novo
+        return novo
+
+    async def registrar(self, *, phone_number_id: str, pin: str) -> NumeroNaMeta:
+        self._falhar_se_preciso()
+        atual = self.numeros[phone_number_id]
+        novo = replace(
+            atual,
+            etapa=EtapaOnboarding.REGISTRADO,
+            qualidade="GREEN",
+            status_nome="AVAILABLE_WITHOUT_REVIEW",
+        )
+        self.numeros[phone_number_id] = novo
+        return novo
+
+    async def inscrever_no_app(self, *, meta_waba_id: str) -> bool:
+        self._falhar_se_preciso()
+        self.contas_inscritas.append(meta_waba_id)
+        return True
+
+    async def definir_perfil(self, *, phone_number_id: str, **kwargs) -> bool:
+        self._falhar_se_preciso()
+        self.perfis.append(phone_number_id)
+        return True
+
+
+class FakeTenantRepoCompleto:
+    """Escolas com leitura **e escrita** — o onboarding grava o ``phone_number_id``."""
+
+    def __init__(self, tenants: list) -> None:
+        self.tenants = list(tenants)
+
+    async def obter(self, tenant_id):
+        return next((t for t in self.tenants if t.id == tenant_id), None)
+
+    async def por_slug(self, slug):
+        return next((t for t in self.tenants if t.slug == slug), None)
+
+    async def por_meta_phone_number_id(self, phone_number_id):
+        if not phone_number_id:
+            return None
+        return next(
+            (t for t in self.tenants if t.meta_phone_number_id == phone_number_id), None
+        )
+
+    async def listar(self):
+        return list(self.tenants)
+
+    async def criar(self, tenant):
+        self.tenants.append(tenant)
+        return tenant
+
+    async def atualizar(self, tenant):
+        for i, existente in enumerate(self.tenants):
+            if existente.id == tenant.id:
+                self.tenants[i] = tenant
+                return tenant
+        self.tenants.append(tenant)
+        return tenant

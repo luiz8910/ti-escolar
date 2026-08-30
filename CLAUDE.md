@@ -189,10 +189,21 @@ tarde já foi pago uma vez.
 - **`MESSAGE_CHANNEL=meta` sem `META_ACCESS_TOKEN` cai no canal demo em silêncio:** o processo
   sobe, o WhatsApp não está no ar e nada acusa erro. `canal_efetivo(settings)` é a fonte única
   de qual adaptador está em uso. (§9c)
+- **A Meta aceita UMA URL de webhook por app.** Não há webhook "de teste" e "de produção" —
+  há *o* webhook. Desde 29/ago/2026 ele aponta para a **produção**
+  (`https://api.tiescolar.com.br/api/webhook/meta`, com o `/api`), e por isso o **homolog
+  está em `MESSAGE_CHANNEL=demo`**: manter os dois ligados é impossível, e um homolog em
+  `meta` ainda dispararia WhatsApp real a partir de dado de teste. Ligar o canal num
+  ambiente é desligá-lo no outro. (§9c, [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) §11)
 - **Nenhum dos dois back-ends publica sozinho:** mergear na `main` não sobe a API. No
   **homolog** (Render) é *Manual Deploy → Deploy latest commit*; na **produção**
   (Fly.io, app `ti-escolar`) é `cd backend && fly deploy`. (§12a,
   [`docs/producao-fly.md`](docs/producao-fly.md))
+- **Produção não semeia, mas agora provisiona.** `app.seed` é proibido em `APP_ENV=production`
+  e continua sendo; o que existe para pôr **uma** escola de pé num banco real é
+  `python -m app.provisionar` — tenant, admin (senha do ambiente), conta e conhecimento
+  opcional, **sem** aluno/responsável/ficha fictícios. (§10,
+  [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) §11.3)
 - **O dado mais sensível da base é documento de menor** (atestado, laudo, `cor_raca`, NIS):
   nenhuma URL pública, download auditado, prazo de retenção com expurgo. (§6k, §17)
 

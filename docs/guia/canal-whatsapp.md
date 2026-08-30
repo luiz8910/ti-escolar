@@ -251,9 +251,33 @@ do número — e portanto do canal — com a plataforma.
 - **Caminho crítico do prazo:** o **nome de exibição** de cada número (o nome da escola, que os
   pais veem) passa por **revisão da Meta**, que é assíncrona. Dispare esse passo no início do
   onboarding, não no fim.
-- **Automação (roadmap):** o registro de número é automatizável pela Graph API — criar/registrar
-  o número na WABA, disparar o código de verificação e confirmá-lo, definir nome de exibição e
-  assinar o webhook são todos endpoints da API, com o token de usuário do sistema. O que **não**
-  é automatizável é o insumo físico: obter o chip e ler o SMS/ligação. Ou seja, dá para reduzir
-  o onboarding a "cadastrar a escola no painel + digitar o código recebido", mas não a zero
-  toque.
+- **Automação — ✅ implementada em 29/ago/2026.** O que era roadmap virou tela:
+  **`/admin/escolas/whatsapp?tenant=<id>`** (botão *WhatsApp* na lista de escolas, só super
+  admin). A porta é `GestorDeNumeros` — a **terceira** porta da Meta, ao lado de
+  `MessageChannel` (enviar) e `CatalogoTemplates` (administrar template), porque administrar
+  **o número** é outra família de endpoints e não cabe em nenhuma das duas.
+
+  | Passo | Graph API | Onde |
+  |---|---|---|
+  | Cadastrar o número na conta | `POST /{waba}/phone_numbers` | `CadastrarNumeroDaEscola` |
+  | Pedir o código | `POST /{id}/request_code` | `PedirCodigoDeVerificacao` |
+  | Confirmar o código | `POST /{id}/verify_code` | `ConfirmarCodigoDeVerificacao` |
+  | Inscrever (PIN) | `POST /{id}/register` | `InscreverNumeroNaCloudApi` |
+  | Inscrever a conta no app + replicar templates | `POST /{waba}/subscribed_apps` | `ConcluirOnboardingDaEscola` |
+  | Diagnóstico ("o que falta?") | `GET /{id}?fields=…` | `DiagnosticarWhatsAppDaEscola` |
+
+  **O ganho não é economizar cliques.** É que os passos silenciosos deste go-live — conta não
+  inscrita no app, `phone_number_id` não cadastrado na escola, número verificado mas não
+  inscrito — deixam de ser um webhook mudo e viram **uma linha vermelha com o motivo escrito**.
+  O diagnóstico pergunta à **Meta**, não ao banco: o banco sabe o id que digitamos, só a Meta
+  sabe se ele funciona hoje.
+
+  **Duas coisas continuam de fora, e continuarão:** o insumo físico (chip, aparelho, ler o
+  código) e o **PIN de duas etapas**, que não é persistido — a Meta o exige de novo para
+  reinscrever o número, e guardar num banco multi-tenant o segredo que reassume o canal de
+  todas as escolas trocaria um passo manual por um alvo.
+
+- **Provisionar a escola num banco real** (`python -m app.provisionar`): o meio-termo entre o
+  `bootstrap` (só super admin) e o `seed` (vitrine inteira, proibida em produção). Cria
+  tenant + admin + conta + base de conhecimento opcional, com a senha vinda do ambiente e
+  **sem** aluno, responsável ou ficha fictícios. Ver `docs/producao-whatsapp.md` §11.3.

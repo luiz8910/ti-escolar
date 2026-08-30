@@ -63,7 +63,14 @@
     `200 OK` não depender da latência da LLM (§9e.1).
   - [x] Inbound de **mídia** (imagem/documento): baixado pela Graph API e guardado como
     documento da escola (§6k). Áudio segue fora, por exigir transcrição.
-  - [ ] Automação do registro de número na WABA pela Graph API (§9e.3).
+  - [x] **Automação do registro de número na WABA pela Graph API** (29/ago/2026, §9e.3) —
+    porta `GestorDeNumeros` + adaptador `MetaGestorDeNumeros`, casos de uso em
+    `app/application/onboarding_use_cases.py`, rotas em
+    `/api/admin/escolas/{id}/whatsapp/*` e tela em `web/app/admin/escolas/whatsapp/`.
+    Cadastra o número, pede e confirma o código, inscreve com PIN, inscreve a conta no app
+    e replica os templates. **Diagnostica perguntando à Meta**, o que é o ponto: os passos
+    silenciosos do go-live viram linha vermelha com motivo, em vez de webhook mudo.
+    Continua manual só o insumo físico (chip + ler o código) e o PIN, que não é persistido.
 - [x] **Canal Meta WhatsApp Cloud API** como canal único do produto, com a **assinatura
   `X-Hub-Signature-256`** validada no webhook. Ver §9c e §9e.2.
 - [x] **Inbound real do WhatsApp** pelo webhook da Meta: mensagens recebidas são roteadas à
@@ -151,9 +158,12 @@
   mais um `downgrade` de rollback sozinho**), e o `[processes]` sobrescreve o `CMD` para tirar
   o alembic do boot — ao mexer num dos dois, conferir o outro. **Pendente:** o CNAME
   `api` → `8wxg2m8.ti-escolar.fly.dev` na Cloudflare (**DNS only**, senão o desafio ACME não
-  chega e o certificado nunca sai) e os segredos de LLM e da Meta. O canal sobe em
-  `MESSAGE_CHANNEL=demo` de propósito: a Meta só aceita uma URL de webhook por app, e ligá-lo
-  aqui tiraria o inbound do homolog do ar.
+  chega e o certificado nunca sai).
+  **Canal ligado em 29/ago/2026** (`MESSAGE_CHANNEL=meta` + segredos da Meta e de LLM). Ele
+  subiu em `demo` porque a Meta aceita **uma URL de webhook por app** e os dois ambientes não
+  podem conviver; a escolha foi feita a favor da produção, e o **homolog voltou para `demo`**
+  — inclusive o outbound, que senão seguiria capaz de mandar WhatsApp real a partir de dado
+  de teste. Ver [`docs/producao-whatsapp.md`](../producao-whatsapp.md) §11.
 
 - [x] **Painel (`web/`) em produção na Cloudflare Pages** (21/ago/2026) — projeto
   `ti-escolar-web`, domínio `app.tiescolar.com.br`, publicado por

@@ -11,6 +11,7 @@ from app.domain.ports import (
     EmailSender,
     Embedder,
     FonteMidia,
+    GestorDeNumeros,
     LeitorDocumento,
     LLMProvider,
     MessageChannel,
@@ -143,6 +144,26 @@ def criar_catalogo_templates(settings: Settings) -> CatalogoTemplates:
     from app.infrastructure.channel.meta_templates import MetaCatalogoTemplates
 
     return MetaCatalogoTemplates(access_token=settings.meta_access_token or "")
+
+
+def criar_gestor_de_numeros(settings: Settings) -> GestorDeNumeros:
+    """Adaptador de provisionamento de número, alinhado ao canal **efetivo** (§9c).
+
+    Mesmo escopo de token do catálogo (``whatsapp_business_management``) e mesma razão
+    para depender do canal efetivo e não da env: sem token não há a quem perguntar, e um
+    gestor que tentasse falar com a Graph API sem credencial transformaria cada abertura
+    da tela de onboarding num erro de rede.
+    """
+    if canal_efetivo(settings) != "meta":
+        from app.infrastructure.channel.meta_numeros import GestorDeNumerosAusente
+
+        return GestorDeNumerosAusente(
+            "O canal do WhatsApp está em modo demo — configure MESSAGE_CHANNEL=meta e "
+            "META_ACCESS_TOKEN para cadastrar números na Meta."
+        )
+    from app.infrastructure.channel.meta_numeros import MetaGestorDeNumeros
+
+    return MetaGestorDeNumeros(access_token=settings.meta_access_token or "")
 
 
 def criar_email_sender(settings: Settings) -> EmailSender:

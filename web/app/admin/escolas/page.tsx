@@ -482,6 +482,18 @@ function EscolaLinha({
         >
           Abrir
         </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          // O onboarding do número mora numa tela própria porque cada passo dele é uma
+          // chamada à Meta com efeito real (consome vaga no portfólio, dispara SMS,
+          // inscreve o número). Misturá-lo ao formulário de edição faria "salvar" ter
+          // consequências fora do banco.
+          onClick={() => router.push(`/admin/escolas/whatsapp?tenant=${escola.id}`)}
+          title="Cadastrar/verificar o número desta escola na Meta e conferir o que falta para ela atender"
+        >
+          WhatsApp
+        </Button>
         <Button variant="secondary" size="sm" onClick={() => setEditando(true)}>
           Editar
         </Button>

@@ -21,16 +21,18 @@
 | **Número real registrado** | ✅ **Verificado e inscrito** (09/ago/2026) — `+55 15 99753-6978`, `phone_number_id` `1231892910008454` |
 | **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ✅ **Cartão adicionado** (10/ago/2026) |
-| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado e no Render** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management` |
-| **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Configurado** (10/ago/2026) — callback `https://ti-escolar.onrender.com/api/webhook/meta`, handshake verificado, campo `messages` **Assinado** |
-| **Canal ligado** (`MESSAGE_CHANNEL=meta` no Render) | ✅ **Ligado** (10/ago/2026) — `/health` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso |
+| **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management`. Desde 29/ago também na **Fly** (produção): o token é do portfólio, não do ambiente |
+| **Webhook apontado na Meta** (callback + campo `messages`) | ✅ **Apontado para a PRODUÇÃO** (29/ago/2026) — `https://api.tiescolar.com.br/api/webhook/meta`. Era o Render até então; a Meta aceita **uma URL por app**, então a troca tirou o homolog do ar de propósito (§11) |
+| **Canal ligado** | ✅ **Na produção** (Fly, 29/ago/2026) — `/health` de `api.tiescolar.com.br` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso. O **homolog voltou para `demo`** (§11.2) |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **WABA inscrita no app** (`subscribed_apps`) | ✅ **Feita** (10/ago/2026) — sem interface no console, ver §5.1 |
 | **Inbound real ponta a ponta** | ✅ **Funcionando** (10/ago/2026) — mensagem de WhatsApp real recebida, respondida pelo bot e registrada no histórico da escola |
 | **Templates aprovados** | ⚠️ `retomada_atendimento` **submetido em 10/ago/2026, em análise**; `hello_world` ativo. Ver §7.1 |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
-| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada — falta **ligar** em produção |
+| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada e **ligada** na produção (`META_VALIDATE_SIGNATURE=true` no `fly.toml` desde o primeiro deploy) |
+| **Onboarding de escola pelo painel** | ✅ **Implementado** (29/ago/2026) — cadastro, verificação, inscrição e conclusão pela Graph API, em `/admin/escolas/whatsapp` (§12) |
+| **Escola de demonstração na produção** | ✅ **Provisionada** (29/ago/2026) via `python -m app.provisionar` — sem dado fictício de aluno (§11.3) |
 
 > ✅ **O produto atende e dispara pela Meta.** O webhook trata os dois caminhos do envelope:
 > status de entrega e **mensagens recebidas**, roteadas para a escola dona do
@@ -721,8 +723,14 @@ sinaliza as escolas afetadas.
 - [x] Número registrado, **verificado e inscrito** (chip nosso) — `phone_number_id`
       `1231892910008454`; PIN de 6 dígitos guardado fora do repositório (§2, passo 5)
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)
-- [ ] Nome de exibição aprovado
-- [ ] Forma de pagamento na WABA de produção
+- [x] Nome de exibição aprovado (`AVAILABLE_WITHOUT_REVIEW`, medido pela API)
+- [x] Forma de pagamento na WABA de produção (cartão, 10/ago)
+- [x] **Canal migrado para a produção** (29/ago) — webhook, segredos e `MESSAGE_CHANNEL`
+      na Fly; homolog de volta em `demo` (§11)
+- [x] **Escola de demonstração provisionada na produção** com o `phone_number_id`
+      cadastrado — sem ela o inbound chega e é descartado (§11.3)
+- [x] **Onboarding de número automatizado no painel** (§12) — o roteiro das §§2 e 5.1
+      virou tela; o que sobra manual é ler o código de 6 dígitos
 - [x] Token de usuário do sistema gerado e no Render (10/ago — `ti_escolar_backend`, sem
       expiração; ver §4 para o porquê de `Nunca`)
 - [x] Webhook configurado e **campo `messages` assinado** (10/ago) — salvar a URL **não**
@@ -743,6 +751,151 @@ sinaliza as escolas afetadas.
 - [~] Teste de fumaça por escola — **inbound provado em real** (10/ago: mensagem recebida,
       respondida e no histórico). Falta a parte de **outbound**, que depende de pagamento e
       templates, e o teste cruzado entre duas escolas (§9)
+
+---
+
+## 11. O canal mudou de ambiente (29/ago/2026)
+
+Até 29/ago/2026 o WhatsApp real vivia no **homolog** (Render). Não por escolha de
+arquitetura: foi ali que o inbound funcionou pela primeira vez (10/ago), e ali ficou. A
+produção na Fly subiu depois, em 21/ago, deliberadamente com `MESSAGE_CHANNEL=demo`.
+
+**Os dois não podem conviver, e a razão é dura:** a Meta aceita **uma única URL de webhook
+por app**. Não há "webhook de teste" e "webhook de produção" — há *o* webhook. Apontá-lo
+para a Fly tira o inbound do Render do ar no mesmo instante, e não existe configuração que
+evite isso. Só resta escolher, e a escolha certa é a produção: é ela que tem domínio
+próprio, banco na região certa e é onde a escola cliente vai viver.
+
+### 11.1 A ordem da troca
+
+O passo do webhook é o **último** porque é o único com efeito fora da nossa
+infraestrutura. Invertê-lo troca um ambiente que funciona por um que ainda não subiu.
+
+1. **Segredos na Fly** (`fly secrets import`): `META_ACCESS_TOKEN`, `META_APP_SECRET`,
+   `META_PHONE_NUMBER_ID` e a chave de LLM. O token é o **mesmo** do homolog — ele é do
+   system user do portfólio, não do ambiente, e não há motivo para um segundo.
+2. **`MESSAGE_CHANNEL = "meta"`** no `fly.toml` e `cd backend && fly deploy`.
+3. **Conferir `GET https://api.tiescolar.com.br/health`** → `{"canal": "meta"}`. Este passo
+   vem antes do webhook de propósito: `canal` é o adaptador **efetivo**, então `demo` aqui
+   com a env em `meta` significa token faltando (§6.1.1) — e apontar o webhook para um
+   ambiente nesse estado produz o pior desfecho possível, com o inbound sendo atendido,
+   cobrando LLM e a resposta se perdendo.
+4. **Escola de demonstração provisionada** na produção (§11.3), com o `phone_number_id`
+   cadastrado. Sem isso o inbound chega e é **descartado**: não há tenant a quem entregar.
+5. **Só então**, no console da Meta: app → Casos de uso → *Configuração de produção* →
+   Configurar webhooks → Callback URL para
+   `https://api.tiescolar.com.br/api/webhook/meta`, mesmo verify token.
+   **Note o `/api`** — o prefixo do router é `/api/webhook/meta`; `docs/producao-fly.md`
+   trazia `/webhook/meta`, que responderia 404 no handshake.
+6. **Recarregar a página** e conferir que `messages` continua **Assinado**. O toggle muda
+   de cor sem necessariamente salvar (§5), e trocar a URL é exatamente o momento em que
+   ninguém reconfere.
+7. **Desligar o canal no homolog** (§11.2).
+
+### 11.2 Desligar o canal no homolog (Render)
+
+`MESSAGE_CHANNEL=demo` no painel do Render (**Environment** → salvar; salvar dispara
+redeploy automático, que é a única automação de deploy que aquele serviço tem).
+
+Por que desligar de vez, e não só parar os disparos: o inbound já sai do ar sozinho quando
+o webhook aponta para outro lugar. O que sobra em `meta` é o **outbound** — e ele continua
+capaz de enviar de verdade, a partir do número de produção, disparado por dado de teste.
+Uma tela de homolog clicada por engano mandaria WhatsApp real para número real, gastando a
+cota compartilhada do portfólio (§8) e arriscando a qualidade do número.
+
+Conferir: `GET https://ti-escolar.onrender.com/health` → `{"canal": "demo"}`.
+
+> **O homolog não fica sem WhatsApp por castigo.** Ele fica sem porque o canal é um
+> recurso **único e físico** — um número, um webhook, uma cota. Testar disparo em homolog
+> exigiria um segundo número, que consome uma das duas vagas do portfólio (§2.2) que estão
+> reservadas para escolas.
+
+### 11.3 A escola de demonstração na produção
+
+O banco de produção nasceu vazio de propósito: o `release_command` roda
+`python -m app.bootstrap`, que cria **só o super admin**. O seed de demonstração
+(`python -m app.seed`) é **proibido em produção** por `avaliar_seed`, e a proibição está
+certa — ele traz alunos, fichas e logins com senha versionada no repositório.
+
+Faltava o meio-termo, e ele agora existe: **`python -m app.provisionar`** cria *uma* escola
+com o mínimo para atender no WhatsApp — tenant, admin (senha vinda do ambiente, nunca a do
+repo), vínculo com a conta e, opcionalmente, uma base de conhecimento genérica. Sem aluno,
+sem responsável, sem ficha: dado de gente é dado de gente de verdade.
+
+```bash
+fly ssh console --app ti-escolar -C "sh -c '
+  PROVISIONAR_ADMIN_SENHA=<do gerenciador de senhas> \
+  python -m app.provisionar \
+    --nome \"Escola Demonstração\" --slug escola-demo \
+    --admin-email demo@tiescolar.com.br \
+    --numero +5515997536978 --phone-number-id 1231892910008454 \
+    --meta-waba-id 2116419572321695 --meta-business-id 940840332344260 \
+    --conhecimento demo'"
+```
+
+É **idempotente**: rodar de novo completa campo vazio e **não sobrescreve senha** de quem
+já existe — mesma regra do `bootstrap`. E recusa senha de exemplo do repositório, que é a
+regra do `avaliar_seed` sobrevivendo ao caminho novo.
+
+### 11.4 O que a troca **não** move
+
+- **Templates.** São da WABA, não do ambiente. O que estiver aprovado continua aprovado.
+- **A inscrição da WABA no app** (§5.1). É por conta, e a conta é a mesma.
+- **O número e o `phone_number_id`.** O chip não mudou de mão; só mudou quem atende o
+  webhook dele.
+- **A publicação do app** (§1.1). É estado do *app*, não da URL.
+
+O que **precisa** ser refeito do lado do banco é o cadastro da escola: o Neon de produção é
+outro banco, e o `phone_number_id` que roteia o inbound mora no `Tenant`. É exatamente o
+passo 4 acima — e esquecê-lo produz o sintoma mais confuso do go-live, com o webhook
+respondendo 200 e o log dizendo `Inbound Meta descartado: nenhuma escola cadastrada com o
+phone_number_id`.
+
+---
+
+## 12. Onboarding de escola pelo painel (automação — §9e.3)
+
+Até 29/ago/2026 pôr uma escola no ar era um roteiro deste documento: seis passos em três
+telas do console da Meta, mais um `INSERT` do `phone_number_id` no painel. Roteiro seguido
+uma vez por escola é roteiro errado na segunda — e **aqui o erro não aparece**: o webhook
+simplesmente emudece.
+
+Agora existe **`/admin/escolas/whatsapp?tenant=<id>`** (botão *WhatsApp* na lista de
+escolas, só super admin). A tela faz duas coisas:
+
+**Diagnostica, perguntando à Meta.** Seis linhas, uma por passo silencioso que já custou um
+dia de depuração: canal efetivo do servidor, conta escolhida, número vinculado, número
+inscrito, nome de exibição aprovado, template aprovado *nesta conta*. O estado vem de
+`GET /{phone_number_id}` — o banco sabe o id que digitamos, só a Meta sabe se ele funciona.
+
+**Executa os passos**, na única ordem que a Meta aceita:
+
+| Passo | Endpoint da Graph API | O que muda |
+|---|---|---|
+| Cadastrar número | `POST /{waba}/phone_numbers` | cria na conta **e grava o `phone_number_id` no tenant**, na mesma operação |
+| Pedir código | `POST /{id}/request_code` | SMS ou ligação para o chip |
+| Confirmar código | `POST /{id}/verify_code` | verificado — **e ainda mudo** |
+| Inscrever | `POST /{id}/register` | com PIN de 6 dígitos; é aqui que ele fala |
+| Conferir e completar | `POST /{waba}/subscribed_apps` + replicação de templates | os dois passos **sem tela no console** |
+
+**O que continua manual, e vai continuar:** comprar o chip, pôr num aparelho e ler o código
+de 6 dígitos. Não há API para isso, e a tela reflete a realidade — ela para no campo do
+código e espera uma pessoa.
+
+**O PIN não é guardado.** A Meta o exige de novo para reinscrever o número (troca de conta,
+incidente) e não o exibe outra vez. Guardar num banco multi-tenant o segredo que reassume o
+canal de todas as escolas trocaria um passo manual por um alvo — vai para o gerenciador de
+senhas.
+
+**Erros da Meta chegam como 502**, com a frase que ela escreveu ("número já em uso", "chip
+ainda ativo no WhatsApp"). É a diferença entre um próximo passo e um chamado.
+
+> **A EM Rosa Cury não foi cadastrada.** O chip dedicado dela ainda não existe, e sem chip
+> não há o que verificar — cadastrar o tenant sem número só criaria uma escola com o
+> inbound descartado. Quando o chip chegar, o caminho é: criar a escola pelo painel
+> (escolhendo a conta), abrir *WhatsApp* e seguir os quatro passos. **Atenção ao teto:** o
+> portfólio tem 2 vagas e 1 está ocupada — a Rosa Cury é a última que cabe sem o chamado da
+> §2.2.
 
 ---
 
