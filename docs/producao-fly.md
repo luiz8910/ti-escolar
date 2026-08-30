@@ -65,14 +65,14 @@ grep -v '^#' arquivo.env | fly secrets import --app ti-escolar
 | `META_WEBHOOK_VERIFY_TOKEN` | gerado |
 | `SUPER_ADMIN_EMAIL` / `_SENHA` / `_NOME` | gerados — **troque a senha no primeiro login** |
 | `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` | gravados em 29/ago/2026 — o token é o mesmo system user `ti_escolar_backend` do homolog, porque ele é do portfólio e não do ambiente |
-| `META_APP_SECRET` | **pendente** — e é ele que trava a troca do webhook: com `META_VALIDATE_SIGNATURE=true` e sem o segredo, todo `POST` da Meta vira 403 |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` + `LLM_PROVIDER` | **pendentes**. Sem eles o bot responde com o provider `fake`: o transporte funciona e o **conteúdo é mentira**, que é a falha mais fácil de confundir com sucesso num teste. O mesmo vale para `EMBEDDINGS_*` — a base da escola demo foi indexada com vetores sem semântica e precisa ser **reindexada** depois |
+| `META_APP_SECRET` | gravado em 30/ago/2026. **Confira-o antes do deploy** com `GET /oauth/access_token?grant_type=client_credentials`: é a única chamada que prova o par app_id + segredo sem efeito colateral, e um segredo errado não falha no boot — só aparece como 403 em todo webhook, depois que a URL já foi apontada |
+| `OPENAI_API_KEY` + `LLM_PROVIDER` / `LLM_MODEL` / `EMBEDDINGS_*` | gravados em 30/ago/2026 (`openai_compatible`, `gpt-4o-mini`). Sem eles o bot responde com o provider `fake`: o transporte funciona e o **conteúdo é mentira**, que é a falha mais fácil de confundir com sucesso num teste. `LLM_BASE_URL` fica de fora **de propósito** — o default do código já é `https://api.openai.com/v1` |
 
 O que **não** é segredo (`APP_ENV`, `MESSAGE_CHANNEL`, CORS…) mora no `[env]` do `fly.toml`,
 versionado, porque esconder configuração de ambiente num painel é como o deploy do Render
 ficou atrás da `main` sem ninguém perceber.
 
-## O canal do WhatsApp — ligado em 29/ago/2026 (webhook pendente)
+## O canal do WhatsApp — ligado em 29–30/ago/2026
 
 Subiu em `MESSAGE_CHANNEL=demo` **de propósito**: a Meta aceita **uma única URL de webhook
 por app**, e apontá-la para cá tirava o inbound do homolog do ar no mesmo instante. Os dois

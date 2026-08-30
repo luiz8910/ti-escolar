@@ -22,16 +22,16 @@
 | **Número cadastrado na escola** (painel do super admin) | ✅ **Feito** (10/ago/2026) — `meta_phone_number_id` + `whatsapp_numero` preenchidos |
 | **Forma de pagamento** na WABA de produção | ✅ **Cartão adicionado** (10/ago/2026) |
 | **Token de usuário do sistema** (`META_ACCESS_TOKEN`) | ✅ **Gerado** (10/ago/2026) — system user `ti_escolar_backend` (id `61592805104592`), Admin, **sem expiração**, com `whatsapp_business_messaging` + `whatsapp_business_management`. Desde 29/ago também na **Fly** (produção): o token é do portfólio, não do ambiente |
-| **Webhook apontado na Meta** (callback + campo `messages`) | ⏸️ **Ainda no Render** — a troca para `https://api.tiescolar.com.br/api/webhook/meta` está **bloqueada pelo `META_APP_SECRET`**, que falta na Fly. Com `META_VALIDATE_SIGNATURE=true` e sem o segredo, a produção responderia **403 a todo evento**: apontar agora derrubaria o canal inteiro em vez de migrá-lo (§11.1) |
-| **Canal ligado** | ✅ **Na produção** (Fly, 29/ago/2026) — `/health` de `api.tiescolar.com.br` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso. O homolog **ainda** está em `meta`; volta para `demo` junto com a troca do webhook (§11.2) |
+| **Webhook apontado na Meta** | ✅ **Na PRODUÇÃO** (30/ago/2026) — `https://api.tiescolar.com.br/api/webhook/meta`, com `messages`, `message_template_status_update` e `template_category_update` assinados. Trocado **pela Graph API** (`POST /{app-id}/subscriptions`), não pelo console: trocar a URL lá exige redigitar o verify token num campo de tela, e o toggle de assinatura acende sem salvar (§5). Conferido depois no console, recarregado |
+| **Canal ligado** | ✅ **Na produção** (Fly, 29/ago/2026) — `/health` de `api.tiescolar.com.br` responde `canal: meta`, que é o adaptador **efetivo** e portanto prova que o token está em uso. O **homolog voltou para `demo`** em 30/ago (§11.2), confirmado pelo `/health` dele |
 | **Backend no Render atualizado** | ✅ Alcançou a `main` (09/ago/2026) — `/health/pronto` responde |
 | **WABA inscrita no app** (`subscribed_apps`) | ✅ **Feita** (10/ago/2026) — sem interface no console, ver §5.1 |
 | **Inbound real ponta a ponta** | ✅ **Funcionando** (10/ago/2026) — mensagem de WhatsApp real recebida, respondida pelo bot e registrada no histórico da escola |
 | **Templates aprovados** | ⚠️ `retomada_atendimento` **submetido em 10/ago/2026, em análise**; `hello_world` ativo. Ver §7.1 |
 | **Inbound do webhook** (chatbot atendendo) | ✅ Implementado (27/jul/2026) — CLAUDE.md §9e.1 |
 | **Multi-tenant de envio** (número por escola) | ✅ Implementado — `Tenant.meta_phone_number_id` |
-| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada e ligada por config (`META_VALIDATE_SIGNATURE=true` no `fly.toml` desde o primeiro deploy) — ⚠️ mas **sem `META_APP_SECRET` gravado**, então hoje ela recusa tudo. É o item que trava a troca do webhook |
-| **Provedor de LLM na produção** | ⏸️ **`fake`** — o transporte funciona e o **conteúdo é mentira**. A base de conhecimento da escola demo foi indexada com embeddings `fake` (vetores sem semântica) e **precisa ser reindexada** quando a chave entrar |
+| **Assinatura do webhook** (`X-Hub-Signature-256`) | ✅ Implementada, ligada e **provada**: o webhook de teste da Meta (payload assinado de verdade) foi aceito com 200 em 30/ago. `POST` sem assinatura segue devolvendo 403 |
+| **Provedor de LLM na produção** | ✅ **`openai_compatible`** (`gpt-4o-mini`) desde 30/ago. A base da escola demo foi **reindexada** com embeddings reais — antes disso ela estava com vetores `fake`, que devolvem o trecho errado com convicção |
 | **Onboarding de escola pelo painel** | ✅ **Implementado** (29/ago/2026) — cadastro, verificação, inscrição e conclusão pela Graph API, em `/admin/escolas/whatsapp` (§12) |
 | **Escola de demonstração na produção** | ✅ **Provisionada** (29/ago/2026) via `python -m app.provisionar` — tenant `53de82fb-e3d1-4ba6-826c-651a99b9c644`, número `1231892910008454` vinculado, `aviso_geral` e `retomada_atendimento` importados e **aprovados**. O diagnóstico do painel responde **pronta** nos 6 passos. Sem dado fictício de aluno (§11.3) |
 
@@ -726,10 +726,10 @@ sinaliza as escolas afetadas.
 - [x] Backend no Render **atualizado** com a `main` (`/health/pronto` responde)
 - [x] Nome de exibição aprovado (`AVAILABLE_WITHOUT_REVIEW`, medido pela API)
 - [x] Forma de pagamento na WABA de produção (cartão, 10/ago)
-- [~] **Canal migrado para a produção** (29/ago) — `MESSAGE_CHANNEL=meta`,
-      `META_ACCESS_TOKEN` e `META_PHONE_NUMBER_ID` na Fly, deploy feito, `/health`
-      responde `canal: meta`. **Faltam** os dois passos que dependem do
-      `META_APP_SECRET`: apontar o webhook e desligar o homolog (§11.1)
+- [x] **Canal migrado para a produção** (29–30/ago) — segredos na Fly, deploy feito,
+      webhook apontado, homolog de volta em `demo`. Provado ponta a ponta pelo webhook de
+      teste da Meta: `POST` assinado aceito com 200 e descarte limpo do `phone_number_id`
+      de exemplo, que exercita assinatura → parse → roteamento (§11.1)
 - [x] **Escola de demonstração provisionada na produção** com o `phone_number_id`
       cadastrado — sem ela o inbound chega e é descartado (§11.3)
 - [x] **Onboarding de número automatizado no painel** (§12) — o roteiro das §§2 e 5.1
@@ -785,20 +785,58 @@ infraestrutura. Invertê-lo troca um ambiente que funciona por um que ainda não
    cobrando LLM e a resposta se perdendo.
 4. **Escola de demonstração provisionada** na produção (§11.3), com o `phone_number_id`
    cadastrado. Sem isso o inbound chega e é **descartado**: não há tenant a quem entregar.
-5. **Só então**, no console da Meta: app → Casos de uso → *Configuração de produção* →
-   Configurar webhooks → Callback URL para
-   `https://api.tiescolar.com.br/api/webhook/meta`, mesmo verify token.
-   **Note o `/api`** — o prefixo do router é `/api/webhook/meta`; `docs/producao-fly.md`
-   trazia `/webhook/meta`, que responderia 404 no handshake.
-6. **Recarregar a página** e conferir que `messages` continua **Assinado**. O toggle muda
-   de cor sem necessariamente salvar (§5), e trocar a URL é exatamente o momento em que
-   ninguém reconfere.
+5. **Só então** apontar o webhook. **Note o `/api`** — o prefixo do router é
+   `/api/webhook/meta`; `docs/producao-fly.md` trazia `/webhook/meta`, que responderia 404
+   no handshake.
+
+   Feito **pela Graph API**, não pelo console, por dois motivos concretos: trocar a URL na
+   tela exige **redigitar o verify token** num campo (segredo digitado em formulário é
+   coisa que não se faz), e o console tem a armadilha do §5 — o toggle de assinatura acende
+   sem necessariamente salvar. Pela API a resposta da Meta é o veredito:
+
+   ```bash
+   curl -s -X POST "https://graph.facebook.com/v21.0/<APP_ID>/subscriptions" \
+     --data-urlencode "object=whatsapp_business_account" \
+     --data-urlencode "callback_url=https://api.tiescolar.com.br/api/webhook/meta" \
+     --data-urlencode "verify_token=$VERIFY" \
+     --data-urlencode "fields=messages,message_template_status_update,template_category_update" \
+     --data-urlencode "access_token=<APP_ID>|$APP_SECRET"
+   # {"success":true}
+   ```
+
+   O `POST` **substitui** a assinatura do objeto, então os campos vão todos de uma vez — e
+   é a chance de assinar os dois eventos de template que faltavam desde 10/ago (só
+   `messages` estava assinado). A Meta chama a `callback_url` com o `hub.challenge` antes
+   de gravar: se a produção não responder, ela recusa e **nada muda**.
+
+   Antes de disparar isto, vale rodar o handshake à mão contra a produção
+   (`GET /api/webhook/meta?hub.mode=subscribe&hub.verify_token=…&hub.challenge=teste`): a
+   resposta isolada diz se o problema é token, caminho ou certificado, o que a recusa da
+   Meta não diz.
+6. **Recarregar a página do console** e conferir que `messages` está **Assinado**. Mesmo
+   tendo ido pela API, este passo fica: é a leitura que pega divergência entre o que a API
+   gravou e o que o console mostra.
 7. **Desligar o canal no homolog** (§11.2).
+8. **Provar com o botão *Teste*** do campo `messages` (§5, *Diagnóstico*). Ele manda um
+   `POST` **assinado de verdade** com um payload de exemplo, e é o que separa "nosso código
+   está errado" de "a Meta não está enviando". O esperado é `200` com
+   `Inbound Meta descartado: nenhuma escola cadastrada com o phone_number_id '123456123'` —
+   um descarte limpo prova assinatura → parse → roteamento, isto é, o caminho inteiro.
+
+   > **Feito em 30/ago/2026** e é a prova de que o `META_APP_SECRET` está certo: com o
+   > segredo errado a resposta seria 403, não 200.
 
 ### 11.2 Desligar o canal no homolog (Render)
 
-`MESSAGE_CHANNEL=demo` no painel do Render (**Environment** → salvar; salvar dispara
-redeploy automático, que é a única automação de deploy que aquele serviço tem).
+`MESSAGE_CHANNEL=demo` no painel do Render (**Environment** → *Edit* → salvar).
+
+⚠️ **Escolha "Save and deploy", não "Save only".** O menu do botão oferece três opções, e
+`Save only` grava a variável **sem reiniciar o processo** — que continua rodando com
+`meta` na memória. É o modo de falha clássico deste passo: a tela mostra o valor novo, o
+serviço se comporta com o velho, e ninguém suspeita do painel.
+
+Confirme pelo `/health`, que devolve o canal **efetivo**: `demo` ali prova que o processo
+novo subiu, não só que a variável foi salva.
 
 Por que desligar de vez, e não só parar os disparos: o inbound já sai do ar sozinho quando
 o webhook aponta para outro lugar. O que sobra em `meta` é o **outbound** — e ele continua
@@ -806,7 +844,8 @@ capaz de enviar de verdade, a partir do número de produção, disparado por dad
 Uma tela de homolog clicada por engano mandaria WhatsApp real para número real, gastando a
 cota compartilhada do portfólio (§8) e arriscando a qualidade do número.
 
-Conferir: `GET https://ti-escolar.onrender.com/health` → `{"canal": "demo"}`.
+> **Feito em 30/ago/2026** — `GET https://ti-escolar.onrender.com/health` responde
+> `{"canal": "demo"}`.
 
 > **O homolog não fica sem WhatsApp por castigo.** Ele fica sem porque o canal é um
 > recurso **único e físico** — um número, um webhook, uma cota. Testar disparo em homolog
