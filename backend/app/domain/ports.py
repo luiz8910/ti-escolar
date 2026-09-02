@@ -37,6 +37,7 @@ from app.domain.entities import (
     MetricasUsoEscola,
     MessageQuota,
     MessageTemplate,
+    NumeroNaMeta,
     Professor,
     PromptTenant,
     Recado,
@@ -446,6 +447,102 @@ class CatalogoTemplates(Protocol):
         Serve para **confirmar** um id antes de gravá-lo (``AdotarContaDoWebhook``): sem
         isso, adotar um id lido de um evento seria acreditar num campo cujo significado a
         documentação não afirma. Aqui a resposta da própria Meta decide.
+        """
+        ...
+
+
+# --------------------------------------------------------------------------- #
+# Provisionamento de números na Meta (onboarding de escola — §9e.3)
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class GestorDeNumeros(Protocol):
+    """Cadastro e registro de um número na Meta — o lado de lá do onboarding (§9e.3).
+
+    **Terceira porta da Meta, e é de propósito.** ``MessageChannel`` envia mensagem
+    (``/{phone_number_id}/messages``, escopo ``whatsapp_business_messaging``);
+    ``CatalogoTemplates`` administra template (``/{waba_id}/message_templates``, escopo
+    ``whatsapp_business_management``); esta administra **o próprio número**
+    (``/{waba_id}/phone_numbers`` e ``/{phone_number_id}/register``). Juntá-la a uma das
+    outras obrigaria todo canal a saber pedir código de verificação por SMS.
+
+    **O que ela não pode fazer.** O insumo físico do onboarding — comprar o chip, pôr num
+    aparelho e ler o código que a Meta manda — não tem API. Por isso a interface é
+    deliberadamente **passo a passo** e não um "provisione tudo": entre
+    ``solicitar_codigo`` e ``confirmar_codigo`` há um humano com um celular na mão, e
+    fingir o contrário produziria um método que trava esperando um dado que ninguém
+    digitou. O que se automatiza é tudo o resto — e é a maior parte.
+    """
+
+    async def descrever(self, *, phone_number_id: str) -> NumeroNaMeta | None:
+        """Retrato do número na Meta, ou ``None`` se ela não o reconhece.
+
+        É a fonte de verdade da etapa: o banco guarda o id, a Meta guarda o estado.
+        """
+        ...
+
+    async def listar(self, *, meta_waba_id: str) -> list[NumeroNaMeta]:
+        """Números já cadastrados na conta — o que responde "quantos ainda cabem?"."""
+        ...
+
+    async def adicionar(
+        self, *, meta_waba_id: str, codigo_pais: str, numero: str, nome_exibicao: str
+    ) -> NumeroNaMeta:
+        """Cria o número na WABA. Ainda **não verificado** e ainda mudo.
+
+        ``nome_exibicao`` é o nome que os pais veem e passa por **revisão assíncrona** da
+        Meta — é o caminho crítico do prazo, e por isso entra já aqui, no primeiro passo,
+        e não depois que tudo estiver de pé.
+        """
+        ...
+
+    async def solicitar_codigo(
+        self, *, phone_number_id: str, metodo: str = "SMS", idioma: str = "pt_BR"
+    ) -> None:
+        """Dispara o código de 6 dígitos para o chip.
+
+        **Não insista.** A Meta trava a verificação por horas depois de alguns reenvios
+        falhos, e é justamente a tentativa seguinte que se perde (docs/producao-whatsapp.md
+        §2.1). Quem chama deve tratar a falha como "espere", não como "tente de novo".
+        """
+        ...
+
+    async def confirmar_codigo(self, *, phone_number_id: str, codigo: str) -> NumeroNaMeta:
+        """Confere o código digitado. Depois disso o número está **verificado, não inscrito**."""
+        ...
+
+    async def registrar(self, *, phone_number_id: str, pin: str) -> NumeroNaMeta:
+        """Inscreve o número na Cloud API com o PIN de verificação em duas etapas.
+
+        O PIN **não** é guardado por nós: a Meta o exige de novo para reinscrever o número
+        no futuro (troca de conta, incidente), e o lugar disso é o gerenciador de senhas de
+        quem opera, não uma coluna do banco de uma plataforma multi-tenant.
+        """
+        ...
+
+    async def inscrever_no_app(self, *, meta_waba_id: str) -> bool:
+        """``POST /{waba_id}/subscribed_apps`` — o passo que **não tem tela no console**.
+
+        Sem ele a Meta não envia evento nenhum e **não reporta erro em lugar nenhum**:
+        console verde, número conectado, webhook mudo (docs/producao-whatsapp.md §5.1).
+        É por WABA, então toda conta nova precisa dele — e é exatamente o tipo de passo
+        que se esquece, o que é o motivo de ele estar aqui e não num runbook.
+        """
+        ...
+
+    async def definir_perfil(
+        self,
+        *,
+        phone_number_id: str,
+        descricao: str = "",
+        endereco: str = "",
+        email: str = "",
+        site: str = "",
+        setor: str = "EDU",
+    ) -> bool:
+        """Preenche o perfil comercial que o responsável vê ao abrir a conversa.
+
+        Cosmético para a API e nada cosmético para a escola: é o que distingue, na tela do
+        pai, um número institucional de um número desconhecido pedindo dados do filho.
         """
         ...
 

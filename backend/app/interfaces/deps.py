@@ -22,6 +22,15 @@ from app.application.templates_use_cases import (
 )
 from app.application.retomada_use_cases import RetomarBroadcastsPendentes
 from app.application.tenant_use_cases import NotificarLicencasAVencer
+from app.application.onboarding_use_cases import (
+    CadastrarNumeroDaEscola,
+    ConcluirOnboardingDaEscola,
+    ConfirmarCodigoDeVerificacao,
+    DesvincularNumeroDaEscola,
+    DiagnosticarWhatsAppDaEscola,
+    InscreverNumeroNaCloudApi,
+    PedirCodigoDeVerificacao,
+)
 from app.application.waba_use_cases import AdotarContaDoWebhook
 from app.application.atendimento_humano_use_cases import (
     MesaDeAtendimento,
@@ -88,12 +97,14 @@ from app.infrastructure.db.repositories_onda3 import (
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import (
+    canal_efetivo,
     criar_leitor_documento,
     criar_canal,
     criar_catalogo_templates,
     criar_email_sender,
     criar_fonte_midia,
     criar_embedder,
+    criar_gestor_de_numeros,
     criar_llm,
 )
 from app.infrastructure.atendimento import SqlRegistroAtendimento
@@ -415,6 +426,81 @@ def get_adotar_conta(
 ) -> AdotarContaDoWebhook:
     return AdotarContaDoWebhook(
         wabas=SqlWabaRepository(session),
+        catalogo=criar_catalogo_templates(settings),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Onboarding do WhatsApp de uma escola (§9e.3)
+# --------------------------------------------------------------------------- #
+# Os cinco passos compartilham a mesma tríade (escola, conta, gestor de números); só o
+# diagnóstico e a conclusão precisam de mais. Montá-los aqui, e não numa fábrica só, é o
+# que mantém cada rota dependendo apenas do que ela usa.
+def _passo_onboarding(session: AsyncSession, settings: Settings) -> dict:
+    return {
+        "tenants": SqlTenantRepository(session),
+        "wabas": SqlWabaRepository(session),
+        "numeros": criar_gestor_de_numeros(settings),
+    }
+
+
+def get_diagnostico_whatsapp(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> DiagnosticarWhatsAppDaEscola:
+    return DiagnosticarWhatsAppDaEscola(
+        tenants=SqlTenantRepository(session),
+        wabas=SqlWabaRepository(session),
+        numeros=criar_gestor_de_numeros(settings),
+        templates=SqlTemplateRepository(session),
+        # O canal **efetivo**, não a env: um diagnóstico que ecoasse `MESSAGE_CHANNEL`
+        # diria "canal ligado" no exato estado em que nenhuma mensagem sai (§9c).
+        canal=canal_efetivo(settings),
+    )
+
+
+def get_cadastrar_numero(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> CadastrarNumeroDaEscola:
+    return CadastrarNumeroDaEscola(**_passo_onboarding(session, settings))
+
+
+def get_pedir_codigo(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> PedirCodigoDeVerificacao:
+    return PedirCodigoDeVerificacao(**_passo_onboarding(session, settings))
+
+
+def get_confirmar_codigo(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ConfirmarCodigoDeVerificacao:
+    return ConfirmarCodigoDeVerificacao(**_passo_onboarding(session, settings))
+
+
+def get_inscrever_numero(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> InscreverNumeroNaCloudApi:
+    return InscreverNumeroNaCloudApi(**_passo_onboarding(session, settings))
+
+
+def get_desvincular_numero(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> DesvincularNumeroDaEscola:
+    return DesvincularNumeroDaEscola(**_passo_onboarding(session, settings))
+
+
+def get_concluir_onboarding(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
+) -> ConcluirOnboardingDaEscola:
+    return ConcluirOnboardingDaEscola(
+        **_passo_onboarding(session, settings),
+        templates=SqlTemplateRepository(session),
         catalogo=criar_catalogo_templates(settings),
     )
 

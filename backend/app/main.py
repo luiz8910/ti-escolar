@@ -31,6 +31,7 @@ from app.interfaces.api import (
     matricula,
     mediacao,
     mural,
+    onboarding,
     professor,
     progressao,
     respostas_rapidas,
@@ -150,6 +151,7 @@ app.include_router(matricula.router)
 app.include_router(seguranca.router)
 app.include_router(templates.router)
 app.include_router(wabas.router)
+app.include_router(onboarding.router)
 app.include_router(logs.router)
 app.include_router(webhook.router)
 

@@ -1588,6 +1588,60 @@ class TemplateRemoto:
     corpo: str = ""
 
 
+class EtapaOnboarding(str, enum.Enum):
+    """Onde o número de uma escola parou no caminho até atender no WhatsApp (§9e.3).
+
+    São os estados que a **Meta** reconhece, não uma invenção nossa, e a ordem importa:
+    cada um só é alcançável a partir do anterior. Modelá-los explicitamente é o que
+    permite ao painel dizer "falta registrar" em vez de "deu erro" — a diferença entre
+    um passo a clicar e um chamado de suporte.
+    """
+
+    # O número ainda não existe na WABA: nada foi criado do lado da Meta.
+    AUSENTE = "ausente"
+    # Criado na WABA, esperando o código de 6 dígitos (SMS ou ligação).
+    NAO_VERIFICADO = "nao_verificado"
+    # Código conferido. **Verificar não é registrar**: o número ainda não fala.
+    NAO_REGISTRADO = "nao_registrado"
+    # Inscrito na Cloud API com o PIN de duas etapas — é daqui que ele envia e recebe.
+    REGISTRADO = "registrado"
+    # A Meta reconhece o número, mas num estado que não sabemos mapear. Falha fechada:
+    # nunca vira REGISTRADO por omissão, porque isso liberaria um disparo que morreria
+    # na Graph API.
+    DESCONHECIDA = "desconhecida"
+
+
+@dataclass(frozen=True)
+class NumeroNaMeta:
+    """Como a Meta descreve um número — o retrato do lado de lá (§9e.3).
+
+    Espelha ``TemplateRemoto``: o produto guarda o ``phone_number_id`` no ``Tenant``, mas
+    tudo que diz **se ele funciona** (verificado? registrado? nome aprovado? qualidade?)
+    vive na Meta e muda sem nos avisar. Ler isso sob demanda, em vez de copiar para o
+    banco, evita a pior falha do onboarding: o painel afirmando "pronto" sobre um número
+    que a Meta pausou ontem.
+    """
+
+    phone_number_id: str
+    # E.164 como a Meta o exibe ("+55 15 99753-6978") — para o olho humano conferir que é
+    # o chip certo antes de disparar para a escola inteira.
+    numero_exibicao: str = ""
+    # Nome de exibição que os pais veem. Passa por revisão assíncrona da Meta.
+    nome_exibicao: str = ""
+    etapa: EtapaOnboarding = EtapaOnboarding.DESCONHECIDA
+    # ``AVAILABLE_WITHOUT_REVIEW`` / ``APPROVED`` / ``PENDING_REVIEW`` / ``DECLINED``.
+    status_nome: str = ""
+    # ``GREEN`` / ``YELLOW`` / ``RED`` — é por número, e é o que trava a subida do tier.
+    qualidade: str = ""
+    # O que a Meta respondeu em ``status``/``code_verification_status``, cru. Guardado
+    # porque o mapeamento acima é nosso e pode ficar velho: quem depurar precisa do original.
+    bruto: str = ""
+
+    @property
+    def pronto_para_atender(self) -> bool:
+        return self.etapa is EtapaOnboarding.REGISTRADO
+
+
 class StatusEntrega(str, enum.Enum):
     PENDENTE = "pendente"
     ENFILEIRADO = "enfileirado"

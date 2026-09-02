@@ -661,6 +661,136 @@ export async function notificarVencimento(): Promise<AvisoLicenca[]> {
 }
 
 // --------------------------- conversas e broadcasts ------------------------ //
+// ------------------- onboarding do WhatsApp da escola (§9e.3) --------------- //
+// Cada função aqui é **um passo do console da Meta** que deixou de precisar do console.
+// A ordem é a que a Meta impõe: cadastrar → pedir código → confirmar → inscrever.
+
+/** Como a Meta descreve o número — o retrato do lado de lá, lido sob demanda. */
+export interface NumeroNaMeta {
+  phone_number_id: string;
+  numero_exibicao: string;
+  nome_exibicao: string;
+  /** ausente | nao_verificado | nao_registrado | registrado | desconhecida */
+  etapa: string;
+  status_nome: string;
+  qualidade: string;
+  bruto: string;
+  pronto_para_atender: boolean;
+}
+
+export interface PassoOnboarding {
+  chave: string;
+  titulo: string;
+  concluido: boolean;
+  detalhe: string;
+  /** Ação que resolve o passo. Vazia = resolve-se fora do painel. */
+  acao: string;
+  manual: boolean;
+}
+
+export interface DiagnosticoWhatsApp {
+  tenant_id: string;
+  escola: string;
+  /** Canal **efetivo** do servidor: `demo` aqui significa que nada foi conferido. */
+  canal: string;
+  conta_id: string | null;
+  conta_nome: string;
+  meta_waba_id: string;
+  numero: NumeroNaMeta | null;
+  passos: PassoOnboarding[];
+  pronta: boolean;
+}
+
+export interface ConclusaoOnboarding {
+  conta_inscrita_no_app: boolean;
+  templates_submetidos: number;
+  templates_ja_existiam: number;
+  templates_com_falha: number;
+  perfil_atualizado: boolean;
+  avisos: string[];
+}
+
+function urlWhatsApp(tenantId: string, sufixo = ""): string {
+  return `${API_URL}/api/admin/escolas/${tenantId}/whatsapp${sufixo}`;
+}
+
+export async function diagnosticarWhatsApp(tenantId: string): Promise<DiagnosticoWhatsApp> {
+  const resp = await apiFetch(urlWhatsApp(tenantId), { headers: authHeaders() });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao consultar a Meta`);
+  return resp.json();
+}
+
+export async function cadastrarNumeroNaMeta(
+  tenantId: string,
+  numeroE164: string,
+  nomeExibicao = ""
+): Promise<NumeroNaMeta> {
+  const resp = await apiFetch(urlWhatsApp(tenantId, "/numero"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ numero_e164: numeroE164, nome_exibicao: nomeExibicao }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao cadastrar o número`);
+  return resp.json();
+}
+
+export async function pedirCodigoDeVerificacao(
+  tenantId: string,
+  metodo: "SMS" | "VOICE" = "SMS"
+): Promise<NumeroNaMeta | null> {
+  const resp = await apiFetch(urlWhatsApp(tenantId, "/codigo"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ metodo, idioma: "pt_BR" }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao pedir o código`);
+  return resp.json();
+}
+
+export async function confirmarCodigoDeVerificacao(
+  tenantId: string,
+  codigo: string
+): Promise<NumeroNaMeta> {
+  const resp = await apiFetch(urlWhatsApp(tenantId, "/verificar"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ codigo }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao confirmar o código`);
+  return resp.json();
+}
+
+export async function inscreverNumeroNaCloudApi(
+  tenantId: string,
+  pin: string
+): Promise<NumeroNaMeta> {
+  const resp = await apiFetch(urlWhatsApp(tenantId, "/registrar"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ pin }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao inscrever o número`);
+  return resp.json();
+}
+
+export async function concluirOnboarding(tenantId: string): Promise<ConclusaoOnboarding> {
+  const resp = await apiFetch(urlWhatsApp(tenantId, "/concluir"), {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao concluir o onboarding`);
+  return resp.json();
+}
+
+/** Solta o vínculo do número com a escola — **sem** desregistrá-lo na Meta. */
+export async function desvincularNumeroDaEscola(tenantId: string): Promise<void> {
+  const resp = await apiFetch(urlWhatsApp(tenantId, "/numero"), {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao desvincular o número`);
+}
+
 export async function listarConversas(
   tenantId: string,
   pagina?: number,

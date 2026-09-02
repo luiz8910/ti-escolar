@@ -1608,3 +1608,79 @@ class SugestaoBloqueioSaida(BaseModel):
 class ExpurgoSaida(BaseModel):
     removidos: int
     falhas: int
+
+
+# --------------------------------------------------------------------------- #
+# Onboarding do WhatsApp de uma escola (§9e.3)
+# --------------------------------------------------------------------------- #
+class PassoOnboardingSaida(BaseModel):
+    """Um passo do roteiro de go-live, como a tela o pinta."""
+
+    chave: str
+    titulo: str
+    concluido: bool
+    detalhe: str
+    # Ação executável que resolve o passo. Vazia = resolve-se fora daqui (comprar o chip,
+    # publicar o app, esperar a revisão do nome).
+    acao: str
+    manual: bool
+
+
+class NumeroNaMetaSaida(BaseModel):
+    phone_number_id: str
+    numero_exibicao: str
+    nome_exibicao: str
+    # ``ausente`` | ``nao_verificado`` | ``nao_registrado`` | ``registrado`` | ``desconhecida``
+    etapa: str
+    status_nome: str
+    qualidade: str
+    bruto: str
+    pronto_para_atender: bool
+
+
+class DiagnosticoWhatsAppSaida(BaseModel):
+    tenant_id: UUID
+    escola: str
+    # Canal **efetivo** do processo, não o valor de ``MESSAGE_CHANNEL``: com a env em
+    # ``meta`` e sem token nada aqui foi conferido contra a Meta.
+    canal: str
+    conta_id: UUID | None
+    conta_nome: str
+    meta_waba_id: str
+    numero: NumeroNaMetaSaida | None
+    passos: list[PassoOnboardingSaida]
+    pronta: bool
+
+
+class CadastroNumeroEntrada(BaseModel):
+    """Número do chip, em E.164. O nome de exibição cai no nome da escola se vier vazio."""
+
+    numero_e164: str
+    nome_exibicao: str = ""
+
+
+class CodigoVerificacaoEntrada(BaseModel):
+    # ``SMS`` ou ``VOICE``. A rota de SMS A2P internacional para o Brasil é instável mas
+    # não inviável; trocar de método é alternativa depois de falhas repetidas, não a
+    # primeira reação (docs/producao-whatsapp.md §2.1).
+    metodo: str = "SMS"
+    idioma: str = "pt_BR"
+
+
+class ConfirmacaoCodigoEntrada(BaseModel):
+    codigo: str
+
+
+class RegistroNumeroEntrada(BaseModel):
+    """PIN de 6 dígitos da verificação em duas etapas — **não é persistido** por nós."""
+
+    pin: str
+
+
+class ConclusaoOnboardingSaida(BaseModel):
+    conta_inscrita_no_app: bool
+    templates_submetidos: int
+    templates_ja_existiam: int
+    templates_com_falha: int
+    perfil_atualizado: bool
+    avisos: list[str]

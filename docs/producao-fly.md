@@ -64,27 +64,38 @@ grep -v '^#' arquivo.env | fly secrets import --app ti-escolar
 | `JWT_SECRET` | gerado |
 | `META_WEBHOOK_VERIFY_TOKEN` | gerado |
 | `SUPER_ADMIN_EMAIL` / `_SENHA` / `_NOME` | gerados — **troque a senha no primeiro login** |
-| `META_ACCESS_TOKEN`, `META_APP_SECRET`, `META_PHONE_NUMBER_ID` | **pendentes** — só ao ligar o canal |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` + `LLM_PROVIDER` | **pendentes** — sem eles o bot responde com o provider `fake` |
+| `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` | gravados em 29/ago/2026 — o token é o mesmo system user `ti_escolar_backend` do homolog, porque ele é do portfólio e não do ambiente |
+| `META_APP_SECRET` | gravado em 30/ago/2026. **Confira-o antes do deploy** com `GET /oauth/access_token?grant_type=client_credentials`: é a única chamada que prova o par app_id + segredo sem efeito colateral, e um segredo errado não falha no boot — só aparece como 403 em todo webhook, depois que a URL já foi apontada |
+| `OPENAI_API_KEY` + `LLM_PROVIDER` / `LLM_MODEL` / `EMBEDDINGS_*` | gravados em 30/ago/2026 (`openai_compatible`, `gpt-4o-mini`). Sem eles o bot responde com o provider `fake`: o transporte funciona e o **conteúdo é mentira**, que é a falha mais fácil de confundir com sucesso num teste. `LLM_BASE_URL` fica de fora **de propósito** — o default do código já é `https://api.openai.com/v1` |
 
 O que **não** é segredo (`APP_ENV`, `MESSAGE_CHANNEL`, CORS…) mora no `[env]` do `fly.toml`,
 versionado, porque esconder configuração de ambiente num painel é como o deploy do Render
 ficou atrás da `main` sem ninguém perceber.
 
-## O canal do WhatsApp entra desligado
+## O canal do WhatsApp — ligado em 29–30/ago/2026
 
-`MESSAGE_CHANNEL=demo` no primeiro deploy, **de propósito**: a Meta aceita **uma única URL de
-webhook por app**, e apontá-la para cá tiraria o inbound do homolog do ar no mesmo instante.
-Para ligar, na ordem:
+Subiu em `MESSAGE_CHANNEL=demo` **de propósito**: a Meta aceita **uma única URL de webhook
+por app**, e apontá-la para cá tirava o inbound do homolog do ar no mesmo instante. Os dois
+não podiam conviver, e a escolha foi feita — **a produção ficou com o canal e o homolog
+voltou para `demo`** (o passo a passo do desligamento está em
+[`producao-whatsapp.md`](producao-whatsapp.md) §11).
+
+A ordem em que se liga, e ela não é negociável:
 
 1. `api.tiescolar.com.br` respondendo com certificado válido (abaixo);
 2. `fly secrets import` com `META_ACCESS_TOKEN`, `META_APP_SECRET` e `META_PHONE_NUMBER_ID`;
 3. `MESSAGE_CHANNEL = "meta"` no `fly.toml` + `fly deploy`;
-4. no app da Meta, webhook → `https://api.tiescolar.com.br/webhook/meta`, com o
-   `META_WEBHOOK_VERIFY_TOKEN` de produção;
+4. **só então** apontar o webhook na Meta para
+   `https://api.tiescolar.com.br/api/webhook/meta` — note o **`/api`**: este documento
+   trazia `/webhook/meta`, que não existe. O `GET` de verificação responderia 404, o
+   handshake falharia, e a tela da Meta acusaria a URL, não o prefixo;
 5. conferir `GET /health`: o campo `canal` é o adaptador **efetivo**. Se voltar `demo` com a
    env em `meta`, falta token — o processo sobe igual e as mensagens somem em silêncio
    (§9c). O corpo traz `canal_alerta` explicando.
+
+**Por que o webhook é o passo 4 e não o 1.** Ele é o único que tem efeito *fora* daqui: no
+segundo em que a URL muda, o homolog para de receber. Fazê-lo antes do deploy trocaria um
+ambiente que funciona por um que ainda não subiu.
 
 ## DNS e certificado
 

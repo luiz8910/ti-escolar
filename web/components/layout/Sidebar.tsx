@@ -69,6 +69,10 @@ const HISTORICO: NavItem[] = [
 // item pelo caminho mais específico e precisa enxergar todos os candidatos.
 const SUPER_ADMIN_HREFS = [
   "/admin/escolas",
+  // Não tem link próprio no menu (abre-se a partir de uma escola), mas precisa estar aqui:
+  // o realce escolhe o item pelo caminho mais específico, e sem este candidato a tela de
+  // onboarding acenderia "Escolas" — que é outra tela.
+  "/admin/escolas/whatsapp",
   "/admin/wabas",
   "/admin/seguranca",
   "/admin/logs",
