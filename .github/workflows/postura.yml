@@ -1,0 +1,89 @@
+name: Postura do ambiente
+
+# Mede a **configuração** de um ambiente que está no ar — e só isso. O código é o mesmo em
+# todo ambiente; o que muda é a configuração, e ela muda por fora do git: alguém edita uma
+# env var no painel do Render ou roda um `fly secrets set` e nenhum commit registra. Por
+# isso a medição roda ao fim de cada deploy (chamada por `deploy-homolog.yml` e
+# `deploy-producao.yml`) e também numa agenda semanal (`lgpd.yml`).
+#
+# É determinístico, sem LLM e sem credencial (`scripts/postura_ambiente.py`): custo zero e
+# resultado repetível. A auditoria do *código* por LLM não mora aqui — o agente
+# `lgpd-auditor` roda sob demanda, localmente (ver o cabeçalho de `lgpd.yml`).
+
+on:
+  workflow_call:
+    inputs:
+      ambiente:
+        description: "Rótulo do ambiente (homolog | producao)"
+        required: true
+        type: string
+      base_url:
+        description: "URL raiz da API. Vazia = verificação pulada, com aviso."
+        required: true
+        type: string
+      estrito:
+        description: "true = uma regressão de postura REPROVA o job"
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  medir:
+    name: Postura — ${{ inputs.ambiente }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Sem URL não há o que medir. Falhar aqui esconderia o problema real (uma variável
+      # não cadastrada) atrás de um job vermelho de causa obscura; o aviso no resumo diz
+      # exatamente o que fazer.
+      - name: Confere a URL do ambiente
+        id: alvo
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "tem=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::URL do ambiente ${{ inputs.ambiente }} não definida — postura não medida."
+            {
+              echo "### ⚠️ Postura do ambiente (${{ inputs.ambiente }}) não foi medida"
+              echo
+              echo "A variável de repositório com a URL não está definida."
+              echo "Cadastre em **Settings → Secrets and variables → Actions → Variables**"
+              echo "(ver \`docs/pipelines.md\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "tem=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verifica a postura de proteção de dados
+        if: steps.alvo.outputs.tem == 'true'
+        # `shell: bash` explícito por causa do `| tee`: o shell padrão do Actions é
+        # `bash -e`, SEM pipefail, e num pipe o código de saída é o do `tee` — ou seja,
+        # sempre 0. O `--estrito` abaixo seria decorativo. Com `shell: bash` o Actions usa
+        # `bash -eo pipefail` e a reprovação volta a existir.
+        shell: bash
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          # Em homolog o modo é observação (relata e não reprova); em produção o `--estrito`
+          # faz uma regressão de configuração derrubar o job.
+          estrito=""
+          if [ "${{ inputs.estrito }}" = "true" ]; then estrito="--estrito"; fi
+          python scripts/postura_ambiente.py "$BASE_URL" \
+            --ambiente "${{ inputs.ambiente }}" \
+            --json postura.json $estrito | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Guarda o resultado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postura-${{ inputs.ambiente }}-${{ github.run_id }}
+          path: postura.json
+          if-no-files-found: ignore

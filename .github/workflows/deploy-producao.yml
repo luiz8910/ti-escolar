@@ -1,0 +1,176 @@
+name: Produção — deploy (Fly.io)
+
+# Esteira de PRODUÇÃO. Gatilho: push na `main`.
+#
+# Ordem: CI (o mesmo portão de qualidade dos PRs) → `fly deploy` → prova de que o commit
+# publicado é o que está atendendo → prontidão do banco → canal do WhatsApp → postura do
+# ambiente **em modo estrito**.
+#
+# Até 02/set/2026 o back-end de produção não publicava sozinho: era `cd backend && fly
+# deploy` na mão. O comando continua valendo (e é o caminho de rollback), mas agora o
+# normal é o merge na `main` publicar. Ver `docs/producao-fly.md` e `docs/pipelines.md`.
+#
+# **O painel e a landing page têm esteira própria** (`web.yml` e `site.yml`), com filtro de
+# caminho: um commit que só mexe no back-end não reconstrói o front, e vice-versa.
+#
+# Pré-requisitos:
+#   • secret `FLY_API_TOKEN` (Organization Token — `fly tokens create org`);
+#   • variável `PRODUCAO_BASE_URL` (https://api.tiescolar.com.br).
+# Sem o secret, a esteira roda o CI, avisa e **não** publica.
+
+on:
+  push:
+    branches: [main]
+  # Republica o head da `main` sem commit novo — é assim que uma troca de segredo ou de
+  # `[env]` do fly.toml chega ao ar sem inventar um commit vazio.
+  workflow_dispatch:
+
+# Uma máquina só, deploy `immediate`: interromper pelo meio é pior do que enfileirar.
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  qualidade:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publicar:
+    name: Back-end → Fly.io
+    needs: qualidade
+    runs-on: ubuntu-latest
+    # Pendure aqui, no GitHub, o que precisar de gente: revisor obrigatório antes de
+    # publicar, janela de horário, lista de branches permitidas.
+    environment:
+      name: producao
+      url: ${{ vars.PRODUCAO_BASE_URL }}
+    defaults:
+      run:
+        working-directory: backend
+    outputs:
+      publicado: ${{ steps.deploy.outputs.publicado }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confere as credenciais da Fly
+        id: cred
+        shell: bash
+        env:
+          # Pelo env, e não interpolado no script: o valor não aparece no comando expandido.
+          TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::FLY_API_TOKEN ausente — deploy de produção ignorado."
+            {
+              echo "### ⚠️ Produção não foi publicada"
+              echo
+              echo "O secret \`FLY_API_TOKEN\` não está cadastrado, então \`api.tiescolar.com.br\`"
+              echo "continua na versão anterior. Receita em \`docs/pipelines.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Instala o flyctl
+        if: steps.cred.outputs.ok == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # O contexto do build é `backend/` (o Dockerfile faz `COPY pyproject.toml ./`); com o
+      # fly.toml lido da raiz o build quebraria na primeira camada — daí o
+      # `working-directory` deste job.
+      #
+      # `--ha=false`: o flyctl cria uma SEGUNDA máquina por conta própria em grupo novo, e
+      # nem `min_machines_running` nem `[[vm]]` o impedem. Duas máquinas fazem metade dos
+      # disparos manuais esperar a próxima passada da retomada — o cutucão é um
+      # `asyncio.Event` em memória (ver docs/producao-fly.md).
+      - name: fly deploy
+        id: deploy
+        if: steps.cred.outputs.ok == 'true'
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --remote-only --ha=false \
+            --build-arg "GIT_SHA=${GITHUB_SHA}"
+          echo "publicado=true" >> "$GITHUB_OUTPUT"
+
+      - name: Uma máquina só?
+        if: steps.deploy.outputs.publicado == 'true'
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          quantas=$(flyctl machine list --json | jq '[.[] | select(.state == "started")] | length')
+          echo "Máquinas ligadas: $quantas"
+          if [ "$quantas" -gt 1 ]; then
+            echo "::warning::Há $quantas máquinas ligadas. Metade dos disparos manuais vai"
+            echo "::warning::esperar a retomada em vez de sair na hora. Corrija com"
+            echo "::warning::\`fly scale count 1 --app ti-escolar\`."
+          fi
+
+      # O `fly deploy` só volta depois da troca, então aqui a espera é curta. O que este
+      # passo prova não é "está no ar" (o /health responde ok mesmo na versão velha), e sim
+      # **qual commit** está atendendo.
+      - name: Confirma o commit no ar
+        if: steps.deploy.outputs.publicado == 'true'
+        shell: bash
+        env:
+          BASE_URL: ${{ vars.PRODUCAO_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "::warning::PRODUCAO_BASE_URL não definida — não dá para confirmar o deploy."
+            exit 0
+          fi
+          cd "$GITHUB_WORKSPACE"
+          codigo=0
+          scripts/aguarda_deploy.sh "$BASE_URL" "$GITHUB_SHA" 24 10 || codigo=$?
+          # 2 = imagem no ar anterior a este mecanismo (só acontece uma vez, no deploy que
+          # o introduz). Avisa e segue; qualquer outro código reprova.
+          if [ "$codigo" = "2" ]; then exit 0; fi
+          exit "$codigo"
+
+      - name: Confere prontidão e canal
+        if: steps.deploy.outputs.publicado == 'true'
+        shell: bash
+        env:
+          BASE_URL: ${{ vars.PRODUCAO_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then exit 0; fi
+          base="${BASE_URL%/}"
+
+          # /health é liveness e não toca no banco de propósito; quem prova que a aplicação
+          # consegue ATENDER é /health/pronto.
+          pronto=$(curl -fsS --max-time 20 "$base/health/pronto")
+          echo "$pronto"
+          if [ "$(printf '%s' "$pronto" | jq -r .status)" != "ok" ]; then
+            echo "::error::/health/pronto não está ok — a aplicação subiu sem banco."
+            exit 1
+          fi
+
+          # A armadilha do §9c: com MESSAGE_CHANNEL=meta e sem META_ACCESS_TOKEN a
+          # aplicação sobe falando pelo canal demo, sem erro nenhum — o WhatsApp fica fora
+          # do ar em silêncio. O /health devolve `canal_alerta` quando o efetivo diverge do
+          # configurado; em produção isso é falha, não observação.
+          saude=$(curl -fsS --max-time 20 "$base/health")
+          echo "$saude"
+          alerta=$(printf '%s' "$saude" | jq -r '.canal_alerta // ""')
+          if [ -n "$alerta" ]; then
+            echo "::error::Canal degradado: $alerta"
+            exit 1
+          fi
+
+  postura:
+    name: Postura
+    needs: publicar
+    uses: ./.github/workflows/postura.yml
+    with:
+      ambiente: producao
+      base_url: ${{ vars.PRODUCAO_BASE_URL }}
+      # Estrito: em produção uma regressão de configuração (CORS aberto, senha de exemplo
+      # autenticando, header faltando) reprova a esteira em vez de virar aviso ignorado.
+      estrito: true

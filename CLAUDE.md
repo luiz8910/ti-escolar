@@ -164,7 +164,8 @@ preciso ler tudo.
 | [`docs/guia/seguranca-e-lgpd.md`](docs/guia/seguranca-e-lgpd.md) | §14, §15, §17 | postura de segurança do super admin, checklist de pré-deploy, auditoria LGPD contínua |
 | [`docs/guia/roadmap.md`](docs/guia/roadmap.md) | §12, §12a | o que está feito, o que falta e em que ordem |
 
-**Operação** (fora do guia, em `docs/`): [`producao-fly.md`](docs/producao-fly.md)
+**Operação** (fora do guia, em `docs/`): [`pipelines.md`](docs/pipelines.md) (as esteiras
+de homolog e produção, e o modelo de branches), [`producao-fly.md`](docs/producao-fly.md)
 (o back-end de produção na Fly), [`producao-whatsapp.md`](docs/producao-whatsapp.md)
 (go-live do canal), [`runbook-rollback.md`](docs/runbook-rollback.md),
 [`backup.md`](docs/backup.md), [`checklist-teste-manual.md`](docs/checklist-teste-manual.md).
@@ -195,10 +196,17 @@ tarde já foi pago uma vez.
   está em `MESSAGE_CHANNEL=demo`**: manter os dois ligados é impossível, e um homolog em
   `meta` ainda dispararia WhatsApp real a partir de dado de teste. Ligar o canal num
   ambiente é desligá-lo no outro. (§9c, [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) §11)
-- **Nenhum dos dois back-ends publica sozinho:** mergear na `main` não sobe a API. No
-  **homolog** (Render) é *Manual Deploy → Deploy latest commit*; na **produção**
-  (Fly.io, app `ti-escolar`) é `cd backend && fly deploy`. (§12a,
-  [`docs/producao-fly.md`](docs/producao-fly.md))
+- **A branch é o ambiente:** `develop` publica no **homolog** (Render + Vercel) e `main`
+  publica na **produção** (Fly.io + Cloudflare Pages), pelas esteiras `deploy-homolog.yml`
+  e `deploy-producao.yml`. Trabalho novo sai da `develop`; produção é um PR
+  `develop → main`. Até 02/set/2026 nenhum dos dois back-ends publicava sozinho — se algum
+  documento ainda mandar abrir o painel do Render ou rodar `fly deploy` na mão, é resquício
+  disso (os comandos seguem valendo como rollback). (§12a,
+  [`docs/pipelines.md`](docs/pipelines.md))
+- **Deploy verde não é prova de deploy feito:** o `/health` responde `ok` na versão velha
+  também. Quem distingue é o campo `versao` (o commit da imagem), que a esteira compara com
+  o que acabou de publicar. Ao mexer no `Dockerfile` ou no `/health`, esse campo tem de
+  continuar chegando — sem ele a esteira volta a jurar que publicou. (§12a)
 - **Produção não semeia, mas agora provisiona.** `app.seed` é proibido em `APP_ENV=production`
   e continua sendo; o que existe para pôr **uma** escola de pé num banco real é
   `python -m app.provisionar` — tenant, admin (senha do ambiente), conta e conhecimento
@@ -243,4 +251,4 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - **Documentação:** este arquivo é o índice; o detalhe vai para o arquivo de assunto em
   `docs/guia/` (ver o [mapa](#mapa-do-guia)). Mantenha o CLAUDE.md enxuto — ele é carregado
   em toda sessão.
-<critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a main com origin remote e abrir uma nova branch a partir da main com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade)</critical>
+<critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a `develop` com o origin remote e abrir uma nova branch **a partir da `develop`** com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade). O PR da feature aponta para a `develop` (homolog); a produção é um PR separado `develop → main` (ver [`docs/pipelines.md`](docs/pipelines.md)).</critical>
