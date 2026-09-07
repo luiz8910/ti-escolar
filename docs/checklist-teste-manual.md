@@ -622,9 +622,10 @@ Simule pelo webhook um envelope de `image` ou `document` (com `media_id`).
 
 ## 18. Produção / homolog (pré-deploy) 🌐
 
-- [ ] **18.1** CI verde na `main` nos três jobs (backend, `web/`, `site/`).
-- [ ] **18.2** **Render:** deploy manual disparado após o merge (o serviço **não** tem auto-deploy)
-      e o commit publicado é o da `main`.
+- [ ] **18.1** CI verde no PR nos três jobs (backend, `web/`, `site/`).
+- [ ] **18.2** A esteira do ambiente terminou verde (`develop` → homolog, `main` → produção)
+      e o **commit publicado é o da branch**: `GET /health` devolve `versao` igual ao head.
+      É a única prova de que o deploy aconteceu — o `status: ok` responde igual na versão velha.
 - [ ] **18.3** `GET /health` e `GET /health/pronto` respondem `200` em homolog.
 - [ ] **18.4** `/health` reporta `canal: "meta"` — não `demo`.
 - [ ] **18.5** `META_VALIDATE_SIGNATURE=true` e `POST` no webhook sem assinatura → **403**.
@@ -639,7 +640,7 @@ Simule pelo webhook um envelope de `image` ou `document` (com `media_id`).
       resposta chega → a conversa aparece em `/admin/historico/conversas`.
 - [ ] **18.13** **Outbound real:** pagamento configurado na WABA + template aprovado → disparo
       chega no celular e o status vira `delivered`.
-- [ ] **18.14** O `postura_ambiente.py` (workflow LGPD) roda sem regressão.
+- [ ] **18.14** O job **Postura** da esteira do ambiente passou sem regressão (em produção ele é estrito).
 - [ ] **18.15** **Ensaio de rollback** conforme `docs/runbook-rollback.md` — incluindo o caso da
       migration (lembrar que o `CMD` roda `alembic upgrade head` a cada restart).
 

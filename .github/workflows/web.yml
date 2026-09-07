@@ -3,7 +3,8 @@ name: Painel (web) — build & deploy (Cloudflare Pages)
 # Painel admin + portal do professor (`web/`) em **produção**: app.tiescolar.com.br.
 #
 # O ambiente de HOMOLOGAÇÃO continua na Vercel, apontando para a API do Render, e não é
-# tocado por este workflow. Produção saiu da Vercel porque o plano Hobby proíbe uso
+# tocado por este workflow: a Vercel tem integração própria com o git e segue a branch
+# `develop` (§12a, `docs/pipelines.md`). Produção saiu da Vercel porque o plano Hobby proíbe uso
 # comercial e o painel atende escola pagante; como export estático o mesmo build roda na
 # Cloudflare Pages, onde o uso comercial é permitido. **Não há fork de código** — o que
 # muda entre os dois é `NEXT_PUBLIC_API_URL`.
@@ -24,7 +25,7 @@ on:
       - "web/**"
       - ".github/workflows/web.yml"
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "web/**"
       - ".github/workflows/web.yml"

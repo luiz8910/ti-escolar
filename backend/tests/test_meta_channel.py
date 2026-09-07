@@ -287,3 +287,42 @@ async def test_envio_recusado_carrega_o_motivo(monkeypatch):
     with pytest.raises(EnvioRecusado) as erro:
         await canal.enviar_texto(contato="+5511900000001", texto="oi")
     assert "132001" in str(erro.value)
+
+
+def test_health_informa_o_commit_no_ar():
+    """A esteira de deploy não pergunta "está no ar?", e sim "**qual commit** está no ar?".
+
+    Sem este campo, "publiquei" e "achei que publiquei" respondem exatamente a mesma coisa
+    aqui — foi assim que o Render ficou dias atrás da `main` (§12a). Quem consome é o
+    `scripts/aguarda_deploy.sh`.
+    """
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    original = main.settings
+    try:
+        main.settings = _settings(git_commit="1a2b3c4d")
+        with TestClient(main.app) as cliente:
+            assert cliente.get("/health").json()["versao"] == "1a2b3c4d"
+
+        # Sem o build-arg (desenvolvimento, imagem antiga) o campo existe e é honesto:
+        # a esteira precisa distinguir "outro commit" de "não sei dizer".
+        main.settings = _settings(git_commit=None)
+        with TestClient(main.app) as cliente:
+            assert cliente.get("/health").json()["versao"] == "desconhecida"
+    finally:
+        main.settings = original
+
+
+def test_commit_vem_tambem_da_env_do_render(monkeypatch):
+    """O Render injeta ``RENDER_GIT_COMMIT`` sozinho e não deixa renomear a variável."""
+    from app.config import Settings
+
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "deadbeef")
+    assert Settings(_env_file=None).git_commit == "deadbeef"
+
+    # A env explícita ganha: na Fly o valor é assado na imagem pelo build-arg.
+    monkeypatch.setenv("GIT_COMMIT", "cafe1234")
+    assert Settings(_env_file=None).git_commit == "cafe1234"

@@ -227,12 +227,15 @@ lugares diferentes:
   - **A troca é o esquecimento.** Sem gatilho, uma mudança que mexe em dado pessoal só é
     auditada se alguém pedir. O que continua automático é a camada de ambiente abaixo, e o
     painel §14, que mede a postura de dentro — nenhum dos dois lê diff.
-- **Configuração, a cada deploy** — `.github/workflows/lgpd.yml`,
-  `scripts/postura_ambiente.py` mede o **ambiente no ar**.
+- **Configuração, a cada deploy** — `.github/workflows/postura.yml` (reutilizável),
+  `scripts/postura_ambiente.py` mede o **ambiente no ar**. Desde 02/set/2026 ela é job das
+  próprias esteiras de deploy, que sabem quando o ambiente terminou de subir e qual commit
+  está nele; no `lgpd.yml` sobrou o disparo semanal.
   O código é o mesmo em homolog e em produção; o que difere é a config, e ela muda **por
-  fora do git** (alguém edita uma env var no painel do Render), por isso há também um
-  disparo semanal. É **determinístico e sem LLM** — pagar inferência para reler o mesmo
-  repo a cada deploy seria caro e não repetível.
+  fora do git** (alguém edita uma env var no painel do Render), e é justamente por isso que
+  a agenda semanal continua existindo: essa mudança não gera deploy nenhum. É
+  **determinístico e sem LLM** — pagar inferência para reler o mesmo repo a cada deploy
+  seria caro e não repetível.
 
 **As verificações de ambiente são caixa-preta, sem nenhuma credencial**, e isso é decisão de
 projeto: guardar um login de super admin num secret do CI abriria um caminho novo para a
@@ -244,11 +247,18 @@ origem forjada; rota administrativa exigindo token; e as **senhas versionadas no
 `.env.example` não autenticando** — se autenticam, o seed de demonstração rodou ali e quem
 leu o repositório entra.
 
-**Ambientes.** O serviço do Render hoje é **homolog**; **produção ainda não existe**. Por
-isso o job roda em **modo observação** (relata sem reprovar). Quando produção subir,
-acrescente um job igual apontando para a outra URL e com **`--estrito`**, que faz a
-regressão de configuração falhar o build. A URL vem da variável de repositório
-`HOMOLOG_BASE_URL`; sem ela, o job avisa e passa.
+**Ambientes.** São dois, e a diferença é o rigor. O **homolog** (Render, branch `develop`)
+roda em **modo observação**: relata sem reprovar, porque é onde a configuração ainda está
+sendo ajustada e travar a esteira ali só ensinaria a ignorar o vermelho. A **produção**
+(Fly, branch `main`) roda com **`--estrito`**, e uma regressão de configuração reprova a
+esteira — CORS aberto, senha de exemplo autenticando, webhook aceitando POST sem assinatura
+são incidente, não observação. As URLs vêm das variáveis de repositório `HOMOLOG_BASE_URL` e
+`PRODUCAO_BASE_URL`; sem elas o job avisa e passa (ver `docs/pipelines.md`).
+
+> Ao mover essa medição para as esteiras apareceu que o `--estrito` nunca teria funcionado:
+> o passo original terminava em `| tee "$GITHUB_STEP_SUMMARY"` e o shell padrão do Actions é
+> `bash -e`, **sem `pipefail`** — num pipe o código de saída é o do `tee`, sempre 0. O
+> `postura.yml` declara `shell: bash` justamente para recuperar o `pipefail`.
 
 Distinto do painel `/admin/seguranca` (§14), que avalia a postura **de dentro** e serve à
 auditoria interna dos sócios: aqui a leitura é **externa**, é a visão de quem está do lado
