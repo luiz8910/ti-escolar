@@ -149,6 +149,7 @@ preciso ler tudo.
 
 | Arquivo | Seções | Abra quando precisar de… |
 |---|---|---|
+| [`docs/guia/metodo-de-trabalho.md`](docs/guia/metodo-de-trabalho.md) | §0 | **ler primeiro** — o que conta como progresso, ritual de abrir/fechar sessão, corte do beta, regras de escopo |
 | [`docs/guia/modelo-de-dados.md`](docs/guia/modelo-de-dados.md) | §6 | entidades, isolamento por `tenant_id`, **cadeia de migrations** e suas armadilhas |
 | [`docs/guia/administracao-e-acesso.md`](docs/guia/administracao-e-acesso.md) | §6a | `Usuario`, papéis × cargos, hierarquia, JWT, grupos, escola em foco do super admin |
 | [`docs/guia/conhecimento-e-llm.md`](docs/guia/conhecimento-e-llm.md) | §6b, §7, §8 | base de conhecimento por escola (RAG), system prompt do tenant, porta `LLMProvider`, `DocumentSource` |
@@ -164,6 +165,18 @@ preciso ler tudo.
 | [`docs/guia/seguranca-e-lgpd.md`](docs/guia/seguranca-e-lgpd.md) | §14, §15, §17 | postura de segurança do super admin, checklist de pré-deploy, auditoria LGPD contínua |
 | [`docs/guia/roadmap.md`](docs/guia/roadmap.md) | §12, §12a | o que está feito, o que falta e em que ordem |
 
+**Fora do guia** — o que não descreve o produto, mas o trabalho em volta dele:
+
+| Arquivo | Abra quando… |
+|---|---|
+| [`LOG.md`](LOG.md) | abrir ou fechar sessão — quatro linhas por sessão, é o que faz o §0 funcionar |
+| [`docs/pendencias-externas.md`](docs/pendencias-externas.md) | **algo estiver travado e não for código** — segredo, credencial, cartão, chip, clique no painel de um provedor |
+| [`docs/pipelines.md`](docs/pipelines.md) | mexer nas esteiras de deploy por branch *(chega com o PR #87)* |
+| [`docs/producao-fly.md`](docs/producao-fly.md) | deploy, segredos, DNS, rollback e custo do back-end de produção |
+| [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) | go-live do canal na Meta |
+| [`docs/plano-correcoes-teste-10-08.md`](docs/plano-correcoes-teste-10-08.md) | os apontamentos do teste de 10/ago e a Fase 0 (arquivos no S3) |
+| [`docs/checklist-teste-manual.md`](docs/checklist-teste-manual.md) | testar o produto inteiro na mão |
+| [`docs/runbook-rollback.md`](docs/runbook-rollback.md) · [`docs/backup.md`](docs/backup.md) | algo der errado depois de publicar |
 **Operação** (fora do guia, em `docs/`): [`pipelines.md`](docs/pipelines.md) (as esteiras
 de homolog e produção, e o modelo de branches), [`producao-fly.md`](docs/producao-fly.md)
 (o back-end de produção na Fly), [`producao-whatsapp.md`](docs/producao-whatsapp.md)
@@ -179,7 +192,9 @@ de homolog e produção, e o modelo de branches), [`producao-fly.md`](docs/produ
 
 O detalhe de cada um está na seção indicada; ficam aqui porque o custo de descobri-los
 tarde já foi pago uma vez.
-
+- **Antes de codar, abra o §0.** Uma sessão começa com recapitulação, **um** fluxo do corte
+  do beta e escopo acordado; termina com registro em `LOG.md`. Progresso é fluxo funcionando
+  ponta a ponta na escola — não commit, feature ou refactor. (§0)
 - **Multi-tenant é invariante, não recurso:** toda consulta escopada por `tenant_id`; nunca
   vazar dados entre escolas. (§6)
 - **Migrations em cadeia linear.** `down_revision` = head atual; o CI recusa mais de um head,
@@ -196,6 +211,18 @@ tarde já foi pago uma vez.
   está em `MESSAGE_CHANNEL=demo`**: manter os dois ligados é impossível, e um homolog em
   `meta` ainda dispararia WhatsApp real a partir de dado de teste. Ligar o canal num
   ambiente é desligá-lo no outro. (§9c, [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) §11)
+- **Nenhum dos dois back-ends publica sozinho:** mergear na `main` não sobe a API. No
+  **homolog** (Render) é *Manual Deploy → Deploy latest commit*; na **produção**
+  (Fly.io, app `ti-escolar`) é `cd backend && fly deploy`. (§12a,
+  [`docs/producao-fly.md`](docs/producao-fly.md))
+  > A esteira que conserta isso está no **PR #87** (`feat/pipelines-homolog-producao`) e
+  > **ainda não foi mergeada** — e, mesmo depois do merge, ela **pula o deploy** enquanto os
+  > segredos que só o Luiz cadastra não existirem. Até lá o aviso acima continua valendo.
+  > ([`docs/pendencias-externas.md`](docs/pendencias-externas.md) §1)
+- **Travou e não é código? Não improvise:** segredo, credencial da AWS, cartão na Meta, chip,
+  branch no painel do Render — está tudo em
+  [`docs/pendencias-externas.md`](docs/pendencias-externas.md), com o **como conferir que
+  caiu** de cada um. Item novo desse tipo entra lá, não no roadmap.
 - **A branch é o ambiente:** `develop` publica no **homolog** (Render + Vercel) e `main`
   publica na **produção** (Fly.io + Cloudflare Pages), pelas esteiras `deploy-homolog.yml`
   e `deploy-producao.yml`. Trabalho novo sai da `develop`; produção é um PR
@@ -212,6 +239,11 @@ tarde já foi pago uma vez.
   `python -m app.provisionar` — tenant, admin (senha do ambiente), conta e conhecimento
   opcional, **sem** aluno/responsável/ficha fictícios. (§10,
   [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) §11.3)
+- **A chave do arquivo carrega a finalidade:** `{finalidade}/{tenant}/…`, porque o lifecycle
+  do bucket apaga por **prefixo**. `doc/` compartilhado entre documento e impressão fazia a
+  regra de 395 dias levar junto arquivo de professor que não tem `expira_em` nem expurgo — a
+  linha sobrevive apontando para objeto que não existe, e o download vira 404. **Descartar
+  apaga os bytes na hora** e reduz o registro ao que o anti-spam precisa. (§6k)
 - **O dado mais sensível da base é documento de menor** (atestado, laudo, `cor_raca`, NIS):
   nenhuma URL pública, download auditado, prazo de retenção com expurgo. (§6k, §17)
 
@@ -250,5 +282,10 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
 - **Segredos:** chaves de LLM e da Meta via variáveis de ambiente; nunca no código/repos.
 - **Documentação:** este arquivo é o índice; o detalhe vai para o arquivo de assunto em
   `docs/guia/` (ver o [mapa](#mapa-do-guia)). Mantenha o CLAUDE.md enxuto — ele é carregado
+  em toda sessão. 
+- **Método antes de produto:** o §0 ([`metodo-de-trabalho.md`](docs/guia/metodo-de-trabalho.md))
+  governa como as sessões acontecem e prevalece sobre impulso de escopo. Arquitetura e
+  invariantes (§4, §6, §11) não são objeto de corte — só features são.
+<critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a main com origin remote e abrir uma nova branch a partir da main com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade)</critical>
   em toda sessão.
 <critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a `develop` com o origin remote e abrir uma nova branch **a partir da `develop`** com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade). O PR da feature aponta para a `develop` (homolog); a produção é um PR separado `develop → main` (ver [`docs/pipelines.md`](docs/pipelines.md)).</critical>
