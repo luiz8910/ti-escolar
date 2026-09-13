@@ -165,9 +165,19 @@ async def health() -> dict:
     ``meta`` e sem token a aplicação sobe falando pelo canal demo, e ecoar a env aqui
     afirmaria que o WhatsApp está no ar enquanto nenhuma mensagem sai. Quando os dois
     divergem o corpo diz qual foi pedido e por quê caiu.
+
+    ``versao`` é o commit que está no ar. Sem ele, "publiquei" e "achei que publiquei"
+    respondem exatamente a mesma coisa aqui — e a esteira de deploy não teria como
+    afirmar que o que ela subiu é o que está atendendo (§12a). ``desconhecida`` quando a
+    imagem foi construída sem o build-arg, o que é o caso em desenvolvimento.
     """
     efetivo = canal_efetivo(settings)
-    corpo = {"status": "ok", "llm": settings.llm_provider, "canal": efetivo}
+    corpo = {
+        "status": "ok",
+        "llm": settings.llm_provider,
+        "canal": efetivo,
+        "versao": settings.git_commit or "desconhecida",
+    }
     if efetivo != settings.message_channel:
         corpo["canal_configurado"] = settings.message_channel
         corpo["canal_alerta"] = _MOTIVO_CANAL_DEGRADADO

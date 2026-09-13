@@ -16,14 +16,23 @@
 
 ## Deploy
 
+**Publica no push à `main`**, pela esteira `.github/workflows/deploy-producao.yml` — ela
+roda o CI, faz `fly deploy`, espera o `/health` ecoar **este** commit e só então mede a
+postura do ambiente. O modelo de branches (`develop` = homolog, `main` = produção) está em
+[`pipelines.md`](pipelines.md).
+
+Até 02/set/2026 o deploy era manual, como no Render. O comando continua valendo — para
+rollback, para depurar o build, ou quando a esteira estiver indisponível:
+
 ```bash
 export FLY_API_TOKEN=...        # ~/.openclaw/fly/credenciais.env (Organization Token)
-cd backend && fly deploy        # o contexto do build é backend/, não a raiz
+cd backend && fly deploy --build-arg GIT_SHA=$(git rev-parse HEAD)
+# o contexto do build é backend/, não a raiz
 ```
 
-**Deploy é manual, como no Render** — mergear na `main` não publica nada. A diferença é que
-aqui o comando existe: `fly deploy` faz build, sobe a imagem, roda o `release_command` e
-troca a máquina.
+> O `--build-arg GIT_SHA` é o que faz o `/health` dizer qual commit está no ar. Sem ele a
+> API sobe igual e responde `"versao": "desconhecida"` — funciona, mas a próxima esteira
+> perde a única prova de que o deploy aconteceu.
 
 > **`--ha=false` no primeiro deploy de um grupo novo.** O `flyctl` cria **duas** máquinas por
 > conta própria ("Creating a second machine for high availability"), e nem

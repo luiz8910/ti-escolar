@@ -5,14 +5,30 @@ from __future__ import annotations
 from datetime import time
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # `populate_by_name`: os campos com `validation_alias` (ex.: git_commit) continuam
+    # construíveis pelo próprio nome — o alias serve para ler a env, não para trocar a
+    # assinatura do Settings nos testes.
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", populate_by_name=True
+    )
 
     app_env: str = "development"
+
+    # Commit publicado neste ambiente, ecoado por ``/health`` (§12a). Existe porque o
+    # sintoma de "o deploy não aconteceu" é indistinguível de "o deploy aconteceu": o
+    # /health responde ok nos dois casos, e foi assim que o Render ficou atrás da `main`
+    # sem ninguém perceber (09/ago/2026). Com o commit no corpo, a esteira compara o que
+    # está no ar com o que ela acabou de publicar. O Render injeta ``RENDER_GIT_COMMIT``
+    # sozinho; na Fly o valor entra como build-arg (ver Dockerfile).
+    git_commit: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GIT_COMMIT", "RENDER_GIT_COMMIT"),
+    )
     database_url: str = "postgresql+psycopg://tiescolar:tiescolar@db:5432/tiescolar"
 
     @field_validator("database_url", mode="before")

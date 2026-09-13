@@ -177,6 +177,11 @@ preciso ler tudo.
 | [`docs/plano-correcoes-teste-10-08.md`](docs/plano-correcoes-teste-10-08.md) | os apontamentos do teste de 10/ago e a Fase 0 (arquivos no S3) |
 | [`docs/checklist-teste-manual.md`](docs/checklist-teste-manual.md) | testar o produto inteiro na mão |
 | [`docs/runbook-rollback.md`](docs/runbook-rollback.md) · [`docs/backup.md`](docs/backup.md) | algo der errado depois de publicar |
+**Operação** (fora do guia, em `docs/`): [`pipelines.md`](docs/pipelines.md) (as esteiras
+de homolog e produção, e o modelo de branches), [`producao-fly.md`](docs/producao-fly.md)
+(o back-end de produção na Fly), [`producao-whatsapp.md`](docs/producao-whatsapp.md)
+(go-live do canal), [`runbook-rollback.md`](docs/runbook-rollback.md),
+[`backup.md`](docs/backup.md), [`checklist-teste-manual.md`](docs/checklist-teste-manual.md).
 
 > **Ao mexer no guia:** mantenha a numeração das seções e atualize a linha correspondente
 > deste mapa. Seção nova entra no arquivo do assunto — não neste índice.
@@ -218,6 +223,17 @@ tarde já foi pago uma vez.
   branch no painel do Render — está tudo em
   [`docs/pendencias-externas.md`](docs/pendencias-externas.md), com o **como conferir que
   caiu** de cada um. Item novo desse tipo entra lá, não no roadmap.
+- **A branch é o ambiente:** `develop` publica no **homolog** (Render + Vercel) e `main`
+  publica na **produção** (Fly.io + Cloudflare Pages), pelas esteiras `deploy-homolog.yml`
+  e `deploy-producao.yml`. Trabalho novo sai da `develop`; produção é um PR
+  `develop → main`. Até 02/set/2026 nenhum dos dois back-ends publicava sozinho — se algum
+  documento ainda mandar abrir o painel do Render ou rodar `fly deploy` na mão, é resquício
+  disso (os comandos seguem valendo como rollback). (§12a,
+  [`docs/pipelines.md`](docs/pipelines.md))
+- **Deploy verde não é prova de deploy feito:** o `/health` responde `ok` na versão velha
+  também. Quem distingue é o campo `versao` (o commit da imagem), que a esteira compara com
+  o que acabou de publicar. Ao mexer no `Dockerfile` ou no `/health`, esse campo tem de
+  continuar chegando — sem ele a esteira volta a jurar que publicou. (§12a)
 - **Produção não semeia, mas agora provisiona.** `app.seed` é proibido em `APP_ENV=production`
   e continua sendo; o que existe para pôr **uma** escola de pé num banco real é
   `python -m app.provisionar` — tenant, admin (senha do ambiente), conta e conhecimento
@@ -271,3 +287,5 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   governa como as sessões acontecem e prevalece sobre impulso de escopo. Arquitetura e
   invariantes (§4, §6, §11) não são objeto de corte — só features são.
 <critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a main com origin remote e abrir uma nova branch a partir da main com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade)</critical>
+  em toda sessão.
+<critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a `develop` com o origin remote e abrir uma nova branch **a partir da `develop`** com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade). O PR da feature aponta para a `develop` (homolog); a produção é um PR separado `develop → main` (ver [`docs/pipelines.md`](docs/pipelines.md)).</critical>

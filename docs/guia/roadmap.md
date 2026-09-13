@@ -133,15 +133,9 @@
   preenchidos a partir do Cartão CNPJ. **Pendente:** criar o projeto Pages + secrets e
   apontar `tiescolar.com.br` (hoje sem registro A/CNAME) — pré-requisito para reenviar a
   verificação da empresa na Meta.
-- [x] **Deploy automatizado**: são **três destinos**, um por camada —
-  **back-end (FastAPI) → Render**, que **NÃO tem Auto-Deploy**: apesar do que esta linha
-  afirmava, todo evento na aba *Events* do serviço é *"Manually triggered by you via
-  Dashboard"*. **Mergear não publica o back-end** — depois do merge é preciso ir ao painel do
-  Render → **Manual Deploy** → *Deploy latest commit*, senão o serviço fica atrás da `main`
-  (foi o que aconteceu em 09/ago, quando `/health/pronto` respondia 404 em produção);
-  **painel admin (`web/`) → Vercel**, que consome a API do Render;
-  **landing page (`site/`) → Cloudflare Pages**, via `.github/workflows/site.yml` (§9d).
-  O CI (`.github/workflows/ci.yml`) roda três jobs em PRs e na `main`, como portão de
+- [x] **Deploy automatizado**: são **três destinos**, um por camada — **back-end (FastAPI)**,
+  **painel admin (`web/`)** e **landing page (`site/`)**.
+  O CI (`.github/workflows/ci.yml`) roda três jobs em PRs, como portão de
   qualidade antes do merge: **back-end** (ruff + `alembic upgrade head` + pytest),
   **painel `web/`** (`tsc --noEmit` + `next build`) e **landing `site/`** (typecheck + export
   estático). O front entrou no CI em 29/jul/2026 — até então um erro de TypeScript só
@@ -150,6 +144,29 @@
   > O `ruff` está fixado em `>=0.5,<0.16` no `backend/pyproject.toml`: sem teto, o CI
   > instalava a versão mais nova a cada execução e a 0.16.0 quebrou a build sem que o
   > código mudasse (358 dos 424 achados eram `B008`, o `Depends()` do FastAPI).
+
+- [x] **Esteiras por ambiente, e a branch virou o ambiente** (02/set/2026) —
+  `develop` publica no **homolog** (Render + Vercel) e `main` na **produção** (Fly +
+  Cloudflare Pages), por `deploy-homolog.yml` e `deploy-producao.yml`. Receita completa em
+  [`docs/pipelines.md`](../pipelines.md). Antes disso **nenhum dos dois back-ends publicava
+  sozinho**: no Render todo evento da aba *Events* era *"Manually triggered by you via
+  Dashboard"* e depois do merge alguém tinha de ir ao painel → *Manual Deploy*; na Fly era
+  `cd backend && fly deploy`. O custo apareceu em 09/ago, com `/health/pronto` respondendo
+  404 em produção porque o serviço estava dias atrás da `main`. Três coisas que a esteira
+  resolve e que valem por si:
+  - **O `/health` passou a ecoar o commit da imagem** (`versao`). Sem isso "publiquei" e
+    "achei que publiquei" respondem a mesma coisa de fora, e nenhuma automação consegue
+    afirmar que publicou — só que o servidor está de pé. O Render injeta
+    `RENDER_GIT_COMMIT` sozinho; na Fly o valor entra como build-arg no `Dockerfile`.
+  - **O CI virou `workflow_call`** e é chamado de dentro das esteiras, em vez de rodar por
+    `push`. Assim o deploy é o mesmo run que testou, não um run paralelo que talvez tenha
+    passado — e a suíte roda uma vez por push, não duas.
+  - **A postura do ambiente saiu do `lgpd.yml`** e virou job das duas esteiras
+    (`postura.yml`, reutilizável), em modo observação no homolog e **estrito** na produção.
+    No `lgpd.yml` sobrou a agenda semanal, que existe porque configuração muda no painel do
+    provedor sem commit nenhum. Ao mover, apareceu que o `| tee` do passo original comia o
+    código de saída (o shell padrão do Actions é `bash -e`, sem `pipefail`): o `--estrito`
+    era decorativo — corrigido com `shell: bash`.
 
 - [x] **Back-end de produção na Fly.io** (20/ago/2026) — app `ti-escolar`, região `gru`,
   config em `backend/fly.toml`, receita em [`docs/producao-fly.md`](../producao-fly.md). O
@@ -167,7 +184,9 @@
 
 - [x] **Painel (`web/`) em produção na Cloudflare Pages** (21/ago/2026) — projeto
   `ti-escolar-web`, domínio `app.tiescolar.com.br`, publicado por
-  `.github/workflows/web.yml`. A Vercel continua sendo o **homolog**. Três coisas que o
+  `.github/workflows/web.yml`. A Vercel continua sendo o **homolog**, e desde 02/set/2026
+  seguindo a branch `develop` (é a única peça cujo deploy não passa por este repositório:
+  a integração é da própria Vercel com o git). Três coisas que o
   `output: "export"` do `next.config.js` trouxe junto: rota dinâmica passa a exigir
   `generateStaticParams()`, então o detalhe da escola virou `/admin/escolas/detalhe?tenant=`
   (ids de escola não existem em tempo de build); o `_redirects` mudou de `out/` — que é
