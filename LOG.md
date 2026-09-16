@@ -19,6 +19,22 @@
 
 ---
 
+## 2026-09-16 — exclusão de arquivos e prefixos por finalidade, fechada
+
+- **Andou?** sim — *arquivo recebido pelo WhatsApp* passa a ter o fim da vida coberto:
+  descartar apaga os bytes, tirar da fila de impressão apaga o arquivo, e cada finalidade
+  tem seu prefixo, de modo que o lifecycle de um não come o arquivo do outro.
+- **Rótulo:** —
+- **Próxima ação:** mergear o PR na `develop` (homolog) e, para levar à produção, o segundo
+  PR `develop → main` — a migration `0046_chave_impressao` alarga a coluna da fila de 64
+  para 120 e precisa rodar lá.
+- **Precisa de deploy?** homolog no merge; produção no PR seguinte.
+- A branch estava pronta e sem commit desde 02/set. Nesta sessão: `pytest` verde (729),
+  cadeia de migrations conferida (`0044 → 0045 → 0046 → 0047`, head único), commit e PR.
+  **Fica em aberto:** a solicitação de impressão não tem `expira_em` — para ela o lifecycle
+  é o mecanismo, não a rede (pedido esquecido 180 dias na fila perde o arquivo) — e a linha
+  marcada com `deleted_at` ainda não tem expurgo.
+
 ## 2026-09-06 — a esteira de deploy saiu da máquina
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; o que saiu do lugar foi o bloqueio.
@@ -42,7 +58,7 @@
   Achado da sessão: **a esteira de deploy estava pronta desde 02/set e nunca saiu da máquina** —
   sem push, sem PR. Era isso o "travados no deploy".
 
-## 2026-09-02 — exclusão de arquivos e prefixos por finalidade *(em andamento)*
+## 2026-09-02 — exclusão de arquivos e prefixos por finalidade *(fechada em 16/set)*
 
 - **Andou?** não — na branch `feat/exclusao-de-arquivos-e-prefixos`, ainda sem commit.
 - **Rótulo:** — (sessão aberta, não travada).

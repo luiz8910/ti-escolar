@@ -16,6 +16,7 @@ from app.application.impressao_use_cases import (
     SolicitarImpressao,
 )
 from app.domain.entities import Professor, StatusImpressao
+from app.infrastructure.storage import ArquivoStorageMemoria
 from tests.fakes import FakeProfessorRepo, FakeSolicitacaoImpressaoRepo
 
 TENANT = uuid.uuid4()
@@ -112,9 +113,38 @@ async def test_remover_e_isolamento_por_tenant():
         await ObterSolicitacaoImpressao(solicitacoes=solicitacoes).executar(
             tenant_id=OUTRO_TENANT, solicitacao_id=s.id
         )
-    assert not await RemoverSolicitacaoImpressao(solicitacoes=solicitacoes).executar(
+    remover = RemoverSolicitacaoImpressao(
+        solicitacoes=solicitacoes, storage=ArquivoStorageMemoria()
+    )
+    assert not await remover.executar(
         tenant_id=OUTRO_TENANT, solicitacao_id=s.id
     )
-    assert await RemoverSolicitacaoImpressao(solicitacoes=solicitacoes).executar(
-        tenant_id=TENANT, solicitacao_id=s.id
+    assert await remover.executar(tenant_id=TENANT, solicitacao_id=s.id)
+
+
+async def test_remover_apaga_os_bytes_do_arquivo():
+    """O caso do documento ilegível: tirar da fila tem de tirar o arquivo junto.
+
+    Até 30/ago/2026 este caso de uso nem recebia o storage — a linha sumia e os bytes
+    ficavam, sem dono e fora do alcance de qualquer expurgo.
+    """
+    solicitacoes, storage = FakeSolicitacaoImpressaoRepo(), ArquivoStorageMemoria()
+    chave = f"impressao/{TENANT}/2026/08/ilegivel"
+    await storage.guardar(chave=chave, conteudo=b"%PDF-borrado", mime="application/pdf")
+    s = await SolicitarImpressao(solicitacoes=solicitacoes).executar(
+        tenant_id=TENANT, arquivo_nome="ilegivel.pdf", chave_storage=chave
     )
+
+    remover = RemoverSolicitacaoImpressao(solicitacoes=solicitacoes, storage=storage)
+    assert await remover.executar(tenant_id=TENANT, solicitacao_id=s.id)
+
+    assert await storage.ler(chave=chave) is None
+    # Sai da fila...
+    assert await solicitacoes.obter(tenant_id=TENANT, solicitacao_id=s.id) is None
+    assert await solicitacoes.listar(tenant_id=TENANT) == []
+    # ...mas a linha fica, marcada e sem ponteiro para o arquivo.
+    linha = solicitacoes.solicitacoes[s.id]
+    assert linha.deleted_at is not None
+    assert linha.chave_storage == ""
+    # Tirar de novo é "não encontrada", não erro.
+    assert not await remover.executar(tenant_id=TENANT, solicitacao_id=s.id)

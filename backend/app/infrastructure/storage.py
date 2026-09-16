@@ -26,12 +26,18 @@ custo real.
 (produção) e ``ti-escolar-homolog-190446415519-sa-east-1-an`` (homolog), em ``sa-east-1`` e
 com configuração idêntica: acesso público bloqueado nas quatro chaves **e também no nível da
 conta**, ACLs desligadas (``BucketOwnerEnforced``), política que nega qualquer acesso com
-``aws:SecureTransport = false``, e uma regra de lifecycle ``rede-de-seguranca-doc-395d``
-que expira o prefixo ``doc/`` em **395 dias** — ``DOCUMENTO_RETENCAO_DIAS`` (365) mais 30 de
-folga. O lifecycle é **rede de segurança, não mecanismo**: ele expira por idade do objeto,
-enquanto o ``expira_em`` do §6k é por documento e apaga o metadado junto. Ele filtra por
-``doc/`` de propósito — a foto do aluno mora em ``foto/`` e vive enquanto ele estiver
-matriculado; uma regra sem prefixo apagaria a foto de quem está na escola.
+``aws:SecureTransport = false``, e duas regras de lifecycle:
+``rede-de-seguranca-doc-395d`` no prefixo ``doc/`` — ``DOCUMENTO_RETENCAO_DIAS`` (365) mais
+30 de folga — e ``rede-de-seguranca-impressao-180d`` no ``impressao/``. Elas filtram por
+prefixo de propósito: a foto do aluno mora em ``foto/`` e vive enquanto ele estiver
+matriculado, e uma regra sem prefixo apagaria a foto de quem está na escola.
+
+Para os documentos, o lifecycle é **rede de segurança, não mecanismo**: ele expira por idade
+do objeto, enquanto o ``expira_em`` do §6k é por documento e apaga o metadado junto. Para a
+fila de impressão **ainda não é assim** — a solicitação não tem ``expira_em`` nem expurgo de
+aplicação, então a regra de 180 dias é hoje o único descarte automático dali, e um pedido
+esquecido na fila por meio ano perde o arquivo com a linha intacta. O conserto é dar
+``expira_em`` à solicitação; até lá, a folga larga é o que segura.
 
 **Criptografia: SSE-KMS com a chave gerenciada** ``aws/s3``, não com CMK própria — decisão de
 29/ago/2026 para não pagar a chave antes de o adaptador existir. É o senão a registrar: sem
@@ -75,6 +81,21 @@ def nova_chave(prefixo: str = "doc") -> str:
     Nada de nome do responsável ou do aluno na chave: ela aparece em log e em URL, e o
     conteúdo aqui é dado sensível de menor. ``token_urlsafe`` porque um id sequencial
     permitiria varrer os arquivos das outras escolas por tentativa.
+
+    **O prefixo é finalidade + tenant**, e isso não é organização de pasta — é o que
+    decide o que a regra de lifecycle do bucket apaga:
+
+    - ``doc/{tenant}`` — documentos dos responsáveis; regra de **395 dias**
+    - ``impressao/{tenant}`` — fila de impressão; regra de **180 dias**
+    - ``foto/{tenant}`` — foto do aluno; **sem regra**, vive enquanto ele estiver matriculado
+    - ``kb/{tenant}`` — fontes da base de conhecimento; **sem regra** (o FAQ não expira)
+
+    Até 30/ago/2026 os documentos e os arquivos de impressão dividiam o prefixo ``doc/``
+    sem tenant. A regra de 395 dias criada para os documentos teria apagado também os
+    arquivos de impressão — que não têm ``expira_em`` nem expurgo de aplicação —, deixando
+    a linha em ``solicitacoes_impressao`` apontando para um objeto inexistente e o download
+    devolvendo 404 sem explicação. O tenant no prefixo dá de graça o inventário por escola
+    e transforma a remoção de um tenant em exclusão por prefixo.
     """
     return f"{prefixo}/{datetime.now(timezone.utc):%Y/%m}/{secrets.token_urlsafe(24)}"
 
@@ -115,19 +136,51 @@ class PostgresArquivoStorage:
         await self._s.flush()
         return bool(resultado.rowcount)
 
+    async def listar_chaves(
+        self, *, prefixo: str = "", criado_antes_de: datetime, limite: int = 500
+    ) -> list[str]:
+        stmt = (
+            select(ArquivoArmazenadoORM.chave)
+            .where(ArquivoArmazenadoORM.criado_em < criado_antes_de)
+            .order_by(ArquivoArmazenadoORM.criado_em)
+            .limit(limite)
+        )
+        if prefixo:
+            # `like` com o prefixo literal: a chave é gerada por `nova_chave`, então não
+            # há curinga de usuário entrando aqui.
+            stmt = stmt.where(ArquivoArmazenadoORM.chave.like(f"{prefixo}%"))
+        return list((await self._s.execute(stmt)).scalars().all())
+
 
 class ArquivoStorageMemoria:
     """Armazenamento em memória — testes e execução local sem banco."""
 
     def __init__(self) -> None:
         self.arquivos: dict[str, tuple[bytes, str]] = {}
+        # Carimbo de quando cada chave entrou, para o corte por idade de `listar_chaves`.
+        # Os testes ajustam este dicionário para simular um arquivo antigo.
+        self.criado_em: dict[str, datetime] = {}
 
     async def guardar(self, *, chave: str, conteudo: bytes, mime: str) -> None:
         self.arquivos[chave] = (conteudo, mime)
+        self.criado_em.setdefault(chave, datetime.now(timezone.utc))
 
     async def ler(self, *, chave: str) -> bytes | None:
         item = self.arquivos.get(chave)
         return item[0] if item else None
 
     async def remover(self, *, chave: str) -> bool:
+        self.criado_em.pop(chave, None)
         return self.arquivos.pop(chave, None) is not None
+
+    async def listar_chaves(
+        self, *, prefixo: str = "", criado_antes_de: datetime, limite: int = 500
+    ) -> list[str]:
+        chaves = [
+            chave
+            for chave in self.arquivos
+            if chave.startswith(prefixo)
+            and self.criado_em.get(chave, datetime.now(timezone.utc)) < criado_antes_de
+        ]
+        chaves.sort(key=lambda c: self.criado_em.get(c, datetime.now(timezone.utc)))
+        return chaves[:limite]

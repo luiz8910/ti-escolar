@@ -24,9 +24,11 @@ from app.application.documentos_use_cases import (
     ListarNumerosBloqueados,
     SugerirBloqueios,
     ClassificarDocumento,
+    ExcluirDocumentoRecebido,
     ExpurgarDocumentosVencidos,
     ListarDocumentosRecebidos,
     ObterDocumentoRecebido,
+    VarrerArquivosOrfaos,
 )
 from app.application.paginacao import POR_PAGINA_PADRAO
 from app.domain.entities import (
@@ -43,6 +45,7 @@ from app.infrastructure.db.repositories_comunicacao import (
     SqlDocumentoRecebidoRepository,
     SqlNumeroBloqueadoRepository,
 )
+from app.infrastructure.storage import PostgresArquivoStorage
 from app.interfaces.api.admin import (
     _auditar_usuario,
     _exige_acesso_tenant,
@@ -51,12 +54,15 @@ from app.interfaces.api.admin import (
 )
 from app.interfaces.deps import (
     get_aluno_repo,
+    get_arquivo_storage,
     get_bloqueio_repo,
+    get_excluir_documento,
     get_ler_documento_ia,
     get_audit_repo,
     get_baixar_documento,
     get_documento_repo,
     get_expurgar_documentos,
+    get_varrer_orfaos,
 )
 from app.interfaces.dto import (
     DocumentoClassificacaoEntrada,
@@ -368,12 +374,19 @@ async def classificar(
     usuario: Usuario = Depends(usuario_autenticado),
     repo: SqlDocumentoRecebidoRepository = Depends(get_documento_repo),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
+    storage: PostgresArquivoStorage = Depends(get_arquivo_storage),
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> DocumentoRecebidoSaida:
-    """A secretaria confirma a finalidade, vincula o aluno e conclui o tratamento."""
+    """A secretaria confirma a finalidade, vincula o aluno e conclui o tratamento.
+
+    Marcar como **descartado** apaga os bytes na hora e reduz o registro ao que o
+    anti-spam precisa — não é só uma troca de rótulo.
+    """
     _exige_acesso_tenant(usuario, tenant_id)
     try:
-        documento = await ClassificarDocumento(documentos=repo, alunos=alunos).executar(
+        documento = await ClassificarDocumento(
+            documentos=repo, storage=storage, alunos=alunos
+        ).executar(
             tenant_id=tenant_id,
             documento_id=documento_id,
             categoria=_enum(payload.categoria, CategoriaDocumento, "Categoria"),
@@ -398,16 +411,61 @@ async def classificar(
     return _saida(documento)
 
 
+@router.delete("/{documento_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir(
+    documento_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    uc: ExcluirDocumentoRecebido = Depends(get_excluir_documento),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> None:
+    """Apaga o arquivo e tira o documento do painel; a linha fica marcada (`deleted_at`).
+
+    A linha reduzida sobrevive até o expurgo (`RETENCAO_DESCARTE_DIAS`) para que a
+    reentrega do webhook não recrie o documento. Para lidar com spam — a foto de "bom
+    dia", a imagem tremida —, prefira **descartar** (`PUT` com `status=descartado`): é o
+    descarte que alimenta a sugestão de bloqueio.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    if not await uc.executar(tenant_id=tenant_id, documento_id=documento_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Documento não encontrado"
+        )
+    # Auditar depois de apagar: a linha marcada some no expurgo, e a auditoria é o rastro
+    # que fica de que aquele arquivo existiu e de quem mandou apagá-lo (§13).
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="documento.excluir",
+        tenant_id=tenant_id,
+        descricao="Excluiu o documento e o arquivo",
+        metadados={"documento_id": str(documento_id)},
+    )
+
+
 @router.post("/expurgar", response_model=ExpurgoSaida)
 async def expurgar(
     usuario: Usuario = Depends(usuario_autenticado),
     uc: ExpurgarDocumentosVencidos = Depends(get_expurgar_documentos),
+    varredura: VarrerArquivosOrfaos = Depends(get_varrer_orfaos),
 ) -> ExpurgoSaida:
-    """Apaga os arquivos cujo prazo de retenção venceu (LGPD).
+    """Apaga os arquivos cujo prazo de retenção venceu (LGPD) e varre os órfãos.
 
     Cross-tenant, por isso é do super admin: retenção é política da plataforma, não de uma
     escola. **[Roadmap]** chamar isto por job agendado — hoje depende de alguém clicar.
+
+    A varredura roda **depois** do expurgo, de propósito: o expurgo é o que mais produz
+    divergência entre bytes e metadado (ele apaga os dois, item a item, tolerando falha),
+    então varrer antes deixaria para a próxima rodada exatamente o lixo que acabou de ser
+    criado.
     """
     _exige_super_admin(usuario)
     resultado = await uc.executar()
-    return ExpurgoSaida(removidos=resultado.removidos, falhas=resultado.falhas)
+    orfaos = await varredura.executar()
+    return ExpurgoSaida(
+        removidos=resultado.removidos,
+        falhas=resultado.falhas,
+        orfaos_examinados=orfaos.examinados,
+        orfaos_removidos=orfaos.removidos,
+        orfaos_falhas=orfaos.falhas,
+    )

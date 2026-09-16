@@ -67,6 +67,24 @@ construir do zero.
 > usuário IAM de cada ambiente, que é o que destrava o adaptador (§0.6). Enquanto o adaptador
 > não existir, nada disso tem efeito: os bytes seguem no `bytea`.
 >
+> **30/ago/2026 — exclusão de arquivo e prefixos por finalidade.** Três buracos que só
+> apareceram quando se perguntou "e para apagar?": (1) descartar um documento era **só um
+> rótulo** — os bytes ficavam os 365 dias do prazo, então a foto de "bom dia" de um
+> responsável era guardada um ano; (2) `RemoverSolicitacaoImpressao` apagava a linha da
+> fila e **nunca tocava no storage**, deixando órfão todo arquivo de professor tirado da
+> fila; (3) documentos e impressões dividiam o prefixo `doc/`, de modo que a regra de 395
+> dias criada para os primeiros apagaria os segundos — que não têm `expira_em` nem expurgo
+> —, deixando a linha apontar para objeto inexistente e o download em 404.
+>
+> Agora: a chave nasce como `{finalidade}/{tenant}/…` (migration `0046_chave_impressao`
+> alarga a coluna da fila de 64 para 120), descartar apaga os bytes e reduz o registro ao
+> que o anti-spam precisa, `DELETE /api/admin/documentos/{id}` e a remoção da fila de
+> impressão apagam o arquivo e **marcam a linha** com `deleted_at` (migration
+> `0047_exclusao_logica`), `VarrerArquivosOrfaos` roda junto do `POST /expurgar`, e cada bucket
+> ganhou a regra `rede-de-seguranca-impressao-180d`. **Fica em aberto:** a solicitação de
+> impressão não tem `expira_em` — para ela o lifecycle é o mecanismo e não a rede (um pedido
+> esquecido na fila por 180 dias perde o arquivo), e a linha marcada não tem expurgo.
+
 > **A armadilha do IAM com SSE-KMS:** como o bucket criptografa com KMS, uma policy só de
 > `s3:PutObject`/`GetObject` **não basta** — o `PutObject` falha com `AccessDenied` na hora
 > de gerar a chave de dados. A policy precisa de `kms:GenerateDataKey` e `kms:Decrypt`,

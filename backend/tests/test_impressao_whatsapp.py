@@ -224,6 +224,9 @@ async def test_arquivo_de_professor_vai_para_a_fila_de_impressao():
     # Os bytes ficaram com a escola: a fila sem arquivo não serve para imprimir.
     assert pedido.tem_arquivo
     assert await c.storage.ler(chave=pedido.chave_storage) == b"x" * 2048
+    # Prefixo próprio: dividir `doc/` com os documentos dos responsáveis punha a fila sob
+    # a regra de lifecycle deles (395 dias), e a fila não tem expurgo que atualize a linha.
+    assert pedido.chave_storage.startswith(f"impressao/{pedido.tenant_id}/")
 
 
 async def test_professor_nao_consome_llm():

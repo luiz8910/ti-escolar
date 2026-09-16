@@ -39,8 +39,10 @@ from app.application.atendimento_humano_use_cases import (
 from app.application.documentos_use_cases import (
     LerDocumentoPorIA,
     BaixarDocumentoRecebido,
+    ExcluirDocumentoRecebido,
     ExpurgarDocumentosVencidos,
     ReceberDocumentoDoResponsavel,
+    VarrerArquivosOrfaos,
     ReceberMidiaDoResponsavel,
 )
 from app.application.use_cases import (
@@ -76,6 +78,7 @@ from app.infrastructure.db.repositories_admin import (
 from app.infrastructure.db.repositories_comunicacao import (
     SqlNumeroBloqueadoRepository,
     SqlAtendimentoHumanoRepository,
+    SqlChavesEmUso,
     SqlDocumentoRecebidoRepository,
     SqlAvisoTemporizadoRepository,
     SqlCotaImpressaoRepository,
@@ -205,6 +208,32 @@ def get_ler_documento_ia(
         documentos=SqlDocumentoRecebidoRepository(session),
         storage=PostgresArquivoStorage(session),
         leitor=criar_leitor_documento(settings),
+    )
+
+
+def get_arquivo_storage(
+    session: AsyncSession = Depends(get_session),
+) -> PostgresArquivoStorage:
+    """Onde os bytes moram hoje. **[Roadmap]** fábrica por ``ARQUIVO_STORAGE`` (Fase 0)."""
+    return PostgresArquivoStorage(session)
+
+
+def get_excluir_documento(
+    session: AsyncSession = Depends(get_session),
+) -> ExcluirDocumentoRecebido:
+    return ExcluirDocumentoRecebido(
+        documentos=SqlDocumentoRecebidoRepository(session),
+        storage=PostgresArquivoStorage(session),
+    )
+
+
+def get_varrer_orfaos(
+    session: AsyncSession = Depends(get_session),
+) -> VarrerArquivosOrfaos:
+    """Varredura de bytes sem dono — roda junto do expurgo (§0.3)."""
+    return VarrerArquivosOrfaos(
+        storage=PostgresArquivoStorage(session),
+        chaves_em_uso=SqlChavesEmUso(session),
     )
 
 
