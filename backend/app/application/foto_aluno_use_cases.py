@@ -50,7 +50,7 @@ class DefinirFotoDoAluno:
             raise ValueError("Aluno não encontrado para o tenant.")
 
         anterior = aluno.foto_chave
-        chave = nova_chave(f"foto/{tenant_id}")
+        chave = nova_chave(tenant_id, "foto")
         await self._storage.guardar(chave=chave, conteudo=conteudo, mime=mime)
         aluno.foto_chave = chave
         salvo = await self._alunos.atualizar(aluno)

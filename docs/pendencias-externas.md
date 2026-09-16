@@ -60,11 +60,18 @@ no resumo e **pula o deploy**, de propósito, para não reprovar por motivo que 
 **Estado:** `ti-escolar-190446415519-sa-east-1-an` (produção) e
 `ti-escolar-homolog-190446415519-sa-east-1-an` (homolog) estão criados em `sa-east-1`, com
 acesso público bloqueado, ACLs desligadas, `aws:SecureTransport = false` negado e lifecycle
-(`rede-de-seguranca-doc-395d`, `rede-de-seguranca-impressao-180d`). O adaptador `S3ArquivoStorage`
-está escrito e testado.
+(`rede-de-seguranca-doc-395d`, `rede-de-seguranca-impressao-180d`). O adaptador
+`S3ArquivoStorage` **está na `develop`** desde 16/set/2026, com `listar_chaves` para o
+varredor de órfãos, e a fábrica `criar_arquivo_storage`/`storage_efetivo` escolhe o adaptador
+pela env. Testado contra MinIO de verdade (compose + CI), não contra mock.
 
-**O que está travado:** **nada disso tem efeito.** Sem credencial, `ARQUIVO_STORAGE` continua
-em `postgres` e os bytes seguem no `bytea` — inclusive a foto do aluno, que nasce lá para ser
+> Antes disso ele passou **um mês numa branch que nunca foi mergeada** (`feat/arquivos-no-s3`,
+> 17/ago/2026): estava "escrito e testado" e, ao mesmo tempo, ausente do código que roda. Foi
+> o terceiro caso do mesmo padrão, junto do §1 e da documentação do §0 — e é por isso que
+> **"está pronto" só conta quando está na `develop`**.
+
+**O que está travado:** **nada disso tem efeito.** Sem credencial, `storage_efetivo` devolve
+`postgres` e os bytes seguem no `bytea` — inclusive a foto do aluno, que nasce lá para ser
 migrada depois.
 
 **O que só você faz:** criar **um usuário IAM por ambiente** no console da AWS e colar a
@@ -74,9 +81,19 @@ chave nos segredos da Fly (produção) e do Render (homolog): `ARQUIVO_STORAGE=s
 > **A armadilha do IAM com SSE-KMS:** policy só com `s3:PutObject`/`GetObject` **não basta** —
 > o `PutObject` falha com `AccessDenied` na hora de gerar a chave de dados. Precisa de
 > `kms:GenerateDataKey` e `kms:Decrypt`, restritos por `kms:ViaService = s3.sa-east-1.amazonaws.com`.
+>
+> **E a armadilha dos dois ARNs:** `s3:ListBucket` é permissão **do bucket**
+> (`arn:aws:s3:::<bucket>`), não do objeto (`arn:aws:s3:::<bucket>/*`) — pôr as duas no ARN
+> com `/*` deixa o upload e o download funcionando e faz **só o varredor de órfãos** falhar,
+> que é o que ninguém testa na hora. Sem `ListBucket` o varredor não enxerga lixo nenhum e
+> relata zero, sem erro.
 
 **Como conferir que caiu:** subir um documento pelo WhatsApp e ver o objeto aparecer no bucket
-sob `doc/{tenant}/…` — e o download pelo painel continuar funcionando (ele nunca é URL pública).
+sob `doc/{tenant}/{ano}/{mês}/…` — e um arquivo de professor sob `impressao/{tenant}/…`, que é
+o que separa as duas regras de lifecycle. O download pelo painel continua funcionando (ele
+nunca é URL pública). O `/health` passa a trazer `"storage": "s3"`; se vier
+`"storage": "postgres"` com `"storage_configurado": "s3"`, a env pediu o bucket e o processo
+caiu no banco — a mesma armadilha do canal.
 
 Detalhe em [`plano-correcoes-teste-10-08.md`](plano-correcoes-teste-10-08.md), Fase 0.
 

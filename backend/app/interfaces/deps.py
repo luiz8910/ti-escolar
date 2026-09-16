@@ -52,7 +52,12 @@ from app.application.use_cases import (
 )
 from app.config import Settings, get_settings
 from app.domain.entities import JanelaDeExecucao
-from app.domain.ports import CatalogoTemplates, LLMProvider, MessageChannel
+from app.domain.ports import (
+    ArquivoStorage,
+    CatalogoTemplates,
+    LLMProvider,
+    MessageChannel,
+)
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
     SqlBroadcastRepository,
@@ -101,6 +106,7 @@ from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.documents.mock_source import MockDocumentSource
 from app.infrastructure.factories import (
     canal_efetivo,
+    criar_arquivo_storage,
     criar_leitor_documento,
     criar_canal,
     criar_catalogo_templates,
@@ -113,7 +119,6 @@ from app.infrastructure.factories import (
 from app.infrastructure.atendimento import SqlRegistroAtendimento
 from app.infrastructure.retomada import RetomadorDeDisparos
 from app.infrastructure.messaging.quota import SqlQuotaPolicy, TokenBucketRateLimiter
-from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.rate_limit import SqlControleTaxa
 
 _rate_limiter = TokenBucketRateLimiter(taxa_por_segundo=20.0)
@@ -154,7 +159,7 @@ def get_recepcao_documentos(
     """Persistência de um arquivo recebido: metadados no Postgres, bytes no storage."""
     return ReceberDocumentoDoResponsavel(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         contatos=SqlContatoRepository(session),
         # Anti-spam (§4.5): número bloqueado não manda arquivo; origem desconhecida vai
         # para quarentena.
@@ -184,7 +189,7 @@ def get_receber_impressao(
     solicitacoes = SqlSolicitacaoImpressaoRepository(session)
     return ReceberImpressaoDoProfessor(
         fonte=criar_fonte_midia(settings),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         solicitacoes=solicitacoes,
         saldo=ConsultarSaldoImpressao(
             solicitacoes=solicitacoes, cotas=SqlCotaImpressaoRepository(session)
@@ -206,33 +211,40 @@ def get_ler_documento_ia(
     """Leitura de documento por IA (§4.3) — sob demanda, nunca em todo upload."""
     return LerDocumentoPorIA(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         leitor=criar_leitor_documento(settings),
     )
 
 
 def get_arquivo_storage(
     session: AsyncSession = Depends(get_session),
-) -> PostgresArquivoStorage:
-    """Onde os bytes moram hoje. **[Roadmap]** fábrica por ``ARQUIVO_STORAGE`` (Fase 0)."""
-    return PostgresArquivoStorage(session)
+    settings: Settings = Depends(get_settings_dep),
+) -> ArquivoStorage:
+    """Onde os bytes moram — Postgres ou S3, conforme ``ARQUIVO_STORAGE``."""
+    return criar_arquivo_storage(settings, session)
 
 
 def get_excluir_documento(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
 ) -> ExcluirDocumentoRecebido:
     return ExcluirDocumentoRecebido(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
     )
 
 
 def get_varrer_orfaos(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
 ) -> VarrerArquivosOrfaos:
-    """Varredura de bytes sem dono — roda junto do expurgo (§0.3)."""
+    """Varredura de bytes sem dono — roda junto do expurgo (§0.3).
+
+    Vai pela fábrica de propósito: no Postgres a varredura é quase inútil (gravar bytes e
+    commitar o metadado são a mesma transação), e é no S3 que o órfão existe.
+    """
     return VarrerArquivosOrfaos(
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
         chaves_em_uso=SqlChavesEmUso(session),
     )
 
@@ -245,19 +257,21 @@ def get_documento_repo(
 
 def get_baixar_documento(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
 ) -> BaixarDocumentoRecebido:
     return BaixarDocumentoRecebido(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
     )
 
 
 def get_expurgar_documentos(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings_dep),
 ) -> ExpurgarDocumentosVencidos:
     return ExpurgarDocumentosVencidos(
         documentos=SqlDocumentoRecebidoRepository(session),
-        storage=PostgresArquivoStorage(session),
+        storage=criar_arquivo_storage(settings, session),
     )
 
 
