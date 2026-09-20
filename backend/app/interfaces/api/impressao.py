@@ -10,7 +10,6 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.impressao_use_cases import (
     AtualizarStatusImpressao,
@@ -31,18 +30,18 @@ from app.domain.entities import (
     StatusImpressao,
     Usuario,
 )
+from app.domain.ports import ArquivoStorage
 from app.infrastructure.db.repositories_admin import SqlProfessorRepository
-from app.infrastructure.storage import PostgresArquivoStorage
 from app.infrastructure.db.repositories_comunicacao import (
     SqlCotaImpressaoRepository,
     SqlSolicitacaoImpressaoRepository,
 )
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
 from app.interfaces.deps import (
+    get_arquivo_storage,
     get_cota_impressao_repo,
     get_impressao_repo,
     get_professor_repo,
-    get_session,
 )
 from app.interfaces.dto import (
     CotaImpressaoEntrada,
@@ -154,17 +153,22 @@ async def baixar_arquivo_impressao(
     solicitacao_id: UUID,
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
-    session: AsyncSession = Depends(get_session),
     solicitacoes: SqlSolicitacaoImpressaoRepository = Depends(get_impressao_repo),
+    storage: ArquivoStorage = Depends(get_arquivo_storage),
 ) -> Response:
     """Bytes do arquivo enviado pelo professor no WhatsApp — é o que se leva à impressora.
 
     Sem URL pública: quem imprime precisa estar autenticado e dentro da escola, como em
     todo arquivo que a plataforma guarda (§6k).
+
+    O storage vem da **fábrica**, nunca do Postgres na mão: quem recebe o arquivo
+    (``ReceberImpressaoDoProfessor``) já passa por ela, e um download preso ao ``bytea``
+    devolveria 404 para todo arquivo novo assim que ``ARQUIVO_STORAGE=s3`` — a secretaria
+    veria o pedido na fila e não conseguiria imprimir.
     """
     _exige_acesso_tenant(usuario, tenant_id)
     arquivo = await BaixarArquivoDeImpressao(
-        solicitacoes=solicitacoes, storage=PostgresArquivoStorage(session)
+        solicitacoes=solicitacoes, storage=storage
     ).executar(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
     if arquivo is None:
         # Mesma resposta para "não é desta escola", "veio pelo portal (sem bytes)" e
@@ -314,11 +318,13 @@ async def remover_impressao(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     solicitacoes: SqlSolicitacaoImpressaoRepository = Depends(get_impressao_repo),
+    storage: ArquivoStorage = Depends(get_arquivo_storage),
 ) -> None:
+    """Tira o pedido da fila e **apaga o arquivo** — o caso do documento ilegível."""
     _exige_acesso_tenant(usuario, tenant_id)
-    removido = await RemoverSolicitacaoImpressao(solicitacoes=solicitacoes).executar(
-        tenant_id=tenant_id, solicitacao_id=solicitacao_id
-    )
+    removido = await RemoverSolicitacaoImpressao(
+        solicitacoes=solicitacoes, storage=storage
+    ).executar(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
     if not removido:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Solicitação não encontrada"

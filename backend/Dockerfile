@@ -8,7 +8,8 @@ WORKDIR /app
 # Instala dependências primeiro (cache de camada).
 COPY pyproject.toml ./
 # Inclui o extra "llm" (pacote anthropic) para suportar LLM_PROVIDER=anthropic em produção.
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir ".[dev,llm]"
+# O extra "s3" traz o boto3, para ARQUIVO_STORAGE=s3.
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir ".[dev,llm,s3]"
 
 COPY . .
 

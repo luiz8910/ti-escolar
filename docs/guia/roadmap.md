@@ -253,11 +253,24 @@
   escola, classificado e vinculado a um aluno no painel (`web/app/admin/documentos/`).
 - [x] **Retenção e expurgo** dos arquivos (dado sensível de menor), auditoria de download e
   política de privacidade atualizada.
-- [ ] **Adaptador de object storage (Cloudflare R2)** — hoje os bytes vão para `bytea` no
-  Neon, que cobra por GB. A porta `ArquivoStorage` já existe; falta o bucket, os secrets e
-  o adaptador.
-- [ ] **Job agendado do expurgo** — o caso de uso está pronto, mas depende de alguém
-  chamar `POST /api/admin/documentos/expurgar`.
+- [~] **Adaptador de object storage** (17/ago/2026) — **S3, não R2**: na escala do produto a
+  diferença de egress é de poucos dólares, e o S3 entrega lifecycle nativo, SSE-KMS com chave
+  própria (auditoria por objeto e *crypto-shredding*) e Object Lock maduro. `S3ArquivoStorage`
+  + `criar_arquivo_storage`/`storage_efetivo` na fábrica, chave com **finalidade + tenant** no
+  prefixo, e o `/health` + painel §14 acusando o caso "pediu s3, caiu no Postgres".
+  **Testado contra MinIO de verdade** (compose + CI), que era exatamente o impasse que
+  mantinha este item no papel. Ver Fase 0 de `docs/plano-correcoes-teste-10-08.md`.
+  - [x] **Varredor de órfãos** (30/ago/2026) — objeto no bucket cujo metadado não commitou.
+    `VarrerArquivosOrfaos` roda junto do `POST /expurgar`, sobre `listar_chaves`. Ver §0.3.
+  - [ ] **Falta o usuário IAM e a chave nas envs** do Render (homolog) e da Fly (produção) —
+    os dois buckets já existem desde 29/ago. Produção nasce vazia, então **não há migração de
+    bytes** a fazer lá; trazer os documentos do homolog é opcional (§0.5). Ver
+    `docs/pendencias-externas.md` §2.
+- [-] **Job agendado do expurgo** — **decidido em 17/ago/2026 que NÃO entra por ora.** O caso
+  de uso está pronto e a rota existe, mas nada de LGPD roda automaticamente neste projeto até
+  que haja um plano de execuções definido (§17). A consequência fica escrita: a retenção
+  prometida na política de privacidade **não se cumpre sozinha** — documento de menor vencido
+  só sai da base quando alguém clicar em `POST /api/admin/documentos/expurgar`.
 - [ ] **Áudio** (exige transcrição) e ligação automática com `SolicitacaoMatricula` (§E1).
 
 **Limpeza de UI (remoções)**

@@ -287,5 +287,66 @@ Comandos previstos (a definir no scaffold): `docker-compose up`, aplicação de 
   governa como as sessões acontecem e prevalece sobre impulso de escopo. Arquitetura e
   invariantes (§4, §6, §11) não são objeto de corte — só features são.
 <critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a main com origin remote e abrir uma nova branch a partir da main com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade)</critical>
-  em toda sessão.
-<critical>- **Branches:** Toda vez que solicitado uma alteração ou adição de nova feature você deve sincronizar a `develop` com o origin remote e abrir uma nova branch **a partir da `develop`** com prefixo fix ou feat conforme o entendimento que você tem sobre a task a ser executada. Exemplo: fix/(nome da funcionalidade a ser corrigida) ou feat/(nome da funcionalidade). O PR da feature aponta para a `develop` (homolog); a produção é um PR separado `develop → main` (ver [`docs/pipelines.md`](docs/pipelines.md)).</critical>
+---
+
+## Agent Toolkit for AWS
+
+Instalado em 18/set/2026 (`aws configure agent-toolkit`). **O escopo é deste projeto, de
+propósito** — o toolkit instala tudo globalmente por padrão (a própria ajuda do comando diz
+*"Skills are installed globally … not per project"*), e o global valeria dentro dos projetos
+Ambra também. Depois de instalar, foi movido:
+
+| O que | Onde ficou |
+|---|---|
+| Servidor `aws-mcp` | escopo **local** do `~/.claude.json` (só `ti-escolar`), com `AWS_MCP_PROXY_PROFILES=tiescolar` |
+| 23 skills de AWS | `.claude/skills/` — dentro do projeto e **ignorado pelo git** (`.gitignore` `.claude/*`) |
+| Regras | aqui embaixo |
+| Profile da CLI | `tiescolar`. **Não existe profile `default`**, e é intencional: `aws` sem `--profile` falha em voz alta em vez de acertar a conta errada em silêncio |
+
+O `env` do MCP não é enfeite: sem ele o servidor morre com
+`JSON-RPC error: -32602: Invalid request parameters("")`, por não achar credencial sob
+`default`. Para usar outra conta depois: `aws login --profile <nome>` e acrescentar o nome à
+lista separada por espaços em `AWS_MCP_PROXY_PROFILES`, reiniciando o Claude Code.
+
+> Rodar `aws configure agent-toolkit` de novo **reinstala tudo no global**, incluindo Codex
+> (`~/.agents/skills`) e OpenClaw (`~/.openclaw/skills`), que não foram pedidos. Se isso
+> acontecer, é preciso mover de novo.
+
+As regras abaixo vêm de
+[`rules/aws-agent-rules.md`](https://github.com/aws/agent-toolkit-for-aws/blob/main/rules/aws-agent-rules.md)
+e estão **verbatim**, entre marcadores, para que uma reinstalação substitua só este bloco.
+Onde elas conflitarem com o resto deste documento, **este documento vence** — o que a
+primeira linha delas já reconhece.
+
+<!-- BEGIN AWS Agent Toolkit rules -->
+
+# AWS Guidance
+
+- Where these AWS rules conflict with the project's own instructions, the
+  project's instructions take precedence.
+- Prefer the AWS MCP Server for AWS interactions — it provides sandboxed
+  execution, observability, and audit logging. If unavailable, use the
+  AWS CLI directly.
+- Before starting a task, check whether a relevant AWS skill is available.
+  Load the skill with `retrieve_skill` and prefer its guidance over
+  general knowledge.
+- When uncertain about specific AWS details (API parameters, permissions,
+  limits, error codes), verify against documentation rather than guessing.
+  State uncertainty explicitly if you cannot confirm.
+- When creating infrastructure, prefer infrastructure-as-code (AWS CDK or
+  CloudFormation) over direct CLI commands.
+- When working with infrastructure, follow AWS Well-Architected Framework
+  principles.
+- Do not use em dashes in AWS resource names or descriptions. Use
+  hyphens instead.
+
+## Secret Safety
+
+- MUST load the `aws-secrets-manager` skill first for any secret,
+  credential, API key, token, or password task. MUST NOT call
+  `secretsmanager get-secret-value` or `batch-get-secret-value`, and MUST
+  NOT hit the Secrets Manager Agent daemon directly. MUST use
+  `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` with
+  `asm-exec` so the secret resolves at runtime without entering context.
+
+<!-- END AWS Agent Toolkit rules -->

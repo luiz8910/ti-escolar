@@ -36,6 +36,7 @@ from app.domain.entities import (
 )
 from app.infrastructure.db.models import (
     NumeroBloqueadoORM,
+    AlunoORM,
     AtendimentoHumanoORM,
     AvisoTemporizadoORM,
     CotaImpressaoORM,
@@ -170,6 +171,7 @@ def _to_impressao(row: SolicitacaoImpressaoORM) -> SolicitacaoImpressao:
         media_id=row.media_id,
         criado_em=row.criado_em,
         atualizado_em=row.atualizado_em,
+        deleted_at=row.deleted_at,
     )
 
 
@@ -218,13 +220,15 @@ class SqlSolicitacaoImpressaoRepository:
         self, *, tenant_id: uuid.UUID, solicitacao_id: uuid.UUID
     ) -> SolicitacaoImpressao | None:
         row = await self._orm(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
-        return _to_impressao(row) if row else None
+        # Pedido tirado da fila não existe para o painel — nem para ler, nem para mudar.
+        return _to_impressao(row) if row and row.deleted_at is None else None
 
     async def listar(
         self, *, tenant_id: uuid.UUID, status: StatusImpressao | None = None
     ) -> list[SolicitacaoImpressao]:
         stmt = select(SolicitacaoImpressaoORM).where(
-            SolicitacaoImpressaoORM.tenant_id == tenant_id
+            SolicitacaoImpressaoORM.tenant_id == tenant_id,
+            SolicitacaoImpressaoORM.deleted_at.is_(None),
         )
         if status is not None:
             stmt = stmt.where(SolicitacaoImpressaoORM.status == status.value)
@@ -243,7 +247,11 @@ class SqlSolicitacaoImpressaoRepository:
         row.copias = solicitacao.copias
         row.colorido = solicitacao.colorido
         row.frente_verso = solicitacao.frente_verso
+        row.chave_storage = solicitacao.chave_storage
+        row.mime = solicitacao.mime
+        row.tamanho = solicitacao.tamanho
         row.atualizado_em = solicitacao.atualizado_em
+        row.deleted_at = solicitacao.deleted_at
         await self._s.flush()
         return _to_impressao(row)
 
@@ -273,6 +281,8 @@ class SqlSolicitacaoImpressaoRepository:
             SolicitacaoImpressaoORM.tenant_id == tenant_id,
             SolicitacaoImpressaoORM.professor_id == professor_id,
             SolicitacaoImpressaoORM.status != StatusImpressao.CANCELADA.value,
+            # Tirado da fila não consome cota — como antes, quando a linha era apagada.
+            SolicitacaoImpressaoORM.deleted_at.is_(None),
             func.to_char(SolicitacaoImpressaoORM.criado_em, "YYYY-MM") == competencia,
         )
         return int((await self._s.execute(stmt)).scalar_one() or 0)
@@ -821,6 +831,7 @@ def _to_documento(row: DocumentoRecebidoORM) -> DocumentoRecebido:
         expira_em=row.expira_em,
         processado_em=row.processado_em,
         criado_em=row.criado_em,
+        deleted_at=row.deleted_at,
     )
 
 
@@ -866,7 +877,7 @@ class SqlDocumentoRecebidoRepository:
         self, *, tenant_id: uuid.UUID, documento_id: uuid.UUID
     ) -> DocumentoRecebido | None:
         row = await self._s.get(DocumentoRecebidoORM, documento_id)
-        if row is None or row.tenant_id != tenant_id:
+        if row is None or row.tenant_id != tenant_id or row.deleted_at is not None:
             return None
         return _to_documento(row)
 
@@ -918,7 +929,10 @@ class SqlDocumentoRecebidoRepository:
         return _to_documento(row) if row else None
 
     def _filtrar(self, stmt, *, tenant_id, categoria, status, aluno_id):
-        stmt = stmt.where(DocumentoRecebidoORM.tenant_id == tenant_id)
+        stmt = stmt.where(
+            DocumentoRecebidoORM.tenant_id == tenant_id,
+            DocumentoRecebidoORM.deleted_at.is_(None),
+        )
         if categoria is not None:
             stmt = stmt.where(DocumentoRecebidoORM.categoria == categoria.value)
         if status is not None:
@@ -970,12 +984,24 @@ class SqlDocumentoRecebidoRepository:
         row = await self._s.get(DocumentoRecebidoORM, documento.id)
         if row is None or row.tenant_id != documento.tenant_id:
             raise ValueError("Documento não encontrado.")
+        # Grava tudo o que o domínio pode mudar. Até 30/ago/2026 só categoria, status,
+        # legenda, aluno e `processado_em` iam para o banco: o descarte apagava os bytes,
+        # mas a linha continuava com a chave, o nome do arquivo e o prazo de um ano.
         row.categoria = documento.categoria.value
+        row.categoria_sugerida = (
+            documento.categoria_sugerida.value if documento.categoria_sugerida else ""
+        )
         row.status = documento.status.value
         row.observacao = documento.observacao
         row.aluno_id = documento.aluno_id
         row.aluno_nome = documento.aluno_nome
+        row.chave_storage = documento.chave_storage
+        row.mime = documento.mime
+        row.tamanho = documento.tamanho
+        row.nome_arquivo = documento.nome_arquivo
+        row.expira_em = documento.expira_em
         row.processado_em = documento.processado_em
+        row.deleted_at = documento.deleted_at
         await self._s.flush()
         return _to_documento(row)
 
@@ -1067,3 +1093,31 @@ def _to_bloqueio(row: NumeroBloqueadoORM) -> NumeroBloqueado:
         bloqueado_por=row.bloqueado_por,
         bloqueado_em=row.bloqueado_em,
     )
+
+
+class SqlChavesEmUso:
+    """Quais chaves de storage ainda têm dono — insumo do varredor de órfãos.
+
+    Consulta as **três** tabelas que apontam para o storage. Se um dia nascer uma quarta
+    (a base de conhecimento com o arquivo original, por exemplo), ela precisa entrar aqui
+    **antes** de o primeiro arquivo ser gravado: uma tabela esquecida faz o varredor
+    considerar órfão um arquivo que tem dono e apagá-lo — a única falha desta rotina que
+    destrói dado em vez de apenas deixar lixo.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def referenciadas(self, *, chaves: Sequence[str]) -> set[str]:
+        if not chaves:
+            return set()
+        alvo = list(chaves)
+        em_uso: set[str] = set()
+        for coluna in (
+            DocumentoRecebidoORM.chave_storage,
+            SolicitacaoImpressaoORM.chave_storage,
+            AlunoORM.foto_chave,
+        ):
+            stmt = select(coluna).where(coluna.in_(alvo))
+            em_uso.update((await self._s.execute(stmt)).scalars().all())
+        return em_uso

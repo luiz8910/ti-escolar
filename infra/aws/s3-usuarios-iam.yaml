@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  TI-Escolar - usuario IAM de maquina que o back-end usa para guardar e ler os arquivos
+  recebidos (secao 6k) no bucket S3 de UM ambiente. Uma stack por ambiente, para que a chave de
+  homolog nunca alcance o bucket de producao. A chave de acesso NAO nasce aqui.
+
+# Como usar (uma stack por ambiente):
+#
+#   aws cloudformation deploy --profile tiescolar --region sa-east-1 \
+#     --template-file infra/aws/s3-usuarios-iam.yaml \
+#     --stack-name ti-escolar-s3-usuario-prod \
+#     --parameter-overrides Ambiente=prod \
+#     --capabilities CAPABILITY_NAMED_IAM
+#
+# Depois, a chave de acesso sai pela CLI direto para um arquivo 0600, fora do repositório
+# (docs/pendencias-externas.md §2). Ela não é recurso desta stack de propósito: o
+# `SecretAccessKey` de um `AWS::IAM::AccessKey` só sai por `!GetAtt`, ou seja, por um
+# Output — legível por qualquer um com `cloudformation:DescribeStacks`, para sempre.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: 1 usuario IAM por ambiente -> 1 bucket (sa-east-1). Sem console, sem grupo.
+    must:
+      - usuario de um ambiente nunca alcanca o bucket do outro
+      - nada de s3:* nem URL pre-assinada; bytes saem pela API, que audita documento.baixar (§6k)
+      - chave de acesso fora do CloudFormation (segredo nao pode ir para Output)
+    ref:
+      - docs/pendencias-externas.md §2
+      - backend/app/infrastructure/storage_s3.py
+
+Parameters:
+  Ambiente:
+    Type: String
+    AllowedValues: [prod, homolog]
+    Description: Ambiente cujo bucket este usuario acessa.
+
+Mappings:
+  Bucket:
+    prod:
+      Nome: ti-escolar-190446415519-sa-east-1-an
+    homolog:
+      Nome: ti-escolar-homolog-190446415519-sa-east-1-an
+
+Resources:
+  UsuarioS3:
+    Type: AWS::IAM::User
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Identidade de maquina do back-end (Fly em prod, Render em homolog). Politica em linha,
+          nao gerenciada: ela so faz sentido junto deste usuario e morre com ele.
+        must:
+          - sem LoginProfile - este usuario nunca e uma pessoa
+          - s3:ListBucket no ARN do bucket SEM /*; com /* so o varredor de orfaos falha, em silencio
+          - bloco KMS limitado por kms:ViaService ao S3 de sa-east-1
+        mutable: review-required
+    Properties:
+      UserName: !Sub ti-escolar-${Ambiente}-s3
+      Path: /ti-escolar/
+      Tags:
+        - Key: projeto
+          Value: ti-escolar
+        - Key: ambiente
+          Value: !Ref Ambiente
+      Policies:
+        - PolicyName: !Sub ti-escolar-s3-${Ambiente}
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # GetObject cobre o HeadObject que o adaptador faz antes de apagar.
+              - Sid: ObjetosDesteBucket
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource: !Sub
+                  - arn:aws:s3:::${Nome}/*
+                  - Nome: !FindInMap [Bucket, !Ref Ambiente, Nome]
+              # Permissão do bucket, não do objeto: o ARN vai sem /*.
+              - Sid: ListarParaVarrerOrfaos
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub
+                  - arn:aws:s3:::${Nome}
+                  - Nome: !FindInMap [Bucket, !Ref Ambiente, Nome]
+              # Os buckets usam SSE-KMS com a chave gerenciada aws/s3. Se um dia virar CMK
+              # própria, o ARN dela entra aqui no lugar do "*".
+              - Sid: ChaveDeDadosDoKMS
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub s3.${AWS::Region}.amazonaws.com
+
+Outputs:
+  UsuarioArn:
+    Description: ARN do usuario de maquina deste ambiente.
+    Value: !GetAtt UsuarioS3.Arn
+  Bucket:
+    Description: Valor de S3_BUCKET_DOCUMENTOS neste ambiente.
+    Value: !FindInMap [Bucket, !Ref Ambiente, Nome]

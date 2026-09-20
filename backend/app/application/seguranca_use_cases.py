@@ -58,6 +58,13 @@ class ConfiguracaoSeguranca:
     # Retenção dos documentos que os pais enviam (§6k). 0 = sem expurgo, e o que fica
     # guardado para sempre é dado sensível de criança.
     documento_retencao_dias: int = 0
+    # Onde os bytes dos arquivos moram: o **pedido** (ARQUIVO_STORAGE) e o **efetivo**. A
+    # divergência entre os dois é o que a medida `storage_efetivo` acusa.
+    arquivo_storage: str = "postgres"
+    arquivo_storage_efetivo: str = "postgres"
+    # Região do bucket. Fora do Brasil, guardar laudo de menor vira transferência
+    # internacional (LGPD arts. 33-36) e exige base legal declarada.
+    aws_region: str = "sa-east-1"
     # Escolas ativas sem conta do WhatsApp (`Tenant.waba_id`) vinculada. É contagem de
     # banco, não de env: a configuração aqui está no cadastro.
     escolas_sem_conta_whatsapp: int = 0
@@ -305,6 +312,7 @@ class AvaliarPosturaSeguranca:
                 referencia="app/interfaces/api/webhook.py · verificar()",
             ),
             self._canal_efetivo(c),
+            self._storage_efetivo(c),
             self._conta_whatsapp(c),
         ]
 
@@ -342,6 +350,55 @@ class AvaliarPosturaSeguranca:
                 else f"Canal '{c.canal}' ativo, coerente com a configuração."
             ),
             referencia="app/infrastructure/factories.py · canal_efetivo()",
+        )
+
+    def _storage_efetivo(self, c: ConfiguracaoSeguranca) -> MedidaSeguranca:
+        """Os arquivos estão onde ARQUIVO_STORAGE diz que estão?
+
+        Mesmo critério do canal: só é ``ATENCAO`` no caso híbrido — pediu ``s3``, ficou no
+        Postgres. Rodar em ``postgres`` de propósito (desenvolvimento, ou produção antes de
+        o bucket existir) não é problema de segurança e não pode virar alarme falso.
+
+        A região entra junto porque é o mesmo objeto de auditoria: bucket fora do Brasil
+        transforma o armazenamento em transferência internacional.
+        """
+        degradado = c.arquivo_storage == "s3" and c.arquivo_storage_efetivo != "s3"
+        fora_do_brasil = c.arquivo_storage_efetivo == "s3" and not c.aws_region.startswith(
+            "sa-east"
+        )
+        return MedidaSeguranca(
+            chave="storage_efetivo",
+            titulo="Armazenamento efetivo dos arquivos",
+            categoria="Integridade de dados",
+            descricao=(
+                "Os bytes dos documentos que os pais enviam estão no adaptador que "
+                "ARQUIVO_STORAGE pede. A fábrica só devolve o S3 com ARQUIVO_STORAGE=s3 e "
+                "S3_BUCKET_DOCUMENTOS preenchido; sem o bucket, cai no Postgres."
+            ),
+            risco=(
+                "A queda para o Postgres é silenciosa. O upload responde sucesso, o painel "
+                "mostra o documento e o download funciona — só que atestado e laudo de "
+                "menor estão engordando um banco cobrado por GB, sem lifecycle, sem KMS e "
+                "sem a rede de segurança do prazo de retenção que o bucket daria. E com o "
+                "bucket fora do Brasil, guardar dado de saúde de criança vira transferência "
+                "internacional (LGPD arts. 33-36), que exige base legal declarada."
+            ),
+            status=(
+                StatusMedida.ATENCAO if (degradado or fora_do_brasil) else StatusMedida.ATIVA
+            ),
+            detalhe=(
+                "ARQUIVO_STORAGE=s3, mas S3_BUCKET_DOCUMENTOS está vazio: os arquivos estão "
+                "indo para o bytea do Postgres."
+                if degradado
+                else (
+                    f"Bucket na região '{c.aws_region}', fora do Brasil: declare a base legal "
+                    "da transferência internacional na política de privacidade."
+                    if fora_do_brasil
+                    else f"Armazenamento '{c.arquivo_storage_efetivo}' ativo, coerente com a "
+                    "configuração."
+                )
+            ),
+            referencia="app/infrastructure/factories.py · storage_efetivo()",
         )
 
     def _conta_whatsapp(self, c: ConfiguracaoSeguranca) -> MedidaSeguranca:

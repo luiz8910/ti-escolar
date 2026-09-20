@@ -18,10 +18,12 @@ from app.application.atendimento_humano_use_cases import MesaDeAtendimento
 from app.application.documentos_use_cases import (
     BaixarDocumentoRecebido,
     ClassificarDocumento,
+    ExcluirDocumentoRecebido,
     ExpurgarDocumentosVencidos,
     ListarDocumentosRecebidos,
     ReceberDocumentoDoResponsavel,
     ReceberMidiaDoResponsavel,
+    VarrerArquivosOrfaos,
     sugerir_categoria,
 )
 from app.application.inbound_use_cases import ProcessarInboundMeta
@@ -40,6 +42,7 @@ from app.infrastructure.storage import ArquivoStorageMemoria
 from tests.fakes import (
     FakeAtendimentoHumanoRepo,
     FakeChannel,
+    FakeChavesEmUso,
     FakeContatoRepo,
     FakeConversaRepo,
     FakeDocumentoRecebidoRepo,
@@ -239,7 +242,9 @@ async def test_classificar_marca_processado_e_registra_a_data():
         )
     ).documento
 
-    atualizado = await ClassificarDocumento(documentos=repo).executar(
+    atualizado = await ClassificarDocumento(
+        documentos=repo, storage=ArquivoStorageMemoria()
+    ).executar(
         tenant_id=TENANT,
         documento_id=doc.id,
         categoria=CategoriaDocumento.MATRICULA,
@@ -538,3 +543,204 @@ async def test_texto_continua_indo_para_o_assistente():
     assert resultado.documentos == 0
     assert resultado.respondidas == 1
     assert repo.itens == {}
+
+
+# --------------------------------------------------------------------------- #
+# Exclusão: descartar apaga os bytes, e o registro sobra só para o anti-spam
+# --------------------------------------------------------------------------- #
+async def test_a_chave_nasce_com_finalidade_e_tenant_no_prefixo():
+    """O prefixo é o que a regra de lifecycle do bucket enxerga — não é pasta."""
+    doc = (
+        await _recepcao().executar(
+            tenant_id=TENANT, conversa_id=uuid.uuid4(), contato=CONTATO, arquivo=JPEG
+        )
+    ).documento
+
+    assert doc.chave_storage.startswith(f"doc/{TENANT}/")
+
+
+async def test_descartar_apaga_os_bytes_na_hora():
+    """A foto de "bom dia" não pode ficar 365 dias guardada só porque tem status."""
+    repo, storage = FakeDocumentoRecebidoRepo(), ArquivoStorageMemoria()
+    doc = (
+        await _recepcao(repo, storage).executar(
+            tenant_id=TENANT, conversa_id=uuid.uuid4(), contato=CONTATO, arquivo=JPEG
+        )
+    ).documento
+    chave = doc.chave_storage
+    assert await storage.ler(chave=chave) is not None
+
+    atualizado = await ClassificarDocumento(documentos=repo, storage=storage).executar(
+        tenant_id=TENANT, documento_id=doc.id, status=StatusDocumento.DESCARTADO
+    )
+
+    assert await storage.ler(chave=chave) is None
+    assert atualizado.chave_storage == ""
+    assert atualizado.status is StatusDocumento.DESCARTADO
+
+
+async def test_descartar_reduz_o_registro_ao_que_o_antispam_precisa():
+    repo, storage = FakeDocumentoRecebidoRepo(), ArquivoStorageMemoria()
+    doc = (
+        await _recepcao(repo, storage).executar(
+            tenant_id=TENANT,
+            conversa_id=uuid.uuid4(),
+            contato=CONTATO,
+            arquivo=PDF,
+            legenda="atestado do João",
+        )
+    ).documento
+
+    atualizado = await ClassificarDocumento(documentos=repo, storage=storage).executar(
+        tenant_id=TENANT,
+        documento_id=doc.id,
+        aluno_id=None,
+        status=StatusDocumento.DESCARTADO,
+    )
+
+    # Some tudo o que não serve à finalidade de anti-spam...
+    assert atualizado.nome_arquivo == ""
+    assert atualizado.observacao == ""
+    assert atualizado.mime == ""
+    assert atualizado.tamanho == 0
+    assert atualizado.aluno_id is None
+    # ...e fica o que ela precisa: de quem veio e quando.
+    assert atualizado.contato == CONTATO
+    assert atualizado.criado_em is not None
+    # Sem arquivo, o registro não merece o prazo de um documento de verdade.
+    assert atualizado.expira_em is not None
+    assert atualizado.expira_em < datetime.now(timezone.utc) + timedelta(days=40)
+
+
+async def test_descarte_continua_alimentando_a_sugestao_de_bloqueio():
+    """Apagar os bytes não pode cegar o anti-spam contra quem manda "bom dia" todo dia."""
+    from app.application.documentos_use_cases import SugerirBloqueios
+    from tests.fakes import FakeNumeroBloqueadoRepo
+
+    repo, storage = FakeDocumentoRecebidoRepo(), ArquivoStorageMemoria()
+    for _ in range(3):
+        doc = (
+            await _recepcao(repo, storage).executar(
+                tenant_id=TENANT, conversa_id=uuid.uuid4(), contato=CONTATO, arquivo=JPEG
+            )
+        ).documento
+        await ClassificarDocumento(documentos=repo, storage=storage).executar(
+            tenant_id=TENANT, documento_id=doc.id, status=StatusDocumento.DESCARTADO
+        )
+
+    sugestoes = await SugerirBloqueios(
+        documentos=repo, bloqueios=FakeNumeroBloqueadoRepo()
+    ).executar(tenant_id=TENANT)
+
+    assert [s.telefone for s in sugestoes] == [CONTATO]
+    assert sugestoes[0].descartados == 3
+    # E nenhum byte sobrou de nenhum dos três.
+    assert storage.arquivos == {}
+
+
+async def test_excluir_apaga_o_arquivo_e_marca_a_linha():
+    repo, storage = FakeDocumentoRecebidoRepo(), ArquivoStorageMemoria()
+    doc = (
+        await _recepcao(repo, storage).executar(
+            tenant_id=TENANT, conversa_id=uuid.uuid4(), contato=CONTATO, arquivo=JPEG
+        )
+    ).documento
+    chave = doc.chave_storage
+    excluir = ExcluirDocumentoRecebido(documentos=repo, storage=storage)
+
+    # Escola errada não apaga o arquivo da outra.
+    assert not await excluir.executar(tenant_id=OUTRO_TENANT, documento_id=doc.id)
+    assert await storage.ler(chave=chave) is not None
+
+    assert await excluir.executar(tenant_id=TENANT, documento_id=doc.id)
+    assert await storage.ler(chave=chave) is None
+    # Some do painel...
+    assert await repo.obter(tenant_id=TENANT, documento_id=doc.id) is None
+    assert await repo.contar(tenant_id=TENANT) == 0
+    # ...mas a linha fica, marcada, reduzida e com prazo curto até o expurgo.
+    linha = repo.itens[doc.id]
+    assert linha.deleted_at is not None
+    assert linha.chave_storage == ""
+    assert linha.nome_arquivo == ""
+    assert linha.expira_em < datetime.now(timezone.utc) + timedelta(days=40)
+    # Excluir de novo é "não encontrado", não erro.
+    assert not await excluir.executar(tenant_id=TENANT, documento_id=doc.id)
+
+
+async def test_expurgo_apaga_de_vez_a_linha_excluida_sem_tocar_no_storage():
+    repo, storage = FakeDocumentoRecebidoRepo(), ArquivoStorageMemoria()
+    doc = (
+        await _recepcao(repo, storage).executar(
+            tenant_id=TENANT, conversa_id=uuid.uuid4(), contato=CONTATO, arquivo=JPEG
+        )
+    ).documento
+    await ExcluirDocumentoRecebido(documentos=repo, storage=storage).executar(
+        tenant_id=TENANT, documento_id=doc.id
+    )
+    repo.itens[doc.id].expira_em = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    resultado = await ExpurgarDocumentosVencidos(documentos=repo, storage=storage).executar()
+
+    assert (resultado.removidos, resultado.falhas) == (1, 0)
+    assert doc.id not in repo.itens
+
+
+async def test_reentrega_do_webhook_nao_recria_documento_excluido():
+    """É para isto que a linha marcada existe: a Meta reentrega, a escola já excluiu."""
+    repo, storage = FakeDocumentoRecebidoRepo(), ArquivoStorageMemoria()
+    recepcao = _recepcao(repo, storage)
+    envio = dict(
+        tenant_id=TENANT,
+        conversa_id=uuid.uuid4(),
+        contato=CONTATO,
+        arquivo=JPEG,
+        media_id="mid.excluido",
+    )
+    doc = (await recepcao.executar(**envio)).documento
+    await ExcluirDocumentoRecebido(documentos=repo, storage=storage).executar(
+        tenant_id=TENANT, documento_id=doc.id
+    )
+
+    reentrega = await recepcao.executar(**envio)
+
+    assert reentrega.duplicado
+    assert storage.arquivos == {}
+    assert await repo.contar(tenant_id=TENANT) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Varredura de órfãos
+# --------------------------------------------------------------------------- #
+async def _guardar(storage, chave: str, *, idade_horas: float) -> str:
+    await storage.guardar(chave=chave, conteudo=b"bytes", mime="image/jpeg")
+    storage.criado_em[chave] = datetime.now(timezone.utc) - timedelta(hours=idade_horas)
+    return chave
+
+
+async def test_varredura_apaga_orfao_e_poupa_arquivo_com_dono():
+    storage = ArquivoStorageMemoria()
+    com_dono = await _guardar(storage, f"doc/{TENANT}/2026/08/com-dono", idade_horas=48)
+    orfao = await _guardar(storage, f"impressao/{TENANT}/2026/08/orfao", idade_horas=48)
+
+    resultado = await VarrerArquivosOrfaos(
+        storage=storage, chaves_em_uso=FakeChavesEmUso({com_dono})
+    ).executar()
+
+    assert resultado.removidos == 1
+    assert await storage.ler(chave=orfao) is None
+    assert await storage.ler(chave=com_dono) is not None
+
+
+async def test_varredura_nao_toca_no_upload_em_curso():
+    """Gravar bytes e commitar o metadado deixaram de ser a mesma transação — o corte por
+    idade é o que separa o órfão do arquivo que está sendo gravado agora."""
+    storage = ArquivoStorageMemoria()
+    recem = await _guardar(storage, f"doc/{TENANT}/2026/08/recem", idade_horas=1)
+
+    resultado = await VarrerArquivosOrfaos(
+        storage=storage, chaves_em_uso=FakeChavesEmUso()
+    ).executar()
+
+    assert resultado.examinados == 0
+    assert resultado.removidos == 0
+    assert await storage.ler(chave=recem) is not None

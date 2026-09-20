@@ -833,6 +833,9 @@ class SolicitacaoImpressao:
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
     atualizado_em: datetime = field(default_factory=_now)
+    # Preenchido quando a secretaria tira o pedido da fila: a linha fica, o arquivo não.
+    # Toda leitura da fila ignora o pedido marcado; só a dedupe do webhook o enxerga.
+    deleted_at: datetime | None = None
 
     @property
     def tem_arquivo(self) -> bool:
@@ -2737,6 +2740,9 @@ class DocumentoRecebido:
     processado_em: datetime | None = None
     id: UUID = field(default_factory=_new_id)
     criado_em: datetime = field(default_factory=_now)
+    # Preenchido pela exclusão: o arquivo some, a linha fica reduzida e fora do painel até
+    # o expurgo. A dedupe do webhook e a sugestão de bloqueio ainda a enxergam.
+    deleted_at: datetime | None = None
 
     @property
     def eh_imagem(self) -> bool:
