@@ -82,17 +82,19 @@ curl -s https://<seu-servico>.onrender.com/health/pronto
 
 E, no painel, `/admin/logs` deve parar de acumular linhas `ERROR`.
 
-> ⚠️ **O Auto-Deploy vai desfazer o seu rollback.** O Render está com Auto-Deploy ligado
-> na `main`: o próximo push (de qualquer pessoa) reconstrói a versão quebrada. O rollback
-> é **paliativo** — o passo definitivo é reverter o commit:
+> ⚠️ **A esteira vai desfazer o seu rollback.** Desde 02/set/2026 o push publica sozinho:
+> `develop` → homolog, `main` → produção (`docs/pipelines.md`). O próximo push de qualquer
+> pessoa reconstrói a versão quebrada. O rollback pelo painel é **paliativo** — o passo
+> definitivo é reverter o commit, que é também o que mantém a branch igual ao que está no ar:
 >
 > ```bash
 > git revert <hash-do-commit-ruim>   # ou git revert <hash-do-merge> -m 1
-> git push origin main
+> git push origin develop            # ou main, conforme o ambiente
 > ```
 >
-> Se o incidente for longo, desligue o Auto-Deploy em **Settings → Build & Deploy →
-> Auto-Deploy: No** enquanto investiga, e religue depois.
+> Se o incidente for longo e o revert não for possível na hora, trave a branch (Settings →
+> Branches → *Lock branch*) enquanto investiga; no Render dá para desligar o Auto-Deploy em
+> **Settings → Build & Deploy**, mas isso não impede o deploy hook da esteira.
 
 ---
 

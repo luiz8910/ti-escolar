@@ -704,13 +704,15 @@ class FakeSolicitacaoImpressaoRepo:
 
     async def obter(self, *, tenant_id, solicitacao_id):
         s = self.solicitacoes.get(solicitacao_id)
-        return s if s and s.tenant_id == tenant_id else None
+        return s if s and s.tenant_id == tenant_id and s.deleted_at is None else None
 
     async def listar(self, *, tenant_id, status=None):
         itens = [
             s
             for s in self.solicitacoes.values()
-            if s.tenant_id == tenant_id and (status is None or s.status == status)
+            if s.tenant_id == tenant_id
+            and s.deleted_at is None
+            and (status is None or s.status == status)
         ]
         itens.sort(key=lambda s: s.criado_em, reverse=True)
         return itens
@@ -720,6 +722,7 @@ class FakeSolicitacaoImpressaoRepo:
         return solicitacao
 
     async def por_media_id(self, *, tenant_id, media_id):
+        # Enxerga os excluídos, como o repositório SQL: é a dedupe do webhook.
         if not media_id:
             return None
         return next(
@@ -737,6 +740,7 @@ class FakeSolicitacaoImpressaoRepo:
             for s in self.solicitacoes.values()
             if s.tenant_id == tenant_id
             and s.professor_id == professor_id
+            and s.deleted_at is None
             and s.status != StatusImpressao.CANCELADA
             and s.criado_em.strftime("%Y-%m") == competencia
         )
@@ -1260,7 +1264,7 @@ class FakeDocumentoRecebidoRepo:
 
     async def obter(self, *, tenant_id, documento_id):
         d = self.itens.get(documento_id)
-        return d if d and d.tenant_id == tenant_id else None
+        return d if d and d.tenant_id == tenant_id and d.deleted_at is None else None
 
     async def por_media_id(self, *, tenant_id, media_id):
         if not media_id:
@@ -1275,7 +1279,11 @@ class FakeDocumentoRecebidoRepo:
         )
 
     def _filtrados(self, *, tenant_id, categoria, status, aluno_id):
-        itens = [d for d in self.itens.values() if d.tenant_id == tenant_id]
+        itens = [
+            d
+            for d in self.itens.values()
+            if d.tenant_id == tenant_id and d.deleted_at is None
+        ]
         if categoria is not None:
             itens = [d for d in itens if d.categoria is categoria]
         if status is not None:
@@ -1520,3 +1528,13 @@ class FakeTenantRepoCompleto:
                 return tenant
         self.tenants.append(tenant)
         return tenant
+
+
+class FakeChavesEmUso:
+    """Chaves que ainda têm dono no banco, ditas explicitamente pelo teste."""
+
+    def __init__(self, em_uso: set[str] | None = None) -> None:
+        self.em_uso = set(em_uso or ())
+
+    async def referenciadas(self, *, chaves):
+        return {c for c in chaves if c in self.em_uso}

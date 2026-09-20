@@ -533,7 +533,9 @@ class SolicitacaoImpressaoORM(Base):
     )
     # Bytes do arquivo, quando ele veio pelo WhatsApp. Ponteiro para o ArquivoStorage —
     # nunca o conteúdo, como em `documentos_recebidos`.
-    chave_storage: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # 120 para caber `impressao/{tenant_id}/YYYY/MM/{token}` — o prefixo por finalidade é
+    # o que separa esta fila da regra de lifecycle dos documentos (migration 0046).
+    chave_storage: Mapped[str] = mapped_column(String(120), default="", server_default="")
     mime: Mapped[str] = mapped_column(String(120), default="", server_default="")
     tamanho: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # `media_id` da Meta: deduplica a reentrega do webhook.
@@ -542,6 +544,8 @@ class SolicitacaoImpressaoORM(Base):
     )
     criado_em: Mapped[datetime] = mapped_column()
     atualizado_em: Mapped[datetime] = mapped_column()
+    # Pedido tirado da fila: a linha fica marcada, o arquivo é apagado (migration 0047).
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class SalaORM(Base):
@@ -1083,6 +1087,8 @@ class DocumentoRecebidoORM(Base):
     expira_em: Mapped[datetime | None] = mapped_column(nullable=True)
     processado_em: Mapped[datetime | None] = mapped_column(nullable=True)
     criado_em: Mapped[datetime] = mapped_column()
+    # Documento excluído: a linha fica marcada e reduzida até o expurgo (migration 0047).
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
         # A listagem do painel: os documentos de uma escola, mais recentes primeiro.

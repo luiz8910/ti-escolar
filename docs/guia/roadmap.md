@@ -133,15 +133,9 @@
   preenchidos a partir do Cartão CNPJ. **Pendente:** criar o projeto Pages + secrets e
   apontar `tiescolar.com.br` (hoje sem registro A/CNAME) — pré-requisito para reenviar a
   verificação da empresa na Meta.
-- [x] **Deploy automatizado**: são **três destinos**, um por camada —
-  **back-end (FastAPI) → Render**, que **NÃO tem Auto-Deploy**: apesar do que esta linha
-  afirmava, todo evento na aba *Events* do serviço é *"Manually triggered by you via
-  Dashboard"*. **Mergear não publica o back-end** — depois do merge é preciso ir ao painel do
-  Render → **Manual Deploy** → *Deploy latest commit*, senão o serviço fica atrás da `main`
-  (foi o que aconteceu em 09/ago, quando `/health/pronto` respondia 404 em produção);
-  **painel admin (`web/`) → Vercel**, que consome a API do Render;
-  **landing page (`site/`) → Cloudflare Pages**, via `.github/workflows/site.yml` (§9d).
-  O CI (`.github/workflows/ci.yml`) roda três jobs em PRs e na `main`, como portão de
+- [x] **Deploy automatizado**: são **três destinos**, um por camada — **back-end (FastAPI)**,
+  **painel admin (`web/`)** e **landing page (`site/`)**.
+  O CI (`.github/workflows/ci.yml`) roda três jobs em PRs, como portão de
   qualidade antes do merge: **back-end** (ruff + `alembic upgrade head` + pytest),
   **painel `web/`** (`tsc --noEmit` + `next build`) e **landing `site/`** (typecheck + export
   estático). O front entrou no CI em 29/jul/2026 — até então um erro de TypeScript só
@@ -150,6 +144,29 @@
   > O `ruff` está fixado em `>=0.5,<0.16` no `backend/pyproject.toml`: sem teto, o CI
   > instalava a versão mais nova a cada execução e a 0.16.0 quebrou a build sem que o
   > código mudasse (358 dos 424 achados eram `B008`, o `Depends()` do FastAPI).
+
+- [x] **Esteiras por ambiente, e a branch virou o ambiente** (02/set/2026) —
+  `develop` publica no **homolog** (Render + Vercel) e `main` na **produção** (Fly +
+  Cloudflare Pages), por `deploy-homolog.yml` e `deploy-producao.yml`. Receita completa em
+  [`docs/pipelines.md`](../pipelines.md). Antes disso **nenhum dos dois back-ends publicava
+  sozinho**: no Render todo evento da aba *Events* era *"Manually triggered by you via
+  Dashboard"* e depois do merge alguém tinha de ir ao painel → *Manual Deploy*; na Fly era
+  `cd backend && fly deploy`. O custo apareceu em 09/ago, com `/health/pronto` respondendo
+  404 em produção porque o serviço estava dias atrás da `main`. Três coisas que a esteira
+  resolve e que valem por si:
+  - **O `/health` passou a ecoar o commit da imagem** (`versao`). Sem isso "publiquei" e
+    "achei que publiquei" respondem a mesma coisa de fora, e nenhuma automação consegue
+    afirmar que publicou — só que o servidor está de pé. O Render injeta
+    `RENDER_GIT_COMMIT` sozinho; na Fly o valor entra como build-arg no `Dockerfile`.
+  - **O CI virou `workflow_call`** e é chamado de dentro das esteiras, em vez de rodar por
+    `push`. Assim o deploy é o mesmo run que testou, não um run paralelo que talvez tenha
+    passado — e a suíte roda uma vez por push, não duas.
+  - **A postura do ambiente saiu do `lgpd.yml`** e virou job das duas esteiras
+    (`postura.yml`, reutilizável), em modo observação no homolog e **estrito** na produção.
+    No `lgpd.yml` sobrou a agenda semanal, que existe porque configuração muda no painel do
+    provedor sem commit nenhum. Ao mover, apareceu que o `| tee` do passo original comia o
+    código de saída (o shell padrão do Actions é `bash -e`, sem `pipefail`): o `--estrito`
+    era decorativo — corrigido com `shell: bash`.
 
 - [x] **Back-end de produção na Fly.io** (20/ago/2026) — app `ti-escolar`, região `gru`,
   config em `backend/fly.toml`, receita em [`docs/producao-fly.md`](../producao-fly.md). O
@@ -167,7 +184,9 @@
 
 - [x] **Painel (`web/`) em produção na Cloudflare Pages** (21/ago/2026) — projeto
   `ti-escolar-web`, domínio `app.tiescolar.com.br`, publicado por
-  `.github/workflows/web.yml`. A Vercel continua sendo o **homolog**. Três coisas que o
+  `.github/workflows/web.yml`. A Vercel continua sendo o **homolog**, e desde 02/set/2026
+  seguindo a branch `develop` (é a única peça cujo deploy não passa por este repositório:
+  a integração é da própria Vercel com o git). Três coisas que o
   `output: "export"` do `next.config.js` trouxe junto: rota dinâmica passa a exigir
   `generateStaticParams()`, então o detalhe da escola virou `/admin/escolas/detalhe?tenant=`
   (ids de escola não existem em tempo de build); o `_redirects` mudou de `out/` — que é
@@ -234,11 +253,24 @@
   escola, classificado e vinculado a um aluno no painel (`web/app/admin/documentos/`).
 - [x] **Retenção e expurgo** dos arquivos (dado sensível de menor), auditoria de download e
   política de privacidade atualizada.
-- [ ] **Adaptador de object storage (Cloudflare R2)** — hoje os bytes vão para `bytea` no
-  Neon, que cobra por GB. A porta `ArquivoStorage` já existe; falta o bucket, os secrets e
-  o adaptador.
-- [ ] **Job agendado do expurgo** — o caso de uso está pronto, mas depende de alguém
-  chamar `POST /api/admin/documentos/expurgar`.
+- [~] **Adaptador de object storage** (17/ago/2026) — **S3, não R2**: na escala do produto a
+  diferença de egress é de poucos dólares, e o S3 entrega lifecycle nativo, SSE-KMS com chave
+  própria (auditoria por objeto e *crypto-shredding*) e Object Lock maduro. `S3ArquivoStorage`
+  + `criar_arquivo_storage`/`storage_efetivo` na fábrica, chave com **finalidade + tenant** no
+  prefixo, e o `/health` + painel §14 acusando o caso "pediu s3, caiu no Postgres".
+  **Testado contra MinIO de verdade** (compose + CI), que era exatamente o impasse que
+  mantinha este item no papel. Ver Fase 0 de `docs/plano-correcoes-teste-10-08.md`.
+  - [x] **Varredor de órfãos** (30/ago/2026) — objeto no bucket cujo metadado não commitou.
+    `VarrerArquivosOrfaos` roda junto do `POST /expurgar`, sobre `listar_chaves`. Ver §0.3.
+  - [ ] **Falta o usuário IAM e a chave nas envs** do Render (homolog) e da Fly (produção) —
+    os dois buckets já existem desde 29/ago. Produção nasce vazia, então **não há migração de
+    bytes** a fazer lá; trazer os documentos do homolog é opcional (§0.5). Ver
+    `docs/pendencias-externas.md` §2.
+- [-] **Job agendado do expurgo** — **decidido em 17/ago/2026 que NÃO entra por ora.** O caso
+  de uso está pronto e a rota existe, mas nada de LGPD roda automaticamente neste projeto até
+  que haja um plano de execuções definido (§17). A consequência fica escrita: a retenção
+  prometida na política de privacidade **não se cumpre sozinha** — documento de menor vencido
+  só sai da base quando alguém clicar em `POST /api/admin/documentos/expurgar`.
 - [ ] **Áudio** (exige transcrição) e ligação automática com `SolicitacaoMatricula` (§E1).
 
 **Limpeza de UI (remoções)**

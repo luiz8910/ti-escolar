@@ -39,6 +39,7 @@ from app.infrastructure.db.repositories_comunicacao import (
 )
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
 from app.interfaces.deps import (
+    get_arquivo_storage,
     get_cota_impressao_repo,
     get_impressao_repo,
     get_professor_repo,
@@ -314,11 +315,13 @@ async def remover_impressao(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     solicitacoes: SqlSolicitacaoImpressaoRepository = Depends(get_impressao_repo),
+    storage: PostgresArquivoStorage = Depends(get_arquivo_storage),
 ) -> None:
+    """Tira o pedido da fila e **apaga o arquivo** — o caso do documento ilegível."""
     _exige_acesso_tenant(usuario, tenant_id)
-    removido = await RemoverSolicitacaoImpressao(solicitacoes=solicitacoes).executar(
-        tenant_id=tenant_id, solicitacao_id=solicitacao_id
-    )
+    removido = await RemoverSolicitacaoImpressao(
+        solicitacoes=solicitacoes, storage=storage
+    ).executar(tenant_id=tenant_id, solicitacao_id=solicitacao_id)
     if not removido:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Solicitação não encontrada"

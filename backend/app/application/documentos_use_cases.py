@@ -47,6 +47,7 @@ from app.application.atendimento_humano_use_cases import MesaDeAtendimento
 from app.domain.ports import (
     AlunoRepository,
     ArquivoStorage,
+    ChavesEmUso,
     ContatoRepository,
     ConversaRepository,
     DocumentoRecebidoRepository,
@@ -61,6 +62,17 @@ logger = logging.getLogger("documentos.recebidos")
 # Retenção padrão dos arquivos recebidos. Um ano cobre o ciclo letivo inteiro (a matrícula
 # de fevereiro ainda é consultável em dezembro) sem virar arquivo morto permanente.
 RETENCAO_PADRAO_DIAS = 365
+
+# Retenção do **registro** de um documento descartado. Os bytes somem no ato do descarte
+# (`ClassificarDocumento`); o que sobrevive é a linha reduzida — telefone, data e o fato de
+# ter sido descartado —, e ela existe por uma única razão: alimentar a sugestão de bloqueio
+# (três descartes do mesmo número em sete dias). Trinta dias cobrem a janela de sete com
+# folga; um ano seria guardar dado pessoal sem finalidade.
+RETENCAO_DESCARTE_DIAS = 30
+
+# Idade mínima para um arquivo sem dono ser considerado órfão. Abaixo disso ele pode ser um
+# upload em curso — a gravação dos bytes acontece **antes** do commit do metadado.
+IDADE_MINIMA_ORFAO_HORAS = 24
 
 # Palavras que sugerem a finalidade a partir da legenda que o responsável escreveu. É
 # **palpite**, exibido como sugestão no painel — quem confirma é a secretaria, porque
@@ -166,7 +178,7 @@ class ReceberDocumentoDoResponsavel:
                 # Reentrega do webhook: não baixa nem grava de novo.
                 return ResultadoRecepcao(documento=existente, duplicado=True)
 
-        chave = nova_chave()
+        chave = nova_chave(tenant_id, "doc")
         await self._storage.guardar(
             chave=chave, conteudo=arquivo.conteudo, mime=arquivo.mime
         )
@@ -288,15 +300,33 @@ class BaixarDocumentoRecebido:
 
 
 class ClassificarDocumento:
-    """A secretaria confirma a finalidade, vincula a um aluno e conclui o tratamento."""
+    """A secretaria confirma a finalidade, vincula a um aluno e conclui o tratamento.
+
+    **Descartar apaga os bytes na hora.** Até 30/ago/2026 este caso de uso só trocava o
+    status para ``descartado``: a foto de "bom dia" que um responsável mandou, ou o
+    documento ilegível, ficavam guardados os 365 dias inteiros do prazo de retenção. Além
+    do custo, era o oposto da minimização — se a escola já decidiu que aquilo não tem
+    finalidade, o tratamento termina ali, não daqui a um ano.
+
+    O que sobrevive ao descarte é uma **linha reduzida**: telefone, data e o fato de ter
+    sido descartado. Não é apego a registro — é o insumo de ``SugerirBloqueios``, que
+    propõe bloquear quem descarta três vezes em sete dias. Sem ela, o anti-spam perde
+    justamente a evidência de quem manda "bom dia" todo dia. Some tudo o que não serve a
+    essa finalidade: nome do arquivo, legenda, aluno vinculado e categoria.
+
+    ``storage`` é obrigatório de propósito. Torná-lo opcional traria de volta, em silêncio,
+    exatamente o defeito que este caso de uso passou a corrigir.
+    """
 
     def __init__(
         self,
         *,
         documentos: DocumentoRecebidoRepository,
+        storage: ArquivoStorage,
         alunos: AlunoRepository | None = None,
     ) -> None:
         self._documentos = documentos
+        self._storage = storage
         self._alunos = alunos
 
     async def executar(
@@ -335,7 +365,67 @@ class ClassificarDocumento:
             documento.processado_em = (
                 _now() if status is StatusDocumento.PROCESSADO else None
             )
+            if status is StatusDocumento.DESCARTADO:
+                await self._descartar(documento)
         return await self._documentos.atualizar(documento)
+
+    async def _descartar(self, documento: DocumentoRecebido) -> None:
+        """Apaga os bytes e reduz o registro ao que o anti-spam precisa."""
+        await _apagar_arquivo_e_reduzir(documento, self._storage)
+
+
+async def _apagar_arquivo_e_reduzir(
+    documento: DocumentoRecebido, storage: ArquivoStorage
+) -> None:
+    """Apaga os bytes e deixa da linha só telefone, data e status.
+
+    Comum ao descarte e à exclusão: nos dois casos a escola decidiu que o arquivo não tem
+    finalidade, e o que sobra do registro é só o que o anti-spam precisa.
+    """
+    if documento.chave_storage:
+        await storage.remover(chave=documento.chave_storage)
+    documento.chave_storage = ""
+    documento.mime = ""
+    documento.tamanho = 0
+    documento.nome_arquivo = ""
+    documento.observacao = ""
+    documento.aluno_id = None
+    documento.aluno_nome = ""
+    documento.categoria = CategoriaDocumento.OUTRO
+    documento.categoria_sugerida = None
+    # Sem arquivo, o registro não precisa do prazo de um documento de verdade.
+    documento.expira_em = _now() + timedelta(days=RETENCAO_DESCARTE_DIAS)
+
+
+class ExcluirDocumentoRecebido:
+    """Apaga o arquivo e tira o documento do painel, **mantendo a linha marcada** (§6k).
+
+    A linha fica com ``deleted_at`` preenchido e reduzida como no descarte — sem arquivo,
+    nome, legenda nem aluno. Some de toda leitura do painel (``obter``, ``listar``,
+    ``contar``), mas duas rotinas continuam a enxergá-la: a **dedupe do webhook**, sem a
+    qual a reentrega da mesma mídia recriaria o documento que a escola acabou de excluir,
+    e a **sugestão de bloqueio**, que segue contando o descarte se ele já tinha sido
+    descartado. Ela expira em ``RETENCAO_DESCARTE_DIAS`` e o expurgo a apaga de vez.
+    """
+
+    def __init__(
+        self, *, documentos: DocumentoRecebidoRepository, storage: ArquivoStorage
+    ) -> None:
+        self._documentos = documentos
+        self._storage = storage
+
+    async def executar(self, *, tenant_id: UUID, documento_id: UUID) -> bool:
+        documento = await self._documentos.obter(
+            tenant_id=tenant_id, documento_id=documento_id
+        )
+        if documento is None:
+            return False
+        # Bytes primeiro: se a remoção falhar, a linha segue intacta e com a chave, e a
+        # exclusão pode ser tentada de novo — em vez de um arquivo sem ponteiro.
+        await _apagar_arquivo_e_reduzir(documento, self._storage)
+        documento.deleted_at = _now()
+        await self._documentos.atualizar(documento)
+        return True
 
 
 @dataclass(frozen=True)
@@ -367,7 +457,10 @@ class ExpurgarDocumentosVencidos:
         removidos = falhas = 0
         for documento in vencidos:
             try:
-                await self._storage.remover(chave=documento.chave_storage)
+                # Descartados e excluídos chegam aqui já sem arquivo: a chave vazia não é
+                # objeto nenhum, e um storage remoto pode recusá-la e travar o item.
+                if documento.chave_storage:
+                    await self._storage.remover(chave=documento.chave_storage)
                 await self._documentos.remover(
                     tenant_id=documento.tenant_id, documento_id=documento.id
                 )
@@ -385,6 +478,69 @@ class ExpurgarDocumentosVencidos:
                 "Expurgo de documentos: %d removidos, %d falhas", removidos, falhas
             )
         return ResultadoExpurgo(removidos=removidos, falhas=falhas)
+
+
+@dataclass(frozen=True)
+class ResultadoVarredura:
+    examinados: int = 0
+    removidos: int = 0
+    falhas: int = 0
+
+
+class VarrerArquivosOrfaos:
+    """Apaga bytes que perderam o dono (§0.3 do plano da Fase 0).
+
+    **Por que órfãos existem.** Enquanto o storage era o próprio Postgres, bytes e
+    metadado entravam na mesma transação: ou os dois existiam, ou nenhum. Com o bucket
+    isso acaba — grava-se no S3 e **depois** commita-se o metadado, porque a ordem inversa
+    deixaria a secretaria vendo "documento recebido" com download 404, que é o pior dos
+    dois erros. O preço é o objeto de um rollback que aconteceu depois do PUT.
+
+    E há um órfão que já existe hoje, antes de qualquer bucket: até 30/ago/2026,
+    ``RemoverSolicitacaoImpressao`` apagava a linha da fila e nunca tocava no storage.
+
+    Não vaza — a chave é imprevisível e o bucket é fechado —, mas acumula, e num serviço
+    cobrado por GB acumular é pagar. O corte por idade (``IDADE_MINIMA_ORFAO_HORAS``) é o
+    que impede a varredura de apagar um upload em curso.
+    """
+
+    def __init__(
+        self,
+        *,
+        storage: ArquivoStorage,
+        chaves_em_uso: ChavesEmUso,
+        idade_minima_horas: int = IDADE_MINIMA_ORFAO_HORAS,
+    ) -> None:
+        self._storage = storage
+        self._chaves = chaves_em_uso
+        self._idade_minima_horas = idade_minima_horas
+
+    async def executar(self, *, limite: int = 500) -> ResultadoVarredura:
+        corte = _now() - timedelta(hours=self._idade_minima_horas)
+        chaves = await self._storage.listar_chaves(criado_antes_de=corte, limite=limite)
+        if not chaves:
+            return ResultadoVarredura()
+        em_uso = await self._chaves.referenciadas(chaves=chaves)
+        removidos = falhas = 0
+        for chave in chaves:
+            if chave in em_uso:
+                continue
+            try:
+                if await self._storage.remover(chave=chave):
+                    removidos += 1
+            except Exception:  # noqa: BLE001 — um item ruim não trava a varredura
+                falhas += 1
+                logger.warning("Falha ao remover o arquivo órfão %s", chave, exc_info=True)
+        if removidos or falhas:
+            logger.info(
+                "Varredura de órfãos: %d examinados, %d removidos, %d falhas",
+                len(chaves),
+                removidos,
+                falhas,
+            )
+        return ResultadoVarredura(
+            examinados=len(chaves), removidos=removidos, falhas=falhas
+        )
 
 
 class ReceberMidiaDoResponsavel:

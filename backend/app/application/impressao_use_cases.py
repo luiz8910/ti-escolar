@@ -215,13 +215,45 @@ class AtualizarStatusImpressao:
 
 
 class RemoverSolicitacaoImpressao:
-    def __init__(self, *, solicitacoes: SolicitacaoImpressaoRepository) -> None:
+    """Tira o pedido da fila e **apaga o arquivo**, mantendo a linha marcada.
+
+    Até 30/ago/2026 este caso de uso nem recebia o ``ArquivoStorage``: apagava a linha em
+    ``solicitacoes_impressao`` e deixava os bytes para trás, sem ninguém apontando para
+    eles e fora do alcance de qualquer expurgo — o de documentos só varre
+    ``documentos_recebidos`` vencidos. O caso comum é justamente este: o professor manda o
+    documento ilegível, a secretaria tira da fila, e o arquivo fica.
+
+    Agora é o contrário: o arquivo some e a **linha fica**, com ``deleted_at`` preenchido
+    e sem ponteiro para o storage. Ela sai da fila, do relatório e da conta de cota — como
+    saía quando era apagada —, mas a dedupe do webhook continua a enxergá-la: a reentrega
+    da mesma mídia não devolve à fila o pedido que a secretaria acabou de tirar.
+
+    ``storage`` é obrigatório pela mesma razão de ``ClassificarDocumento``: opcional, o
+    defeito volta em silêncio no dia em que alguém instanciar sem ele.
+    """
+
+    def __init__(
+        self, *, solicitacoes: SolicitacaoImpressaoRepository, storage: ArquivoStorage
+    ) -> None:
         self._solicitacoes = solicitacoes
+        self._storage = storage
 
     async def executar(self, *, tenant_id: UUID, solicitacao_id: UUID) -> bool:
-        return await self._solicitacoes.remover(
+        solicitacao = await self._solicitacoes.obter(
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
         )
+        if solicitacao is None:
+            return False
+        # Bytes primeiro: se a remoção falhar, a linha segue com a chave e a secretaria
+        # pode tentar de novo — em vez de um arquivo órfão que só uma varredura acha.
+        if solicitacao.chave_storage:
+            await self._storage.remover(chave=solicitacao.chave_storage)
+        solicitacao.chave_storage = ""
+        solicitacao.mime = ""
+        solicitacao.tamanho = 0
+        solicitacao.deleted_at = solicitacao.atualizado_em = _now()
+        await self._solicitacoes.atualizar(solicitacao)
+        return True
 
 
 # --------------------------------------------------------------------------- #
@@ -521,7 +553,10 @@ class ReceberImpressaoDoProfessor:
             )
 
         parametros = interpretar_legenda(legenda)
-        chave = nova_chave()
+        # Prefixo próprio: dividir `doc/` com os documentos dos responsáveis fazia a regra
+        # de lifecycle do bucket (395 dias, feita para eles) apagar também os arquivos da
+        # fila — que não têm `expira_em` nem expurgo — deixando o download em 404.
+        chave = nova_chave(tenant_id, "impressao")
         await self._storage.guardar(
             chave=chave, conteudo=arquivo.conteudo, mime=arquivo.mime
         )

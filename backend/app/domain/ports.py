@@ -1072,6 +1072,34 @@ class ArquivoStorage(Protocol):
 
     async def remover(self, *, chave: str) -> bool: ...
 
+    async def listar_chaves(
+        self, *, prefixo: str = "", criado_antes_de: datetime, limite: int = 500
+    ) -> list[str]:
+        """Chaves guardadas sob ``prefixo``, mais antigas que ``criado_antes_de``.
+
+        Existe para o **varredor de órfãos**, e só para ele. Gravar bytes e commitar o
+        metadado deixaram de ser a mesma transação no dia em que o storage saiu do banco:
+        um PUT seguido de rollback deixa um objeto sem dono, que ninguém lê e ninguém
+        apaga. O corte por idade é o que separa o órfão de um arquivo que está sendo
+        gravado agora — sem ele, a varredura apagaria o upload em curso.
+        """
+        ...
+
+
+@runtime_checkable
+class ChavesEmUso(Protocol):
+    """Quais chaves de storage ainda têm dono no banco.
+
+    Porta separada do storage de propósito: só o lado dos **metadados** sabe que um
+    arquivo é referenciado por ``documentos_recebidos``, ``solicitacoes_impressao`` ou
+    ``alunos.foto_chave``. O storage não deve conhecer nenhuma dessas tabelas — é ele que
+    vai mudar de casa.
+    """
+
+    async def referenciadas(self, *, chaves: Sequence[str]) -> set[str]:
+        """Subconjunto de ``chaves`` que ainda é apontado por algum registro."""
+        ...
+
 
 @runtime_checkable
 class FonteMidia(Protocol):
