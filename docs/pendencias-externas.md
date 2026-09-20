@@ -55,7 +55,7 @@ no resumo e **pula o deploy**, de propósito, para não reprovar por motivo que 
 
 ---
 
-## 2. Arquivos no S3 — os buckets existem, o usuário IAM não
+## 2. Arquivos no S3 — falta publicar o adaptador e colar as envs
 
 **Estado:** `ti-escolar-190446415519-sa-east-1-an` (produção) e
 `ti-escolar-homolog-190446415519-sa-east-1-an` (homolog) estão criados em `sa-east-1`, com
@@ -70,21 +70,71 @@ pela env. Testado contra MinIO de verdade (compose + CI), não contra mock.
 > o terceiro caso do mesmo padrão, junto do §1 e da documentação do §0 — e é por isso que
 > **"está pronto" só conta quando está na `develop`**.
 
-**O que está travado:** **nada disso tem efeito.** Sem credencial, `storage_efetivo` devolve
-`postgres` e os bytes seguem no `bytea` — inclusive a foto do aluno, que nasce lá para ser
-migrada depois.
+**Usuários IAM criados em 18/set/2026**, e não mais no console: o template
+[`infra/aws/s3-usuarios-iam.yaml`](../infra/aws/s3-usuarios-iam.yaml) cria **um por
+ambiente**, uma stack cada (`ti-escolar-s3-usuario-prod` → usuário `ti-escolar-prod-s3`;
+`ti-escolar-s3-usuario-homolog` → `ti-escolar-homolog-s3`). Sem acesso ao console, política
+em linha restrita ao bucket **daquele** ambiente, e o bloco KMS preso por `kms:ViaService`.
 
-**O que só você faz:** criar **um usuário IAM por ambiente** no console da AWS e colar a
-chave nos segredos da Fly (produção) e do Render (homolog). O caminho completo, porque o
-console da AWS esconde metade disso em abas — a navegação vai como *Serviço → aba → botão*,
-e os nomes mudam de tempo em tempo (quando mudarem, o passo ainda diz o que procurar).
+Provado com a chave real, não só no simulador de políticas: `put`/`get`/`list`/`delete`
+passam no próprio bucket e o objeto sai `aws:kms`; o bucket do outro ambiente,
+`PutObjectAcl`, `DeleteBucket` e a política do bucket dão `AccessDenied`.
 
-> **A ordem importa e é contraintuitiva:** faça a AWS **antes** do deploy, mas cole as envs
-> **depois**. O `Settings` do back-end usa `extra="ignore"` (`backend/app/config.py`), então
-> uma env colada num código que ainda não a lê é **silenciosamente descartada** — nada
-> quebra e nada avisa. Colando depois do deploy, o `/health` responde na primeira olhada.
+> **A chave de acesso não é recurso da stack, de propósito.** O `SecretAccessKey` de um
+> `AWS::IAM::AccessKey` só sai por `!GetAtt`, isto é, por um Output — legível para sempre
+> por quem tiver `cloudformation:DescribeStacks`. Ela foi gerada pela CLI direto para
+> `~/.config/ti-escolar/segredos/s3-{prod,homolog}.env` (0600, fora do repositório), já no
+> formato de `fly secrets import`. Guarde no gerenciador de senhas e **apague os arquivos**.
+> Chave perdida não se recupera: cria-se outra
+> (`aws iam create-access-key --profile tiescolar --user-name ti-escolar-<amb>-s3`) e
+> desativa-se a anterior.
 
-**1. Conferir os dois buckets** — *S3 → Buckets de uso geral (General purpose buckets)*. A
+**O que está travado:** o adaptador está na `develop` e a **produção roda a `main`** — e
+mergear na `main` **não publica**, porque `FLY_API_TOKEN` e `PRODUCAO_BASE_URL` ainda não
+estão cadastrados (§1): a esteira roda o CI, avisa e pula o deploy, verde. Até o adaptador
+subir, `storage_efetivo` devolve `postgres` e os bytes seguem no `bytea` — inclusive a foto
+do aluno, que nasce lá para ser migrada depois.
+
+**O que só você faz, e a ordem importa:**
+
+1. **Guardar as duas chaves** no gerenciador de senhas e apagar os `.env`.
+2. **PR `develop` → `main`**, e mergear.
+3. **Publicar**: cadastrar `FLY_API_TOKEN` e `PRODUCAO_BASE_URL` e rodar a esteira, ou
+   `cd backend && fly deploy` na mão. Confira o `versao` do `/health`: verde não prova
+   deploy, ele responde `ok` na versão velha também. Aqui o `/health` ainda diz
+   `"storage": "postgres"`, e está certo — as envs não foram coladas.
+4. **Só então as envs.** Produção:
+   `cd backend && fly secrets import < ~/.config/ti-escolar/segredos/s3-prod.env` (reinicia
+   a máquina sozinho). Homolog: *Render → Environment → Save* com as cinco linhas de
+   `s3-homolog.env` (o *deploy hook* também não está cadastrado, então o deploy de lá é
+   *Manual Deploy*).
+
+> **Por que as envs vêm depois do deploy:** o `Settings` usa `extra="ignore"`
+> (`backend/app/config.py`), então env colada num código que ainda não a lê é
+> **silenciosamente descartada** — nada quebra e nada avisa. Colando depois, o `/health`
+> responde na primeira olhada. Colar antes não quebra nada, mas faz a troca para o S3
+> acontecer sozinha no deploy seguinte, sem ninguém olhando.
+
+**As cinco envs**, por ambiente:
+
+```
+ARQUIVO_STORAGE=s3
+S3_BUCKET_DOCUMENTOS=<o bucket daquele ambiente>
+AWS_REGION=sa-east-1
+AWS_ACCESS_KEY_ID=<a chave daquele ambiente>
+AWS_SECRET_ACCESS_KEY=<o segredo daquele ambiente>
+```
+
+`S3_KMS_KEY_ID` e `S3_ENDPOINT_URL` ficam **vazios**. O endpoint é só para o MinIO local e do
+CI; preenchido em produção, o boto3 fala com o lugar errado — e o sintoma é um upload que
+falha sem explicar por quê.
+
+### Conferir os buckets no console, quando desconfiar
+
+O que o template **não** faz é checar a configuração dos buckets, que é anterior a ele. A
+navegação vai como *Serviço → aba → botão*, e os nomes mudam de tempo em tempo.
+
+**Os dois buckets** — *S3 → Buckets de uso geral (General purpose buckets)*. A
 coluna **Região da AWS** tem de dizer `América do Sul (São Paulo) sa-east-1`: guardar
 atestado de criança fora do Brasil é transferência internacional (LGPD arts. 33-36). Clique
 no nome do bucket e confira, em duas abas:
@@ -98,88 +148,13 @@ no nome do bucket e confira, em duas abas:
   `rede-de-seguranca-doc-395d` e `rede-de-seguranca-impressao-180d`. São **rede**, não
   mecanismo — o prazo de verdade é o `DOCUMENTO_RETENCAO_DIAS` da aplicação.
 
-**2. Criar o usuário** — *IAM → Gerenciamento de acesso → Usuários → Criar usuário*. Um por
-ambiente (`ti-escolar-prod-s3`, `ti-escolar-homolog-s3`), separados de propósito: chave de
-homolog que vaza não pode escrever no bucket de produção. **Não marque** "Fornecer acesso
-ao Console de Gerenciamento da AWS" — este usuário nunca é uma pessoa. Em *Definir
-permissões*, siga **sem anexar nada** (`Próximo` → `Criar usuário`): a política entra no
-passo 3, e o assistente não oferece política em linha.
-
-**3. A política, em linha no usuário** — abra o usuário → *aba **Permissões*** → **Adicionar
-permissões ▾** → **Criar política em linha** → *aba **JSON*** → cole, trocando `<BUCKET>`
-pelo bucket **daquele** ambiente → `Próximo` → nomeie (`ti-escolar-s3-prod`) → `Criar
-política`.
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "ObjetosDesteBucket",
-      "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::<BUCKET>/*"
-    },
-    {
-      "Sid": "ListarParaVarrerOrfaos",
-      "Effect": "Allow",
-      "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::<BUCKET>"
-    },
-    {
-      "Sid": "ChaveDeDadosDoKMS",
-      "Effect": "Allow",
-      "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": { "kms:ViaService": "s3.sa-east-1.amazonaws.com" }
-      }
-    }
-  ]
-}
-```
-
-Cada bloco existe por um sintoma diferente, e nenhum dos três é óbvio a partir do erro:
-
-> **`GetObject` cobre o `HeadObject`.** O adaptador faz `head` antes de apagar, para o
-> booleano da porta não mentir; sem isso o expurgo relataria como apagado o que nunca existiu.
->
-> **`s3:ListBucket` vai no ARN *sem* `/*`** — é permissão **do bucket**, não do objeto. Pôr as
-> duas no ARN com `/*` deixa upload e download funcionando e faz **só o varredor de órfãos**
-> falhar, que é o que ninguém testa na hora: ele não enxerga lixo nenhum e relata zero, sem erro.
->
-> **O `kms:*` com `Resource: "*"` não é largo:** a condição `ViaService` limita o uso a
-> chamadas que passam pelo S3 daquela região. Sem este bloco, policy só com
-> `PutObject`/`GetObject` **não basta** — o `PutObject` falha com `AccessDenied` na hora de
-> gerar a chave de dados, e **a mensagem não menciona KMS**. A chave `aws/s3` é gerenciada
-> pela AWS (*KMS → Chaves gerenciadas pela AWS → `aws/s3`*, com a região em São Paulo no
-> seletor do topo) e **não tem política editável**, e é justamente por isso que a permissão
-> tem de vir pelo lado do usuário. Se um dia trocar por CMK própria, é aqui que o ARN da
-> chave entra, em vez do `"*"`.
->
-> **Nada de `s3:*`** e nada de URL pré-assinada: os bytes saem pelo endpoint autenticado da
-> API, que audita `documento.baixar` (§6k).
-
-**4. Gerar a chave** — ainda no usuário, *aba **Credenciais de segurança*** → **Chaves de
-acesso** → **Criar chave de acesso** → caso de uso **Aplicação executada fora da AWS** →
-`Próximo` → `Criar`. **O segredo aparece uma única vez**: copie os dois valores para o
-gerenciador de senhas antes de fechar a tela. Se perder, não há como recuperar — só criar
-outra e desativar a anterior.
-
-**5. Só então, as envs** (Fly: `fly secrets set`, que reinicia a máquina; Render:
-*Environment → Save*, que redeploya):
-
-```
-ARQUIVO_STORAGE=s3
-S3_BUCKET_DOCUMENTOS=<o bucket daquele ambiente>
-AWS_REGION=sa-east-1
-AWS_ACCESS_KEY_ID=<a chave daquele ambiente>
-AWS_SECRET_ACCESS_KEY=<o segredo daquele ambiente>
-```
-
-`S3_KMS_KEY_ID` e `S3_ENDPOINT_URL` ficam **vazios**. O endpoint é só para o MinIO local e do
-CI; preenchido em produção, o boto3 fala com o lugar errado — e o sintoma é um upload que
-falha sem explicar por quê.
+> **As três armadilhas da política**, que o template resolve e o console não avisa:
+> `GetObject` cobre o `HeadObject` que o adaptador faz antes de apagar; `s3:ListBucket` vai
+> no ARN **sem** `/*` (é permissão do bucket — no ARN com `/*`, só o varredor de órfãos
+> falha, em silêncio); e sem o bloco `kms:GenerateDataKey`/`kms:Decrypt` o `PutObject` falha
+> com `AccessDenied` **sem mencionar KMS**, porque a chave `aws/s3` é gerenciada pela AWS e
+> não tem política editável. Nada de `s3:*` e nada de URL pré-assinada: os bytes saem pelo
+> endpoint autenticado da API, que audita `documento.baixar` (§6k).
 
 **Como conferir que caiu:** subir um documento pelo WhatsApp e ver o objeto aparecer no
 bucket — *S3 → o bucket → aba **Objetos***, entrando pelas pastas `doc/` → `{tenant}` →
