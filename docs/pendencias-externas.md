@@ -109,6 +109,12 @@ do aluno, que nasce lá para ser migrada depois.
    `s3-homolog.env` (o *deploy hook* também não está cadastrado, então o deploy de lá é
    *Manual Deploy*).
 
+> **O que a virada deixa para trás:** documento e foto guardados **antes** dela ficam no
+> `bytea`, e a leitura vai procurá-los no bucket — ou seja, **404**. É decisão de
+> 20/set/2026, não esquecimento: o que existe hoje é dado de teste e de demonstração, e uma
+> migração custaria mais do que vale. Se a virada pegar acervo real, a decisão cai e a
+> migração volta à lista.
+
 > **Por que as envs vêm depois do deploy:** o `Settings` usa `extra="ignore"`
 > (`backend/app/config.py`), então env colada num código que ainda não a lê é
 > **silenciosamente descartada** — nada quebra e nada avisa. Colando depois, o `/health`
