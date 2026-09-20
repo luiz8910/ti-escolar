@@ -25,7 +25,8 @@ Até 02/set/2026 o deploy era manual, como no Render. O comando continua valendo
 rollback, para depurar o build, ou quando a esteira estiver indisponível:
 
 ```bash
-export FLY_API_TOKEN=...        # ~/.openclaw/fly/credenciais.env (Organization Token)
+set -a; . ~/.config/ti-escolar/segredos/fly.env; set +a   # Organization Token
+export PATH="$HOME/.fly/bin:$PATH"                        # o flyctl não está no PATH
 cd backend && fly deploy --build-arg GIT_SHA=$(git rev-parse HEAD)
 # o contexto do build é backend/, não a raiz
 ```
@@ -60,7 +61,12 @@ Três coisas que o `fly.toml` faz de propósito, e que quebram se alguém "simpl
 
 Ficam na Fly (`fly secrets`), nunca no repositório. A Fly **não mostra o valor depois de
 gravado** — só o digest —, então os que foram gerados aqui estão em
-`~/.openclaw/fly/ti-escolar-producao.env` (permissão 600), na mesma pasta do token.
+`~/.config/ti-escolar/segredos/producao-fly.env` (permissão 600). **Todo segredo deste
+projeto mora nesse diretório** — `fly.env` (Organization Token da Fly), `producao-fly.env`,
+`producao-meta.env` e `s3-{prod,homolog}.env` —, e não no `~/.openclaw/`, que é diretório de
+dados de um agente: credencial de produção guardada lá fica ao alcance de qualquer sessão
+dele. Consolidado em 20/set/2026, quando os arquivos estavam em três lugares e este
+documento apontava para um caminho que já não existia.
 
 ```bash
 fly secrets list --app ti-escolar                    # nomes e digests

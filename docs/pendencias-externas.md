@@ -32,7 +32,7 @@ sozinho não basta:** sem os segredos abaixo a esteira entra no ar e pula o depl
 | Nome | Tipo | Onde conseguir | Já existe? |
 |---|---|---|---|
 | `RENDER_DEPLOY_HOOK_URL` | secret | Render → serviço → Settings → **Deploy Hook** | ❌ |
-| `FLY_API_TOKEN` | secret | `fly tokens create org` (o mesmo de `~/.openclaw/fly/credenciais.env`) | ❌ |
+| `FLY_API_TOKEN` | secret | `fly tokens create org` (o mesmo de `~/.config/ti-escolar/segredos/fly.env`) | ❌ |
 | `HOMOLOG_BASE_URL` | variable | `https://ti-escolar.onrender.com` | ❌ |
 | `PRODUCAO_BASE_URL` | variable | `https://api.tiescolar.com.br` | ❌ |
 | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` | secrets | já cadastrados (21/ago e 26/jul) | ✅ |
