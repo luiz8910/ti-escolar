@@ -51,11 +51,13 @@ tenant e da auditoria) e **versionamento desativado de propósito** — com vers
 ``DeleteObject`` só cria um *delete marker* e o atestado sobreviveria ao expurgo de
 ``DOCUMENTO_RETENCAO_DIAS``.
 
-**O que ainda falta:** o adaptador em si (``boto3`` não é dependência), a fábrica
-``criar_arquivo_storage(settings)`` escolhendo pelo ``ARQUIVO_STORAGE``
-(``postgres`` | ``s3``) — hoje ``PostgresArquivoStorage`` é instanciado à mão em quatro
-pontos de ``interfaces/deps.py`` —, a credencial IAM escopada só nesse ARN e a migração dos
-bytes que já estão no ``bytea``.
+**O que ainda falta:** a credencial IAM escopada só nesse ARN, cadastrada nas envs do Render
+e da Fly (`docs/pendencias-externas.md` §2), e a migração dos bytes que já estão no ``bytea``.
+O adaptador (``storage_s3.py``, extra ``s3`` do ``boto3``) e a fábrica
+``criar_arquivo_storage(settings, session)`` escolhendo pelo ``ARQUIVO_STORAGE``
+(``postgres`` | ``s3``) já existem — e, enquanto a chave não entrar, ``storage_efetivo``
+devolve ``postgres`` e **grita no boot e no `/health`**, porque uma env que pede um adaptador
+e recebe outro em silêncio foi o que deixou o WhatsApp fora do ar sem ninguém notar.
 
 ``ArquivoStorageMemoria`` cobre teste e execução sem banco.
 """
@@ -65,6 +67,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -75,8 +78,8 @@ from app.infrastructure.db.models import ArquivoArmazenadoORM
 logger = logging.getLogger("storage")
 
 
-def nova_chave(prefixo: str = "doc") -> str:
-    """Chave opaca e imprevisível para um arquivo.
+def nova_chave(tenant_id: UUID, prefixo: str = "doc") -> str:
+    """Chave opaca e imprevisível para um arquivo: ``{prefixo}/{tenant}/{ano}/{mes}/{token}``.
 
     Nada de nome do responsável ou do aluno na chave: ela aparece em log e em URL, e o
     conteúdo aqui é dado sensível de menor. ``token_urlsafe`` porque um id sequencial
@@ -96,8 +99,16 @@ def nova_chave(prefixo: str = "doc") -> str:
     a linha em ``solicitacoes_impressao`` apontando para um objeto inexistente e o download
     devolvendo 404 sem explicação. O tenant no prefixo dá de graça o inventário por escola
     e transforma a remoção de um tenant em exclusão por prefixo.
+
+    A finalidade e o tenant são **parâmetros separados** de propósito: montar o prefixo
+    na mão no chamador (``nova_chave(f"doc/{tenant}")``) deixa a finalidade errada passar
+    sem erro, e o sintoma só aparece meses depois, quando o lifecycle apaga o arquivo da
+    fila de impressão junto com os documentos.
     """
-    return f"{prefixo}/{datetime.now(timezone.utc):%Y/%m}/{secrets.token_urlsafe(24)}"
+    return (
+        f"{prefixo}/{tenant_id}/{datetime.now(timezone.utc):%Y/%m}/"
+        f"{secrets.token_urlsafe(24)}"
+    )
 
 
 class PostgresArquivoStorage:

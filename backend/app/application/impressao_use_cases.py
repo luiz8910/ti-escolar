@@ -556,7 +556,7 @@ class ReceberImpressaoDoProfessor:
         # Prefixo próprio: dividir `doc/` com os documentos dos responsáveis fazia a regra
         # de lifecycle do bucket (395 dias, feita para eles) apagar também os arquivos da
         # fila — que não têm `expira_em` nem expurgo — deixando o download em 404.
-        chave = nova_chave(f"impressao/{tenant_id}")
+        chave = nova_chave(tenant_id, "impressao")
         await self._storage.guardar(
             chave=chave, conteudo=arquivo.conteudo, mime=arquivo.mime
         )

@@ -19,6 +19,26 @@
 
 ---
 
+## 2026-09-16 — o adaptador do S3 saiu da branch e casou com a porta nova
+
+- **Andou?** não — nenhum fluxo do beta mudou de estado; o que saiu do lugar foi um bloqueio
+  que se acreditava resolvido.
+- **Rótulo:** `infra`.
+- **Próxima ação:** mergear o PR do S3 na `develop` e **então** criar o usuário IAM e colar a
+  chave nas envs do Render e da Fly ([`docs/pendencias-externas.md`](docs/pendencias-externas.md) §2).
+  Depois disso, escolher **um** fluxo do corte do beta.
+- **Precisa de deploy?** homolog e produção, mas só depois da chave — sem ela o adaptador
+  existe e não é usado.
+- Achado da sessão: o `S3ArquivoStorage` estava **num mês de branch não mergeada**
+  (`feat/arquivos-no-s3`, 17/ago) enquanto a documentação o dava por "escrito e testado" —
+  colar a chave da AWS não teria efeito nenhum, porque `deps.py` instanciava o Postgres fixo
+  e o `boto3` nem era dependência. **Terceira vez o mesmo padrão** (§1 das pendências, a
+  documentação do §0, agora o S3): o gargalo não é escrever, é mergear. Portei só o commit do
+  S3, dei `listar_chaves` ao adaptador (a porta cresceu no PR #89 e ele tinha ficado atrás) e
+  peguei no caminho um erro que o cherry-pick criava calado: `nova_chave` com a assinatura
+  nova e os chamadores na antiga produziam `doc/doc/{tenant}/…` — chave na finalidade errada,
+  que é exatamente o bug que o #89 foi consertar. 746 testes, 0 pulados, com MinIO no ar.
+
 ## 2026-09-16 — exclusão de arquivos e prefixos por finalidade, fechada
 
 - **Andou?** sim — *arquivo recebido pelo WhatsApp* passa a ter o fim da vida coberto:
