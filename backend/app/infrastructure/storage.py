@@ -51,8 +51,20 @@ tenant e da auditoria) e **versionamento desativado de propósito** — com vers
 ``DeleteObject`` só cria um *delete marker* e o atestado sobreviveria ao expurgo de
 ``DOCUMENTO_RETENCAO_DIAS``.
 
-**O que ainda falta:** a credencial IAM escopada só nesse ARN, cadastrada nas envs do Render
-e da Fly (`docs/pendencias-externas.md` §2), e a migração dos bytes que já estão no ``bytea``.
+**O que ainda falta:** as envs com a credencial IAM, cadastradas no Render e na Fly
+(`docs/pendencias-externas.md` §2) — os usuários já existem, criados por CloudFormation
+(``infra/aws/s3-usuarios-iam.yaml``).
+
+**Os bytes que já estão no ``bytea`` ficam onde estão, por decisão de 20/set/2026.** Não há
+migração: ligar o ``ARQUIVO_STORAGE=s3`` faz a leitura procurar no bucket, então documento e
+foto **anteriores à virada respondem 404**. Cabe porque o que existe hoje é dado de teste e
+de demonstração — se um dia a virada pegar acervo real, isto aqui deixa de ser aceitável e a
+migração volta à lista.
+
+Toda rota que serve bytes pede o storage à fábrica (``Depends(get_arquivo_storage)``), e há
+teste que recusa adaptador instanciado na mão (``tests/test_fiacao_storage.py``): quatro
+rotas faziam isso, e o download da fila de impressão teria devolvido 404 para **todo arquivo
+novo** no dia em que o S3 entrasse.
 O adaptador (``storage_s3.py``, extra ``s3`` do ``boto3``) e a fábrica
 ``criar_arquivo_storage(settings, session)`` escolhendo pelo ``ARQUIVO_STORAGE``
 (``postgres`` | ``s3``) já existem — e, enquanto a chave não entrar, ``storage_efetivo``
