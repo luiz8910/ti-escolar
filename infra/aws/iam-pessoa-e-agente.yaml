@@ -37,7 +37,8 @@ Metadata:
   com.aws.cloudformation.Context:
     arch: 2 usuarios IAM na conta 190446415519. Pessoa = admin sob MFA. Agente = S3/CFN/custo em sa-east-1.
     must:
-      - o agente nunca le os bytes do bucket de producao (documento de menor, §6k/§17)
+      - o agente nunca le os bytes nem muda a configuracao da producao (§6k/§17)
+      - a pilha das identidades nao se apaga pela mao do agente
       - o agente nunca cria nem altera identidade: sem isso, permissao recortada e teatro
       - admin da pessoa so vale com MFA na sessao
       - nenhum segredo (senha, chave) e recurso desta stack
@@ -56,7 +57,7 @@ Parameters:
     Default: ti-escolar-190446415519-sa-east-1-an
     AllowedValues:
       - ti-escolar-190446415519-sa-east-1-an
-    Description: Bucket de producao. O agente configura, mas nao le nem escreve objeto.
+    Description: Bucket de producao. O agente so le - nem objeto, nem configuracao.
   BucketHomolog:
     Type: String
     Default: ti-escolar-homolog-190446415519-sa-east-1-an
@@ -70,6 +71,10 @@ Resources:
   # ---------------------------------------------------------------------------
   Pessoa:
     Type: AWS::IAM::User
+    # Retain nos dois: identidade de recuperacao nao sai junto com a pilha. Depois que o
+    # raiz estiver trancado, apagar esta stack sem isso e ficar do lado de fora da conta.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Metadata:
       com.aws.cloudformation.Context:
         why: >-
@@ -125,6 +130,8 @@ Resources:
   # ---------------------------------------------------------------------------
   Agente:
     Type: AWS::IAM::User
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Metadata:
       com.aws.cloudformation.Context:
         why: >-
@@ -134,7 +141,8 @@ Resources:
         must:
           - sem LoginProfile - o agente nao entra no console
           - sem acao de IAM que crie ou altere identidade (escalada de privilegio)
-          - objeto do bucket de producao negado explicitamente
+          - producao so de leitura: objeto E configuracao (lifecycle apaga sem GetObject)
+          - nao pode apagar nem alterar a propria pilha
         mutable: review-required
     Properties:
       UserName: ti-escolar-agente
@@ -155,12 +163,11 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Configuracao dos dois buckets: lifecycle, politica, criptografia, bloqueio
-              # publico. ARN sem /* - e permissao de bucket, nao de objeto.
-              - Sid: ConfigurarOsBucketsDoProjeto
+              # Ler a configuracao dos dois: e o que faz diagnostico ser possivel sem
+              # permissao de escrita. ARN sem /* - e permissao de bucket, nao de objeto.
+              - Sid: LerAConfiguracaoDosDoisBuckets
                 Effect: Allow
                 Action:
-                  - s3:CreateBucket
                   - s3:ListBucket
                   - s3:ListBucketVersions
                   - s3:ListBucketMultipartUploads
@@ -171,15 +178,25 @@ Resources:
                   - s3:GetBucketVersioning
                   - s3:GetEncryptionConfiguration
                   - s3:GetLifecycleConfiguration
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketProd}
+                  - !Sub arn:aws:s3:::${BucketHomolog}
+
+              # Escrever configuracao, so no homolog. Negar o objeto e deixar o lifecycle e a
+              # policy abertos nao protege nada: uma regra de expiracao de 1 dia apaga o
+              # acervo da producao sem tocar num unico GetObject, e PutBucketPublicAccessBlock
+              # desfaz o bloqueio publico do §2. O caminho indireto e o caminho.
+              - Sid: ConfigurarSoOBucketDeHomolog
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
                   - s3:PutBucketPolicy
                   - s3:PutBucketPublicAccessBlock
                   - s3:PutBucketTagging
                   - s3:PutBucketVersioning
                   - s3:PutEncryptionConfiguration
                   - s3:PutLifecycleConfiguration
-                Resource:
-                  - !Sub arn:aws:s3:::${BucketProd}
-                  - !Sub arn:aws:s3:::${BucketHomolog}
+                Resource: !Sub arn:aws:s3:::${BucketHomolog}
 
               # Bytes: so no homolog. O que o agente precisa provar (o adaptador sobe, grava,
               # le, apaga) se prova em homolog; producao guarda atestado e laudo de crianca.
@@ -258,10 +275,23 @@ Resources:
                 Effect: Deny
                 Action:
                   - s3:GetObject*
-                  - s3:PutObject*
-                  - s3:DeleteObject*
                   - s3:RestoreObject
                 Resource: !Sub arn:aws:s3:::${BucketProd}/*
+
+              # O bucket de producao inteiro e so de leitura para o agente - objeto e
+              # configuracao. Curinga, e nao lista fechada, de proposito: acao nova de
+              # escrita que a AWS invente amanha ja nasce negada aqui. Sem este bloco, negar
+              # o byte e teatro: sobra apagar por lifecycle e expor por policy.
+              - Sid: ProducaoNuncaMudaPelaMaoDoAgente
+                Effect: Deny
+                Action:
+                  - s3:Put*
+                  - s3:Delete*
+                  - s3:Create*
+                  - s3:Replicate*
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketProd}
+                  - !Sub arn:aws:s3:::${BucketProd}/*
 
               # Sem isto o recorte acima e enfeite: quem cria usuario, politica ou role, ou
               # passa role para um servico de computacao, se torna admin em dois passos.
@@ -293,6 +323,21 @@ Resources:
                   - iam:PassRole
                   - sts:AssumeRole
                 Resource: "*"
+
+              # A pilha que segura as duas identidades. O `iam:DeleteUser` negado acima ja
+              # faria o delete morrer no meio, mas morrer no meio deixa a pilha em
+              # DELETE_FAILED - e depender de um AccessDenied la na frente e fragil demais
+              # para a identidade que existe justamente para recuperar a conta. UpdateStack
+              # entra junto: o agente nao edita a propria permissao. `AWS::StackName` resolve
+              # no deploy, entao renomear a pilha nao fura a protecao.
+              - Sid: NuncaAPropriaPilha
+                Effect: Deny
+                Action:
+                  - cloudformation:DeleteStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
 
               # O que nao se desfaz: bucket inteiro, trilha de auditoria, chave do KMS,
               # fechamento de conta. Nada disso e trabalho de agente.
