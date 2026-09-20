@@ -1,0 +1,401 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  TI-Escolar - as duas identidades humanas/semi-humanas da conta: a pessoa dona (Luiz, com
+  AdministratorAccess atras de MFA) e o agente (Claude Code, com permissao recortada no que o
+  projeto usa de verdade). Existe para tirar a conta do usuario raiz. Uma stack so, na conta
+  inteira. Nem senha nem chave de acesso nascem aqui.
+
+# Como usar (uma vez, ainda como raiz):
+#
+#   aws cloudformation deploy --profile tiescolar --region sa-east-1 \
+#     --template-file infra/aws/iam-pessoa-e-agente.yaml \
+#     --stack-name ti-escolar-identidades \
+#     --parameter-overrides EmailDaPessoa=luiz.sanches8910@gmail.com \
+#     --capabilities CAPABILITY_NAMED_IAM
+#
+# Depois, e fora do CloudFormation (§ "Por que senha e chave nao estao aqui"):
+#
+#   aws iam create-login-profile --user-name luiz --password '<senha forte>' \
+#     --password-reset-required --profile tiescolar
+#   aws iam create-access-key --user-name ti-escolar-agente --profile tiescolar
+#
+# A chave do agente vai para ~/.config/ti-escolar/segredos/ (0600), como as demais, e dali
+# para ~/.aws/credentials. A pessoa nao ganha chave nenhuma: console + MFA, e, quando
+# precisar de CLI, `aws sts get-session-token --serial-number <arn do MFA> --token-code`.
+#
+# Por que senha e chave nao estao aqui: o mesmo motivo do s3-usuarios-iam.yaml. O segredo de
+# AWS::IAM::AccessKey (e a senha de um LoginProfile) so sai por Output, legivel para sempre
+# por quem tiver cloudformation:DescribeStacks.
+#
+# Depois que a pessoa entrar com MFA e o agente provar a chave, trave o raiz: apague as
+# chaves de acesso dele, ponha MFA, e troque o login_session do perfil `tiescolar` em
+# ~/.aws/config, que hoje aponta para arn:aws:iam::190446415519:root.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: 2 usuarios IAM na conta 190446415519. Pessoa = admin sob MFA. Agente = S3/CFN/custo em sa-east-1.
+    must:
+      - o agente nunca le os bytes nem muda a configuracao da producao (§6k/§17)
+      - a pilha das identidades nao se apaga pela mao do agente
+      - o agente nunca cria nem altera identidade: sem isso, permissao recortada e teatro
+      - admin da pessoa so vale com MFA na sessao
+      - nenhum segredo (senha, chave) e recurso desta stack
+    ref:
+      - docs/guia/seguranca-e-lgpd.md §14, §17
+      - docs/pendencias-externas.md §2
+      - infra/aws/s3-usuarios-iam.yaml
+
+Parameters:
+  EmailDaPessoa:
+    Type: String
+    Description: Email da pessoa dona da conta, so como tag de contato.
+    Default: luiz.sanches8910@gmail.com
+  BucketProd:
+    Type: String
+    Default: ti-escolar-190446415519-sa-east-1-an
+    AllowedValues:
+      - ti-escolar-190446415519-sa-east-1-an
+    Description: Bucket de producao. O agente so le - nem objeto, nem configuracao.
+  BucketHomolog:
+    Type: String
+    Default: ti-escolar-homolog-190446415519-sa-east-1-an
+    AllowedValues:
+      - ti-escolar-homolog-190446415519-sa-east-1-an
+    Description: Bucket de homolog. Aqui o agente mexe nos objetos a vontade.
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # A pessoa. Admin, porque a conta e dela - mas admin que so existe com MFA.
+  # ---------------------------------------------------------------------------
+  Pessoa:
+    Type: AWS::IAM::User
+    # Retain nos dois: identidade de recuperacao nao sai junto com a pilha. Depois que o
+    # raiz estiver trancado, apagar esta stack sem isso e ficar do lado de fora da conta.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Substitui o usuario raiz no dia a dia. Raiz vira o que deveria ter sido desde o
+          inicio: identidade de emergencia, com MFA, sem chave, usada uma vez por ano.
+        must:
+          - sem LoginProfile aqui - senha em template vira Output
+          - sem AccessKey - chave de admin em disco e o pior dos mundos
+        mutable: review-required
+    Properties:
+      UserName: luiz
+      Path: /ti-escolar/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: projeto
+          Value: ti-escolar
+        - Key: tipo
+          Value: pessoa
+        - Key: contato
+          Value: !Ref EmailDaPessoa
+      Policies:
+        - PolicyName: exigir-mfa
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Deny vence Allow: com este bloco, o AdministratorAccess acima so vale numa
+              # sessao que apresentou MFA. O NotAction e o buraco por onde a propria pessoa
+              # cadastra o primeiro dispositivo - sem ele, a conta nasce trancada.
+              # BoolIfExists, e nao Bool: a chave some em chamada sem MFA, e Bool com chave
+              # ausente nao casa, ou seja, o Deny nao dispararia justamente no caso que ele
+              # existe para pegar.
+              - Sid: NadaSemMfaExcetoCadastrarOMfa
+                Effect: Deny
+                NotAction:
+                  - iam:CreateVirtualMFADevice
+                  - iam:DeleteVirtualMFADevice
+                  - iam:EnableMFADevice
+                  - iam:ResyncMFADevice
+                  - iam:ListVirtualMFADevices
+                  - iam:ListMFADevices
+                  - iam:GetUser
+                  - iam:ChangePassword
+                  - iam:GetAccountPasswordPolicy
+                  - sts:GetSessionToken
+                Resource: "*"
+                Condition:
+                  BoolIfExists:
+                    aws:MultiFactorAuthPresent: "false"
+
+  # ---------------------------------------------------------------------------
+  # O agente. Nao e uma pessoa e nao e o back-end: e quem opera a conta por CLI.
+  # ---------------------------------------------------------------------------
+  Agente:
+    Type: AWS::IAM::User
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Identidade propria para o Claude Code. O ganho maior nao e a permissao menor, e o
+          CloudTrail: com usuario separado da-se para saber, depois, o que foi a pessoa e o
+          que foi o agente. Com tudo no raiz, nao se sabe.
+        must:
+          - sem LoginProfile - o agente nao entra no console
+          - sem acao de IAM que crie ou altere identidade (escalada de privilegio)
+          - producao so de leitura: objeto E configuracao (lifecycle apaga sem GetObject)
+          - nao pode apagar nem alterar a propria pilha
+        mutable: review-required
+    Properties:
+      UserName: ti-escolar-agente
+      Path: /ti-escolar/
+      ManagedPolicyArns:
+        # List/Describe do que existe na conta, sem ler conteudo de dado. E o que faz o
+        # agente conseguir diagnosticar sem precisar de permissao de escrita em nada.
+        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
+      Tags:
+        - Key: projeto
+          Value: ti-escolar
+        - Key: tipo
+          Value: agente
+        - Key: operador
+          Value: claude-code
+      Policies:
+        - PolicyName: ti-escolar-agente-permite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Ler a configuracao dos dois: e o que faz diagnostico ser possivel sem
+              # permissao de escrita. ARN sem /* - e permissao de bucket, nao de objeto.
+              - Sid: LerAConfiguracaoDosDoisBuckets
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                  - s3:ListBucketMultipartUploads
+                  - s3:GetBucketLocation
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketTagging
+                  - s3:GetBucketVersioning
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketProd}
+                  - !Sub arn:aws:s3:::${BucketHomolog}
+
+              # Escrever configuracao, so no homolog. Negar o objeto e deixar o lifecycle e a
+              # policy abertos nao protege nada: uma regra de expiracao de 1 dia apaga o
+              # acervo da producao sem tocar num unico GetObject, e PutBucketPublicAccessBlock
+              # desfaz o bloqueio publico do §2. O caminho indireto e o caminho.
+              - Sid: ConfigurarSoOBucketDeHomolog
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutBucketPolicy
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketTagging
+                  - s3:PutBucketVersioning
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutLifecycleConfiguration
+                Resource: !Sub arn:aws:s3:::${BucketHomolog}
+
+              # Bytes: so no homolog. O que o agente precisa provar (o adaptador sobe, grava,
+              # le, apaga) se prova em homolog; producao guarda atestado e laudo de crianca.
+              - Sid: ObjetosSoDoHomolog
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource: !Sub arn:aws:s3:::${BucketHomolog}/*
+
+              - Sid: ChaveDeDadosDoKmsPeloS3
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub s3.${AWS::Region}.amazonaws.com
+
+              # As pilhas do projeto, e so elas. Nome fora de ti-escolar-* da AccessDenied.
+              - Sid: PilhasDoProjeto
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:Describe*
+                  - cloudformation:Get*
+                  - cloudformation:List*
+                  - cloudformation:DetectStackDrift
+                  - cloudformation:DetectStackResourceDrift
+                  - cloudformation:TagResource
+                  - cloudformation:UntagResource
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ti-escolar-*/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/ti-escolar-*/*
+
+              # ValidateTemplate e ListStacks nao tem recurso: ou "*", ou nao existem.
+              - Sid: CloudFormationSemRecurso
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:ListStacks
+                  - cloudformation:DescribeStackDriftDetectionStatus
+                Resource: "*"
+
+              # O habito de olhar custo (o cron fly-gasto) precisa valer para a AWS tambem.
+              # Nao basta esta permissao: enquanto "IAM user and role access to Billing
+              # information" estiver desligado nas preferencias de cobranca (so o raiz liga),
+              # isso devolve AccessDenied.
+              - Sid: OlharOCusto
+                Effect: Allow
+                Action:
+                  - ce:Get*
+                  - ce:Describe*
+                  - ce:List*
+                  - budgets:ViewBudget
+                  - budgets:Describe*
+                  - cur:DescribeReportDefinitions
+                Resource: "*"
+
+        - PolicyName: ti-escolar-agente-nega
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Documento de menor, §6k. Fecha inclusive o que o ViewOnlyAccess pudesse
+              # abrir: Deny vence qualquer Allow, gerenciado ou nao.
+              - Sid: NuncaOsBytesForaDoHomolog
+                Effect: Deny
+                Action:
+                  - s3:GetObject*
+                  - s3:SelectObjectContent
+                  - s3:RestoreObject
+                NotResource: !Sub arn:aws:s3:::${BucketHomolog}/*
+
+              # O bucket de producao inteiro e so de leitura para o agente - objeto e
+              # configuracao. Curinga, e nao lista fechada, de proposito: acao nova de
+              # escrita que a AWS invente amanha ja nasce negada aqui. Sem este bloco, negar
+              # o byte e teatro: sobra apagar por lifecycle e expor por policy.
+              - Sid: ProducaoNuncaMudaPelaMaoDoAgente
+                Effect: Deny
+                Action:
+                  - s3:Put*
+                  - s3:Delete*
+                  - s3:Create*
+                  - s3:Replicate*
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketProd}
+                  - !Sub arn:aws:s3:::${BucketProd}/*
+
+              # Sem isto o recorte acima e enfeite: quem cria usuario, politica ou role, ou
+              # passa role para um servico de computacao, se torna admin em dois passos.
+              # As oito primeiras sao exatamente as acoes de escalada por manipulacao direta
+              # de politica; iam:PassRole com Resource "*" e a nona porta.
+              - Sid: NuncaMexerEmIdentidade
+                Effect: Deny
+                Action:
+                  - iam:PutUserPolicy
+                  - iam:PutRolePolicy
+                  - iam:PutGroupPolicy
+                  - iam:CreatePolicy
+                  - iam:CreatePolicyVersion
+                  - iam:AttachUserPolicy
+                  - iam:AttachRolePolicy
+                  - iam:AttachGroupPolicy
+                  - iam:SetDefaultPolicyVersion
+                  - iam:CreateUser
+                  - iam:DeleteUser
+                  - iam:CreateRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:CreateAccessKey
+                  - iam:UpdateAccessKey
+                  - iam:CreateLoginProfile
+                  - iam:UpdateLoginProfile
+                  - iam:CreateServiceLinkedRole
+                  - iam:DeleteUserPermissionsBoundary
+                  - iam:DeleteRolePermissionsBoundary
+                  - iam:PassRole
+                  - sts:AssumeRole
+                Resource: "*"
+
+              # A pilha que segura as duas identidades. O `iam:DeleteUser` negado acima ja
+              # faria o delete morrer no meio, mas morrer no meio deixa a pilha em
+              # DELETE_FAILED - e depender de um AccessDenied la na frente e fragil demais
+              # para a identidade que existe justamente para recuperar a conta. UpdateStack
+              # entra junto: o agente nao edita a propria permissao. `AWS::StackName` resolve
+              # no deploy, entao renomear a pilha nao fura a protecao.
+              - Sid: NuncaAPropriaPilha
+                Effect: Deny
+                Action:
+                  - cloudformation:DeleteStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
+
+              # O que nao se desfaz: bucket inteiro, trilha de auditoria, chave do KMS,
+              # fechamento de conta. Nada disso e trabalho de agente.
+              - Sid: NuncaOIrreversivel
+                Effect: Deny
+                Action:
+                  - s3:DeleteBucket
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketAcl
+                  - s3:PutObjectAcl
+                  - cloudtrail:StopLogging
+                  - cloudtrail:DeleteTrail
+                  - cloudtrail:UpdateTrail
+                  - cloudtrail:PutEventSelectors
+                  - kms:ScheduleKeyDeletion
+                  - kms:DisableKey
+                  - kms:PutKeyPolicy
+                  - account:*
+                  - organizations:*
+                  - aws-portal:Modify*
+                Resource: "*"
+
+              # A conta vive em sa-east-1. Recurso ligado por engano em outra regiao e o
+              # classico: ninguem olha, e a fatura conta depois. us-east-1 fica de fora do
+              # Deny porque servico global assina de la. NotAction lista o que e global.
+              - Sid: ForaDasRegioesDoProjeto
+                Effect: Deny
+                NotAction:
+                  - iam:*
+                  - sts:*
+                  - ce:*
+                  - cur:*
+                  - budgets:*
+                  - account:*
+                  - organizations:*
+                  - support:*
+                  - health:*
+                  - cloudfront:*
+                  - route53:*
+                  - s3:ListAllMyBuckets
+                Resource: "*"
+                Condition:
+                  StringNotEquals:
+                    aws:RequestedRegion:
+                      - sa-east-1
+                      - us-east-1
+
+Outputs:
+  PessoaArn:
+    Description: ARN da pessoa dona da conta.
+    Value: !GetAtt Pessoa.Arn
+  AgenteArn:
+    Description: ARN do agente.
+    Value: !GetAtt Agente.Arn
+  ProximosPassos:
+    Description: O que a stack de proposito nao faz.
+    Value: >-
+      1) create-login-profile para luiz e cadastrar MFA; 2) create-access-key para
+      ti-escolar-agente e guardar em ~/.config/ti-escolar/segredos/; 3) apagar as chaves do
+      usuario raiz, por MFA nele e trocar o login_session em ~/.aws/config.
