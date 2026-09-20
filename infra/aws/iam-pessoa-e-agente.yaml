@@ -271,12 +271,13 @@ Resources:
             Statement:
               # Documento de menor, §6k. Fecha inclusive o que o ViewOnlyAccess pudesse
               # abrir: Deny vence qualquer Allow, gerenciado ou nao.
-              - Sid: NuncaOsBytesDaProducao
+              - Sid: NuncaOsBytesForaDoHomolog
                 Effect: Deny
                 Action:
                   - s3:GetObject*
+                  - s3:SelectObjectContent
                   - s3:RestoreObject
-                Resource: !Sub arn:aws:s3:::${BucketProd}/*
+                NotResource: !Sub arn:aws:s3:::${BucketHomolog}/*
 
               # O bucket de producao inteiro e so de leitura para o agente - objeto e
               # configuracao. Curinga, e nao lista fechada, de proposito: acao nova de
