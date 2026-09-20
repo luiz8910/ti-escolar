@@ -1608,6 +1608,12 @@ class SugestaoBloqueioSaida(BaseModel):
 class ExpurgoSaida(BaseModel):
     removidos: int
     falhas: int
+    # Varredura de bytes sem dono, que roda junto do expurgo (§0.3). Vem separada porque
+    # mede outra coisa: expurgo é prazo cumprido; órfão é defeito — se este número não cai
+    # para perto de zero, há um caminho gravando arquivo e perdendo o metadado.
+    orfaos_examinados: int = 0
+    orfaos_removidos: int = 0
+    orfaos_falhas: int = 0
 
 
 # --------------------------------------------------------------------------- #

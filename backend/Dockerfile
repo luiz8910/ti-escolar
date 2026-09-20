@@ -12,6 +12,13 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir ".[de
 
 COPY . .
 
+# Commit publicado, ecoado por /health (ver app/main.py). Fica DEPOIS do pip install para
+# não invalidar a camada de dependências a cada commit. A Fly recebe via
+# `fly deploy --build-arg GIT_SHA=...`; o Render injeta RENDER_GIT_COMMIT sozinho, em
+# tempo de execução, e por isso não precisa deste argumento.
+ARG GIT_SHA=""
+ENV GIT_COMMIT=$GIT_SHA
+
 EXPOSE 8000
 # Render injeta a porta via $PORT; localmente cai em 8000.
 # Aplica migrations e provisiona o super admin (idempotente, seguro em produção) antes

@@ -1,0 +1,125 @@
+name: Homolog — deploy (Render)
+
+# Esteira de HOMOLOGAÇÃO. Gatilho: push na `develop`.
+#
+# Ordem: CI (o mesmo portão de qualidade dos PRs) → deploy do back-end no Render → prova
+# de que o commit publicado é o que está atendendo → postura do ambiente.
+#
+# **O que este workflow NÃO faz:** publicar o painel de homolog. Ele fica na Vercel, que
+# tem integração própria com o git — aponte a *Production Branch* do projeto para
+# `develop` (uma vez só) e ela passa a seguir esta mesma branch. Duplicar isso aqui exigiria
+# guardar um token da Vercel no repositório sem ganhar nada.
+#
+# Pré-requisitos (ver `docs/pipelines.md`):
+#   • serviço do Render apontado para a branch `develop`;
+#   • secret `RENDER_DEPLOY_HOOK_URL` (Render → serviço → Settings → Deploy Hook);
+#   • variável `HOMOLOG_BASE_URL` (ex.: https://ti-escolar.onrender.com).
+# Sem o secret, a esteira roda o CI, avisa e **não** publica — em vez de falhar por um
+# motivo que não é de código.
+
+on:
+  push:
+    branches: [develop]
+  # Permite republicar o head da `develop` sem precisar de um commit novo.
+  workflow_dispatch:
+
+# Deploy não se cancela pela metade: um `cancel-in-progress` aqui poderia matar a esteira
+# entre a migration e a troca do processo. Pushes seguidos entram na fila.
+concurrency:
+  group: deploy-homolog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  qualidade:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publicar:
+    name: Back-end → Render
+    needs: qualidade
+    runs-on: ubuntu-latest
+    # Ambiente do GitHub: dá o histórico de deploys na aba Environments e um lugar para
+    # pendurar regras (revisor obrigatório, janela de horário) sem mexer no YAML.
+    environment:
+      name: homolog
+      url: ${{ vars.HOMOLOG_BASE_URL }}
+    outputs:
+      publicado: ${{ steps.disparo.outputs.publicado }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dispara o deploy no Render
+        id: disparo
+        shell: bash
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "publicado=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::RENDER_DEPLOY_HOOK_URL ausente — deploy do homolog ignorado."
+            {
+              echo "### ⚠️ Homolog não foi publicado"
+              echo
+              echo "O secret \`RENDER_DEPLOY_HOOK_URL\` não está cadastrado, então o"
+              echo "back-end de homologação continua na versão anterior."
+              echo "Receita em \`docs/pipelines.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # `?ref=<sha>` fixa o commit: sem ele o hook publica o head da branch configurada
+          # no painel, que pode já ter andado — e a esteira acabaria jurando ter publicado
+          # um commit diferente do que testou.
+          echo "Disparando deploy de ${GITHUB_SHA:0:12}…"
+          curl -fsS -X POST "${HOOK}?ref=${GITHUB_SHA}" -o resposta.json -w '%{http_code}\n'
+          cat resposta.json || true
+          echo "publicado=true" >> "$GITHUB_OUTPUT"
+
+      # O Render leva alguns minutos para construir e trocar o processo. Este passo é o que
+      # distingue "publiquei" de "achei que publiquei": ele espera o /health ecoar ESTE
+      # commit (ver scripts/aguarda_deploy.sh).
+      - name: Espera o commit entrar no ar
+        if: steps.disparo.outputs.publicado == 'true'
+        shell: bash
+        env:
+          BASE_URL: ${{ vars.HOMOLOG_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "::warning::HOMOLOG_BASE_URL não definida — não dá para confirmar o deploy."
+            exit 0
+          fi
+          # 60 × 15s = 15 min: o plano gratuito do Render constrói devagar e ainda pode
+          # estar dormindo quando o deploy começa.
+          codigo=0
+          scripts/aguarda_deploy.sh "$BASE_URL" "$GITHUB_SHA" 60 15 || codigo=$?
+          # 2 = o ambiente responde mas não sabe dizer a versão (imagem anterior a este
+          # mecanismo). Em homolog isso avisa; não reprova.
+          if [ "$codigo" = "2" ]; then exit 0; fi
+          exit "$codigo"
+
+      - name: Confere a prontidão (banco)
+        if: steps.disparo.outputs.publicado == 'true'
+        shell: bash
+        env:
+          BASE_URL: ${{ vars.HOMOLOG_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then exit 0; fi
+          # /health é liveness e não toca no banco de propósito; quem prova que a aplicação
+          # consegue ATENDER é /health/pronto.
+          corpo=$(curl -fsS --max-time 20 "${BASE_URL%/}/health/pronto")
+          echo "$corpo"
+          [ "$(printf '%s' "$corpo" | jq -r .status)" = "ok" ]
+
+  postura:
+    name: Postura
+    needs: publicar
+    uses: ./.github/workflows/postura.yml
+    with:
+      ambiente: homolog
+      base_url: ${{ vars.HOMOLOG_BASE_URL }}
+      # Homolog relata e não reprova: é o ambiente onde a configuração ainda está sendo
+      # ajustada, e travar a esteira aqui só ensinaria a ignorar o vermelho.
+      estrito: false

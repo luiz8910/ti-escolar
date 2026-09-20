@@ -58,6 +58,22 @@ arquivo passa a pertencer à escola, ligado à conversa que o originou.
   **todo download auditado** (`documento.baixar`, §13); e a **política de privacidade**
   (`site/privacidade/`) declarando a categoria e o prazo. A medida `retencao_documentos`
   entra no painel §14 e acusa `ATENCAO` se o prazo for 0.
+- **Descartar apaga os bytes na hora** (desde 30/ago/2026). Antes disso o descarte só
+  trocava o status: a foto de "bom dia", a imagem tremida e o documento ilegível ficavam
+  guardados o ano inteiro do prazo. Se a escola já decidiu que aquilo não tem finalidade,
+  o tratamento termina ali. Sobrevive uma **linha reduzida** — telefone, data e o fato de
+  ter sido descartado —, porque é dela que sai a sugestão de bloqueio (§6k.2); some tudo o
+  mais: nome do arquivo, legenda, aluno vinculado, categoria. O registro reduzido expira em
+  `RETENCAO_DESCARTE_DIAS` (30), que cobre com folga a janela de 7 dias do anti-spam.
+  Para o registro que não deveria existir, `DELETE /api/admin/documentos/{id}` apaga o
+  arquivo e **marca a linha** com `deleted_at`, reduzida como no descarte: ela some de toda
+  leitura do painel, mas a dedupe do webhook ainda a enxerga (a reentrega não recria o
+  documento) e o expurgo a apaga em `RETENCAO_DESCARTE_DIAS`. Tirar um pedido da fila de
+  impressão segue a mesma regra — arquivo apagado, linha marcada, fora da fila e da cota.
+- **Varredura de órfãos** (`VarrerArquivosOrfaos`), que roda junto do `POST /expurgar`:
+  apaga bytes sem dono com mais de 24 h. Existe porque gravar o arquivo e commitar o
+  metadado deixam de ser a mesma transação quando o storage sai do banco — e porque a fila
+  de impressão passou anos apagando a linha sem apagar o arquivo.
 - **Cobertura:** `tests/test_documentos_recebidos.py` (25 testes: allowlist, teto, dedupe,
   isolamento entre escolas, download de arquivo já expurgado, expurgo tolerante a falha,
   envelope de mídia do webhook, áudio ignorado, texto intacto).
