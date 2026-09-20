@@ -19,6 +19,22 @@
 
 ---
 
+## 2026-09-18 — os usuários IAM do S3, por CloudFormation
+
+- **Andou?** não — nenhum fluxo do beta mudou de estado; caiu um bloqueio que estava no §2
+  desde 29/ago.
+- **Rótulo:** `infra`.
+- **Próxima ação:** mergear esta branch e o PR `develop` → `main`, publicar a produção
+  (`fly deploy`, porque a esteira pula o deploy sem `FLY_API_TOKEN`) e **só então** colar as
+  envs do S3 ([`docs/pendencias-externas.md`](docs/pendencias-externas.md) §2). Depois,
+  escolher **um** fluxo do corte do beta.
+- **Precisa de deploy?** produção — é ele que põe o adaptador do S3 no ar.
+- Entrou: `infra/aws/s3-usuarios-iam.yaml` (uma stack por ambiente) e a §2 reescrita. As
+  chaves foram para `~/.config/ti-escolar/segredos/` (0600), nunca para o chat nem para um
+  Output de stack. Testado com a chave real: cada usuário escreve, lê, lista e apaga só no
+  bucket do seu ambiente. Achado da sessão: o §2 dizia "adaptador escrito e testado" e ele
+  **não estava na `develop`** — de novo o padrão de 17/ago.
+
 ## 2026-09-16 — o adaptador do S3 saiu da branch e casou com a porta nova
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; o que saiu do lugar foi um bloqueio
