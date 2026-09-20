@@ -158,233 +158,257 @@ Resources:
           Value: agente
         - Key: operador
           Value: claude-code
-      Policies:
-        - PolicyName: ti-escolar-agente-permite
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              # Ler a configuracao dos dois: e o que faz diagnostico ser possivel sem
-              # permissao de escrita. ARN sem /* - e permissao de bucket, nao de objeto.
-              - Sid: LerAConfiguracaoDosDoisBuckets
-                Effect: Allow
-                Action:
-                  - s3:ListBucket
-                  - s3:ListBucketVersions
-                  - s3:ListBucketMultipartUploads
-                  - s3:GetBucketLocation
-                  - s3:GetBucketPolicy
-                  - s3:GetBucketPublicAccessBlock
-                  - s3:GetBucketTagging
-                  - s3:GetBucketVersioning
-                  - s3:GetEncryptionConfiguration
-                  - s3:GetLifecycleConfiguration
-                Resource:
-                  - !Sub arn:aws:s3:::${BucketProd}
-                  - !Sub arn:aws:s3:::${BucketHomolog}
 
-              # Escrever configuracao, so no homolog. Negar o objeto e deixar o lifecycle e a
-              # policy abertos nao protege nada: uma regra de expiracao de 1 dia apaga o
-              # acervo da producao sem tocar num unico GetObject, e PutBucketPublicAccessBlock
-              # desfaz o bloqueio publico do §2. O caminho indireto e o caminho.
-              - Sid: ConfigurarSoOBucketDeHomolog
-                Effect: Allow
-                Action:
-                  - s3:CreateBucket
-                  - s3:PutBucketPolicy
-                  - s3:PutBucketPublicAccessBlock
-                  - s3:PutBucketTagging
-                  - s3:PutBucketVersioning
-                  - s3:PutEncryptionConfiguration
-                  - s3:PutLifecycleConfiguration
-                Resource: !Sub arn:aws:s3:::${BucketHomolog}
+  # ---------------------------------------------------------------------------
+  # As duas politicas do agente sao gerenciadas, e nao em linha, por um limite duro:
+  # a soma das politicas em linha de um usuario IAM cabe em 2048 bytes, e estas passam
+  # disso. Nao e cota que se peca para aumentar. Politica gerenciada leva 6144 caracteres
+  # cada, e de quebra aparece com nome proprio no console e no CloudTrail.
+  #
+  # O vinculo vem daqui (Users:), e nao de um ManagedPolicyArns la em cima: a politica ja
+  # referencia o usuario, e referenciar de volta fecharia um ciclo que o CloudFormation
+  # recusa.
+  # ---------------------------------------------------------------------------
+  PoliticaAgentePermite:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: ti-escolar-agente-permite
+      Path: /ti-escolar/
+      Description: O que o agente pode na conta - S3 dos buckets do projeto, CloudFormation das pilhas ti-escolar-*, custo.
+      Users:
+        - !Ref Agente
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Ler a configuracao dos dois: e o que faz diagnostico ser possivel sem
+          # permissao de escrita. ARN sem /* - e permissao de bucket, nao de objeto.
+          - Sid: LerAConfiguracaoDosDoisBuckets
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:ListBucketVersions
+              - s3:ListBucketMultipartUploads
+              - s3:GetBucketLocation
+              - s3:GetBucketPolicy
+              - s3:GetBucketPublicAccessBlock
+              - s3:GetBucketTagging
+              - s3:GetBucketVersioning
+              - s3:GetEncryptionConfiguration
+              - s3:GetLifecycleConfiguration
+            Resource:
+              - !Sub arn:aws:s3:::${BucketProd}
+              - !Sub arn:aws:s3:::${BucketHomolog}
 
-              # Bytes: so no homolog. O que o agente precisa provar (o adaptador sobe, grava,
-              # le, apaga) se prova em homolog; producao guarda atestado e laudo de crianca.
-              - Sid: ObjetosSoDoHomolog
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:DeleteObject
-                  - s3:AbortMultipartUpload
-                  - s3:ListMultipartUploadParts
-                Resource: !Sub arn:aws:s3:::${BucketHomolog}/*
+          # Escrever configuracao, so no homolog. Negar o objeto e deixar o lifecycle e a
+          # policy abertos nao protege nada: uma regra de expiracao de 1 dia apaga o
+          # acervo da producao sem tocar num unico GetObject, e PutBucketPublicAccessBlock
+          # desfaz o bloqueio publico do §2. O caminho indireto e o caminho.
+          - Sid: ConfigurarSoOBucketDeHomolog
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:PutBucketPolicy
+              - s3:PutBucketPublicAccessBlock
+              - s3:PutBucketTagging
+              - s3:PutBucketVersioning
+              - s3:PutEncryptionConfiguration
+              - s3:PutLifecycleConfiguration
+            Resource: !Sub arn:aws:s3:::${BucketHomolog}
 
-              - Sid: ChaveDeDadosDoKmsPeloS3
-                Effect: Allow
-                Action:
-                  - kms:GenerateDataKey
-                  - kms:Decrypt
-                Resource: "*"
-                Condition:
-                  StringEquals:
-                    kms:ViaService: !Sub s3.${AWS::Region}.amazonaws.com
+          # Bytes: so no homolog. O que o agente precisa provar (o adaptador sobe, grava,
+          # le, apaga) se prova em homolog; producao guarda atestado e laudo de crianca.
+          - Sid: ObjetosSoDoHomolog
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+            Resource: !Sub arn:aws:s3:::${BucketHomolog}/*
 
-              # As pilhas do projeto, e so elas. Nome fora de ti-escolar-* da AccessDenied.
-              - Sid: PilhasDoProjeto
-                Effect: Allow
-                Action:
-                  - cloudformation:CreateStack
-                  - cloudformation:UpdateStack
-                  - cloudformation:DeleteStack
-                  - cloudformation:CreateChangeSet
-                  - cloudformation:DeleteChangeSet
-                  - cloudformation:ExecuteChangeSet
-                  - cloudformation:Describe*
-                  - cloudformation:Get*
-                  - cloudformation:List*
-                  - cloudformation:DetectStackDrift
-                  - cloudformation:DetectStackResourceDrift
-                  - cloudformation:TagResource
-                  - cloudformation:UntagResource
-                Resource:
-                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ti-escolar-*/*
-                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/ti-escolar-*/*
+          - Sid: ChaveDeDadosDoKmsPeloS3
+            Effect: Allow
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: "*"
+            Condition:
+              StringEquals:
+                kms:ViaService: !Sub s3.${AWS::Region}.amazonaws.com
 
-              # ValidateTemplate e ListStacks nao tem recurso: ou "*", ou nao existem.
-              - Sid: CloudFormationSemRecurso
-                Effect: Allow
-                Action:
-                  - cloudformation:ValidateTemplate
-                  - cloudformation:ListStacks
-                  - cloudformation:DescribeStackDriftDetectionStatus
-                Resource: "*"
+          # As pilhas do projeto, e so elas. Nome fora de ti-escolar-* da AccessDenied.
+          - Sid: PilhasDoProjeto
+            Effect: Allow
+            Action:
+              - cloudformation:CreateStack
+              - cloudformation:UpdateStack
+              - cloudformation:DeleteStack
+              - cloudformation:CreateChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:Describe*
+              - cloudformation:Get*
+              - cloudformation:List*
+              - cloudformation:DetectStackDrift
+              - cloudformation:DetectStackResourceDrift
+              - cloudformation:TagResource
+              - cloudformation:UntagResource
+            Resource:
+              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ti-escolar-*/*
+              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/ti-escolar-*/*
 
-              # O habito de olhar custo (o cron fly-gasto) precisa valer para a AWS tambem.
-              # Nao basta esta permissao: enquanto "IAM user and role access to Billing
-              # information" estiver desligado nas preferencias de cobranca (so o raiz liga),
-              # isso devolve AccessDenied.
-              - Sid: OlharOCusto
-                Effect: Allow
-                Action:
-                  - ce:Get*
-                  - ce:Describe*
-                  - ce:List*
-                  - budgets:ViewBudget
-                  - budgets:Describe*
-                  - cur:DescribeReportDefinitions
-                Resource: "*"
+          # ValidateTemplate e ListStacks nao tem recurso: ou "*", ou nao existem.
+          - Sid: CloudFormationSemRecurso
+            Effect: Allow
+            Action:
+              - cloudformation:ValidateTemplate
+              - cloudformation:ListStacks
+              - cloudformation:DescribeStackDriftDetectionStatus
+            Resource: "*"
 
-        - PolicyName: ti-escolar-agente-nega
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              # Documento de menor, §6k. Fecha inclusive o que o ViewOnlyAccess pudesse
-              # abrir: Deny vence qualquer Allow, gerenciado ou nao.
-              - Sid: NuncaOsBytesForaDoHomolog
-                Effect: Deny
-                Action:
-                  - s3:GetObject*
-                  - s3:SelectObjectContent
-                  - s3:RestoreObject
-                NotResource: !Sub arn:aws:s3:::${BucketHomolog}/*
+          # O habito de olhar custo (o cron fly-gasto) precisa valer para a AWS tambem.
+          # Nao basta esta permissao: enquanto "IAM user and role access to Billing
+          # information" estiver desligado nas preferencias de cobranca (so o raiz liga),
+          # isso devolve AccessDenied.
+          - Sid: OlharOCusto
+            Effect: Allow
+            Action:
+              - ce:Get*
+              - ce:Describe*
+              - ce:List*
+              - budgets:ViewBudget
+              - budgets:Describe*
+              - cur:DescribeReportDefinitions
+            Resource: "*"
 
-              # O bucket de producao inteiro e so de leitura para o agente - objeto e
-              # configuracao. Curinga, e nao lista fechada, de proposito: acao nova de
-              # escrita que a AWS invente amanha ja nasce negada aqui. Sem este bloco, negar
-              # o byte e teatro: sobra apagar por lifecycle e expor por policy.
-              - Sid: ProducaoNuncaMudaPelaMaoDoAgente
-                Effect: Deny
-                Action:
-                  - s3:Put*
-                  - s3:Delete*
-                  - s3:Create*
-                  - s3:Replicate*
-                Resource:
-                  - !Sub arn:aws:s3:::${BucketProd}
-                  - !Sub arn:aws:s3:::${BucketProd}/*
+  PoliticaAgenteNega:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: ti-escolar-agente-nega
+      Path: /ti-escolar/
+      Description: Os limites do agente. Deny vence Allow, inclusive o de politica gerenciada da AWS.
+      Users:
+        - !Ref Agente
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Documento de menor, §6k. Fecha inclusive o que o ViewOnlyAccess pudesse
+          # abrir: Deny vence qualquer Allow, gerenciado ou nao.
+          - Sid: NuncaOsBytesForaDoHomolog
+            Effect: Deny
+            Action:
+              - s3:GetObject*
+              - s3:SelectObjectContent
+              - s3:RestoreObject
+            NotResource: !Sub arn:aws:s3:::${BucketHomolog}/*
 
-              # Sem isto o recorte acima e enfeite: quem cria usuario, politica ou role, ou
-              # passa role para um servico de computacao, se torna admin em dois passos.
-              # As oito primeiras sao exatamente as acoes de escalada por manipulacao direta
-              # de politica; iam:PassRole com Resource "*" e a nona porta.
-              - Sid: NuncaMexerEmIdentidade
-                Effect: Deny
-                Action:
-                  - iam:PutUserPolicy
-                  - iam:PutRolePolicy
-                  - iam:PutGroupPolicy
-                  - iam:CreatePolicy
-                  - iam:CreatePolicyVersion
-                  - iam:AttachUserPolicy
-                  - iam:AttachRolePolicy
-                  - iam:AttachGroupPolicy
-                  - iam:SetDefaultPolicyVersion
-                  - iam:CreateUser
-                  - iam:DeleteUser
-                  - iam:CreateRole
-                  - iam:UpdateAssumeRolePolicy
-                  - iam:CreateAccessKey
-                  - iam:UpdateAccessKey
-                  - iam:CreateLoginProfile
-                  - iam:UpdateLoginProfile
-                  - iam:CreateServiceLinkedRole
-                  - iam:DeleteUserPermissionsBoundary
-                  - iam:DeleteRolePermissionsBoundary
-                  - iam:PassRole
-                  - sts:AssumeRole
-                Resource: "*"
+          # O bucket de producao inteiro e so de leitura para o agente - objeto e
+          # configuracao. Curinga, e nao lista fechada, de proposito: acao nova de
+          # escrita que a AWS invente amanha ja nasce negada aqui. Sem este bloco, negar
+          # o byte e teatro: sobra apagar por lifecycle e expor por policy.
+          - Sid: ProducaoNuncaMudaPelaMaoDoAgente
+            Effect: Deny
+            Action:
+              - s3:Put*
+              - s3:Delete*
+              - s3:Create*
+              - s3:Replicate*
+            Resource:
+              - !Sub arn:aws:s3:::${BucketProd}
+              - !Sub arn:aws:s3:::${BucketProd}/*
 
-              # A pilha que segura as duas identidades. O `iam:DeleteUser` negado acima ja
-              # faria o delete morrer no meio, mas morrer no meio deixa a pilha em
-              # DELETE_FAILED - e depender de um AccessDenied la na frente e fragil demais
-              # para a identidade que existe justamente para recuperar a conta. UpdateStack
-              # entra junto: o agente nao edita a propria permissao. `AWS::StackName` resolve
-              # no deploy, entao renomear a pilha nao fura a protecao.
-              - Sid: NuncaAPropriaPilha
-                Effect: Deny
-                Action:
-                  - cloudformation:DeleteStack
-                  - cloudformation:UpdateStack
-                  - cloudformation:CreateChangeSet
-                  - cloudformation:ExecuteChangeSet
-                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
+          # Sem isto o recorte acima e enfeite: quem cria usuario, politica ou role, ou
+          # passa role para um servico de computacao, se torna admin em dois passos.
+          # As oito primeiras sao exatamente as acoes de escalada por manipulacao direta
+          # de politica; iam:PassRole com Resource "*" e a nona porta.
+          - Sid: NuncaMexerEmIdentidade
+            Effect: Deny
+            Action:
+              - iam:PutUserPolicy
+              - iam:PutRolePolicy
+              - iam:PutGroupPolicy
+              - iam:CreatePolicy
+              - iam:CreatePolicyVersion
+              - iam:AttachUserPolicy
+              - iam:AttachRolePolicy
+              - iam:AttachGroupPolicy
+              - iam:SetDefaultPolicyVersion
+              - iam:CreateUser
+              - iam:DeleteUser
+              - iam:CreateRole
+              - iam:UpdateAssumeRolePolicy
+              - iam:CreateAccessKey
+              - iam:UpdateAccessKey
+              - iam:CreateLoginProfile
+              - iam:UpdateLoginProfile
+              - iam:CreateServiceLinkedRole
+              - iam:DeleteUserPermissionsBoundary
+              - iam:DeleteRolePermissionsBoundary
+              - iam:PassRole
+              - sts:AssumeRole
+            Resource: "*"
 
-              # O que nao se desfaz: bucket inteiro, trilha de auditoria, chave do KMS,
-              # fechamento de conta. Nada disso e trabalho de agente.
-              - Sid: NuncaOIrreversivel
-                Effect: Deny
-                Action:
-                  - s3:DeleteBucket
-                  - s3:DeleteBucketPolicy
-                  - s3:PutBucketAcl
-                  - s3:PutObjectAcl
-                  - cloudtrail:StopLogging
-                  - cloudtrail:DeleteTrail
-                  - cloudtrail:UpdateTrail
-                  - cloudtrail:PutEventSelectors
-                  - kms:ScheduleKeyDeletion
-                  - kms:DisableKey
-                  - kms:PutKeyPolicy
-                  - account:*
-                  - organizations:*
-                  - aws-portal:Modify*
-                Resource: "*"
+          # A pilha que segura as duas identidades. O `iam:DeleteUser` negado acima ja
+          # faria o delete morrer no meio, mas morrer no meio deixa a pilha em
+          # DELETE_FAILED - e depender de um AccessDenied la na frente e fragil demais
+          # para a identidade que existe justamente para recuperar a conta. UpdateStack
+          # entra junto: o agente nao edita a propria permissao. `AWS::StackName` resolve
+          # no deploy, entao renomear a pilha nao fura a protecao.
+          - Sid: NuncaAPropriaPilha
+            Effect: Deny
+            Action:
+              - cloudformation:DeleteStack
+              - cloudformation:UpdateStack
+              - cloudformation:CreateChangeSet
+              - cloudformation:ExecuteChangeSet
+            Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
 
-              # A conta vive em sa-east-1. Recurso ligado por engano em outra regiao e o
-              # classico: ninguem olha, e a fatura conta depois. us-east-1 fica de fora do
-              # Deny porque servico global assina de la. NotAction lista o que e global.
-              - Sid: ForaDasRegioesDoProjeto
-                Effect: Deny
-                NotAction:
-                  - iam:*
-                  - sts:*
-                  - ce:*
-                  - cur:*
-                  - budgets:*
-                  - account:*
-                  - organizations:*
-                  - support:*
-                  - health:*
-                  - cloudfront:*
-                  - route53:*
-                  - s3:ListAllMyBuckets
-                Resource: "*"
-                Condition:
-                  StringNotEquals:
-                    aws:RequestedRegion:
-                      - sa-east-1
-                      - us-east-1
+          # O que nao se desfaz: bucket inteiro, trilha de auditoria, chave do KMS,
+          # fechamento de conta. Nada disso e trabalho de agente.
+          - Sid: NuncaOIrreversivel
+            Effect: Deny
+            Action:
+              - s3:DeleteBucket
+              - s3:DeleteBucketPolicy
+              - s3:PutBucketAcl
+              - s3:PutObjectAcl
+              - cloudtrail:StopLogging
+              - cloudtrail:DeleteTrail
+              - cloudtrail:UpdateTrail
+              - cloudtrail:PutEventSelectors
+              - kms:ScheduleKeyDeletion
+              - kms:DisableKey
+              - kms:PutKeyPolicy
+              - account:*
+              - organizations:*
+              - aws-portal:Modify*
+            Resource: "*"
+
+          # A conta vive em sa-east-1. Recurso ligado por engano em outra regiao e o
+          # classico: ninguem olha, e a fatura conta depois. us-east-1 fica de fora do
+          # Deny porque servico global assina de la. NotAction lista o que e global.
+          - Sid: ForaDasRegioesDoProjeto
+            Effect: Deny
+            NotAction:
+              - iam:*
+              - sts:*
+              - ce:*
+              - cur:*
+              - budgets:*
+              - account:*
+              - organizations:*
+              - support:*
+              - health:*
+              - cloudfront:*
+              - route53:*
+              - s3:ListAllMyBuckets
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:RequestedRegion:
+                  - sa-east-1
+                  - us-east-1
 
 Outputs:
   PessoaArn:
