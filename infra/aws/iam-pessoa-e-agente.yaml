@@ -54,10 +54,14 @@ Parameters:
   BucketProd:
     Type: String
     Default: ti-escolar-190446415519-sa-east-1-an
+    AllowedValues:
+      - ti-escolar-190446415519-sa-east-1-an
     Description: Bucket de producao. O agente configura, mas nao le nem escreve objeto.
   BucketHomolog:
     Type: String
     Default: ti-escolar-homolog-190446415519-sa-east-1-an
+    AllowedValues:
+      - ti-escolar-homolog-190446415519-sa-east-1-an
     Description: Bucket de homolog. Aqui o agente mexe nos objetos a vontade.
 
 Resources:
