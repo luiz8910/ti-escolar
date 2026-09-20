@@ -46,7 +46,9 @@ services:
   # Foi a falta disso que deixou o adaptador de object storage sem sair do papel por meses
   # (§0.6 do plano de 10/08). Console em http://localhost:9001 (minioadmin/minioadmin).
   minio:
-    image: minio/minio
+    # quay.io e tag fixa: em 20/set/2026 o Docker Hub passou a recusar `minio/minio`
+    # (`pull access denied`), e o CI foi junto. Mesma imagem do `ci.yml`.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin

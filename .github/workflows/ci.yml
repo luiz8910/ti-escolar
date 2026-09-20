@@ -44,21 +44,11 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      # S3 de verdade para o adaptador (§0.6 do plano de 10/08). Sem isto, os testes de
-      # `S3ArquivoStorage` pulam sozinhos e o adaptador chegaria a produção sem nunca ter
-      # escrito um byte — que é exatamente o impasse que o deixou anos no papel.
-      minio:
-        image: minio/minio:edge-cicd
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -fsS http://localhost:9000/minio/health/live"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+      # O MinIO **não** é service container: ele sobe num passo, logo abaixo. `services:`
+      # não deixa passar comando à imagem, e a imagem oficial do MinIO precisa de
+      # `server /data`. Era por isso que aqui havia `minio/minio:edge-cicd`, a tag que já
+      # subia o servidor sozinha — e em 20/set/2026 o Docker Hub passou a recusá-la
+      # (`pull access denied for minio/minio`), deixando **todo PR vermelho**.
 
     env:
       DATABASE_URL: postgresql+psycopg://tiescolar:tiescolar@localhost:5432/tiescolar
@@ -110,6 +100,26 @@ jobs:
           SEED_DEMO: "true"
           APP_ENV: development
         run: python -m app.seed
+
+      # S3 de verdade para o adaptador (§0.6 do plano de 10/08). Sem isto, os testes de
+      # `S3ArquivoStorage` pulam sozinhos e o adaptador chegaria a produção sem nunca ter
+      # escrito um byte — que é exatamente o impasse que o deixou anos no papel.
+      # Imagem do quay.io, que é onde a MinIO publica, e **tag fixa**: `latest` quebraria o
+      # CI num dia qualquer, sem commit nenhum, que é a falha que se está consertando aqui.
+      - name: Sobe o MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              echo "MinIO pronto"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MinIO não respondeu ao health em 60s"
+          docker logs minio
+          exit 1
 
       - name: Cria o bucket do MinIO
         run: |

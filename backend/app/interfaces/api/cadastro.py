@@ -73,7 +73,7 @@ from app.domain.entities import (
     Turno,
     Usuario,
 )
-from app.domain.ports import LLMProvider, MessageChannel
+from app.domain.ports import ArquivoStorage, LLMProvider, MessageChannel
 from app.infrastructure.db.repositories_admin import (
     SqlAlunoRepository,
     SqlContatoRepository,
@@ -83,15 +83,14 @@ from app.infrastructure.db.repositories_admin import (
 from app.interfaces.api.admin import _exige_acesso_tenant, usuario_autenticado
 from app.interfaces.deps import (
     get_aluno_repo,
+    get_arquivo_storage,
     get_canal,
     get_contato_repo,
     get_llm,
     get_professor_repo,
     get_sala_repo,
-    get_session,
 )
 from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
-from app.infrastructure.storage import PostgresArquivoStorage
 from app.interfaces.dto import (
     AlunosPaginaSaida,
     FotoAlunoEntrada,
@@ -703,7 +702,7 @@ async def definir_foto(
     payload: FotoAlunoEntrada,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-    session=Depends(get_session),
+    storage: ArquivoStorage = Depends(get_arquivo_storage),
 ) -> AlunoSaida:
     """Recebe a foto em base64.
 
@@ -718,7 +717,7 @@ async def definir_foto(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo inválido."
         ) from e
-    uc = DefinirFotoDoAluno(alunos=alunos, storage=PostgresArquivoStorage(session))
+    uc = DefinirFotoDoAluno(alunos=alunos, storage=storage)
     try:
         aluno = await uc.executar(
             tenant_id=payload.tenant_id,
@@ -737,7 +736,7 @@ async def obter_foto(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-    session=Depends(get_session),
+    storage: ArquivoStorage = Depends(get_arquivo_storage),
 ) -> Response:
     """Os bytes da foto. **Autenticado e escopado por tenant** — nunca URL pública.
 
@@ -745,9 +744,9 @@ async def obter_foto(
     `no-store` mantém a imagem fora do cache do navegador compartilhado da secretaria.
     """
     _exige_acesso_tenant(usuario, tenant_id)
-    arquivo = await ObterFotoDoAluno(
-        alunos=alunos, storage=PostgresArquivoStorage(session)
-    ).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+    arquivo = await ObterFotoDoAluno(alunos=alunos, storage=storage).executar(
+        tenant_id=tenant_id, aluno_id=aluno_id
+    )
     if arquivo is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Aluno sem foto"
@@ -765,13 +764,13 @@ async def remover_foto(
     tenant_id: UUID,
     usuario: Usuario = Depends(usuario_autenticado),
     alunos: SqlAlunoRepository = Depends(get_aluno_repo),
-    session=Depends(get_session),
+    storage: ArquivoStorage = Depends(get_arquivo_storage),
 ) -> AlunoSaida:
     _exige_acesso_tenant(usuario, tenant_id)
     try:
-        aluno = await RemoverFotoDoAluno(
-            alunos=alunos, storage=PostgresArquivoStorage(session)
-        ).executar(tenant_id=tenant_id, aluno_id=aluno_id)
+        aluno = await RemoverFotoDoAluno(alunos=alunos, storage=storage).executar(
+            tenant_id=tenant_id, aluno_id=aluno_id
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return _aluno_saida(aluno)
