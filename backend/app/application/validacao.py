@@ -23,11 +23,21 @@ def somente_digitos(bruto: str) -> str:
     return re.sub(r"\D", "", bruto or "")
 
 
+class TelefoneInvalido(ValueError):
+    """Telefone que não dá para levar a E.164 — erro de digitação, não "não encontrado"."""
+
+
 def normalizar_telefone(bruto: str) -> tuple[str, str]:
-    """Normaliza um telefone brasileiro para E.164. Retorna ``(e164, aviso)``.
+    """Normaliza um telefone para E.164. Retorna ``(e164, aviso)``.
 
     ``e164`` vazio quando não há telefone ou o formato não é reconhecível (com o motivo em
-    ``aviso``). Aceita números com ou sem DDI (55) e com 10/11 dígitos (DDD + número).
+    ``aviso``).
+
+    **Sem ``+``, o número é brasileiro:** DDD + número (10/11 dígitos) ganha o ``+55``, e
+    12/13 dígitos começando em 55 já trazem o DDI. É como a secretaria digita — "(15)
+    99753-6978" — e o E.164 é o que o webhook entrega, então é nele que a conversa casa.
+    **Com ``+``, o DDI foi informado** e é respeitado (8 a 15 dígitos): é a porta para o
+    número estrangeiro, que antes ganhava um 55 na frente e virava outro telefone.
 
     Devolve aviso em vez de levantar porque nasceu para a **importação em massa**, onde
     uma linha ruim não pode derrubar a planilha inteira. Quem valida um campo só —
@@ -36,11 +46,25 @@ def normalizar_telefone(bruto: str) -> tuple[str, str]:
     digitos = somente_digitos(bruto)
     if not digitos:
         return "", ""
-    if digitos.startswith("55") and len(digitos) in (12, 13):
+    if (bruto or "").strip().startswith("+"):
+        if 8 <= len(digitos) <= 15:
+            return "+" + digitos, ""
+    elif digitos.startswith("55") and len(digitos) in (12, 13):
         return "+" + digitos, ""
-    if len(digitos) in (10, 11):
+    elif len(digitos) in (10, 11):
         return "+55" + digitos, ""
     return "", f"Telefone em formato não reconhecido: {bruto.strip()}"
+
+
+def telefone_ou_erro(bruto: str, *, campo: str) -> str:
+    """``normalizar_telefone`` para quem valida um campo só: aviso vira ``TelefoneInvalido``."""
+    e164, aviso = normalizar_telefone(bruto)
+    if aviso:
+        raise TelefoneInvalido(
+            f"{campo} inválido: informe DDD + número (ex.: 15 99753-6978) ou, se for de "
+            "fora do Brasil, o número com + e o código do país (ex.: +14155238886)."
+        )
+    return e164
 
 
 def _digito_verificador(digitos: str, peso_inicial: int) -> int:

@@ -16,6 +16,7 @@ from datetime import datetime, time, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.application.validacao import telefone_ou_erro
 from app.application.paginacao import (
     POR_PAGINA_PADRAO,
     Pagina,
@@ -65,19 +66,16 @@ def slugify(texto: str) -> str:
 def normalizar_whatsapp(bruto: str) -> str:
     """Normaliza o número de WhatsApp para E.164 (``+<dígitos>``); "" quando vazio.
 
-    Aceita DDI internacional, então não força o do Brasil. Remove o prefixo ``whatsapp:``
-    e qualquer separador (espaços, traços, parênteses). Valida um formato E.164 plausível
-    (8 a 15 dígitos após o ``+``).
+    Mesma regra dos demais telefones (``normalizar_telefone``): sem ``+`` é número
+    brasileiro e ganha o 55; com ``+``, o DDI digitado vale. Aceita o prefixo
+    ``whatsapp:`` e qualquer separador (espaços, traços, parênteses).
     """
     bruto = (bruto or "").strip()
     if not bruto:
         return ""
     if bruto.startswith("whatsapp:"):
-        bruto = bruto.split(":", 1)[1]
-    digitos = re.sub(r"\D", "", bruto)
-    if not (8 <= len(digitos) <= 15):
-        raise ValueError("Número de WhatsApp inválido: informe no formato E.164 (ex.: +14155238886).")
-    return f"+{digitos}"
+        bruto = bruto.split(":", 1)[1].strip()
+    return telefone_ou_erro(bruto, campo="Número de WhatsApp")
 
 
 def normalizar_telefone_contato(bruto: str) -> str:
@@ -88,12 +86,7 @@ def normalizar_telefone_contato(bruto: str) -> str:
     """
     if not (bruto or "").strip():
         raise ValueError("O telefone de contato da escola é obrigatório.")
-    try:
-        return normalizar_whatsapp(bruto)
-    except ValueError as e:
-        raise ValueError(
-            "Telefone de contato inválido: informe no formato E.164 (ex.: +5511999998888)."
-        ) from e
+    return telefone_ou_erro(bruto, campo="Telefone de contato")
 
 
 def normalizar_meta_phone_number_id(bruto: str) -> str:

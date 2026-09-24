@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.application.use_cases import EnviarBroadcast, ResultadoBroadcast
-from app.application.validacao import normalizar_telefone
+from app.application.validacao import TelefoneInvalido, normalizar_telefone, telefone_ou_erro
 from app.application.validacao_template import placeholders_do_corpo
 from app.domain.entities import (
     Broadcast,
@@ -238,6 +238,12 @@ class AdicionarContatoAoGrupo:
         self._grupos = grupos
 
     async def executar(self, *, tenant_id: UUID, grupo_id: UUID, nome: str, telefone: str):
+        # O número é a chave do contato: gravado como digitado, "(15) 99999-0000" nunca
+        # casaria com o "+5515999990000" que o webhook entrega, e o mesmo pai entraria
+        # duas vezes no grupo com formatos diferentes.
+        telefone = telefone_ou_erro(telefone, campo="Telefone")
+        if not telefone:
+            raise TelefoneInvalido("Informe o telefone do contato.")
         return await self._grupos.adicionar_contato(
             tenant_id=tenant_id, grupo_id=grupo_id, nome=nome, telefone=telefone
         )

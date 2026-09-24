@@ -13,6 +13,7 @@ from app.application.admin_use_cases import (
     EnviarBroadcastParaGrupo,
 )
 from app.application.use_cases import EnviarBroadcast
+from app.application.validacao import TelefoneInvalido
 from app.domain.entities import (
     CategoriaTemplate,
     MessageTemplate,
@@ -94,6 +95,29 @@ def test_token_jwt_rejeita_assinatura_invalida():
 def test_token_jwt_rejeita_expirado():
     token = criar_token({"email": "a@t.test"}, segredo="segredo", expira_em_segundos=-1)
     assert decodificar_token(token, segredo="segredo") is None
+
+
+# --------------------------- contato no grupo ------------------------------ #
+async def test_contato_do_grupo_e_gravado_em_e164_com_55_implicito():
+    grupos = FakeGrupoRepo()
+    grupo = await CriarGrupo(grupos=grupos).executar(tenant_id=TENANT, nome="Turma 5A")
+    add = AdicionarContatoAoGrupo(grupos=grupos)
+
+    contato = await add.executar(
+        tenant_id=TENANT, grupo_id=grupo.id, nome="Maria", telefone="(15) 99753-6978"
+    )
+
+    assert contato.telefone == "+5515997536978"
+
+
+async def test_contato_do_grupo_com_telefone_invalido_e_recusado():
+    grupos = FakeGrupoRepo()
+    grupo = await CriarGrupo(grupos=grupos).executar(tenant_id=TENANT, nome="Turma 5A")
+
+    with pytest.raises(TelefoneInvalido):
+        await AdicionarContatoAoGrupo(grupos=grupos).executar(
+            tenant_id=TENANT, grupo_id=grupo.id, nome="Maria", telefone="123"
+        )
 
 
 # --------------------------- grupo -> broadcast ---------------------------- #

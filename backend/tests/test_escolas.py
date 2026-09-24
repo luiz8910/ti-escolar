@@ -209,6 +209,9 @@ def test_normalizar_whatsapp():
     assert normalizar_whatsapp("  ") == ""
     assert normalizar_whatsapp("whatsapp:+1 (415) 523-8886") == "+14155238886"
     assert normalizar_whatsapp("+55 11 98888-7777") == "+5511988887777"
+    # Sem "+", o 55 é implícito.
+    assert normalizar_whatsapp("(15) 99753-6978") == "+5515997536978"
+    assert normalizar_whatsapp("whatsapp:15997536978") == "+5515997536978"
     with pytest.raises(ValueError, match="inválido"):
         normalizar_whatsapp("123")
 
@@ -346,6 +349,9 @@ def test_remetente_canal_prefere_o_id_da_meta():
 # --------------------------------------------------------------------------- #
 def test_normalizar_telefone_contato():
     assert normalizar_telefone_contato("+55 11 99999-0001") == "+5511999990001"
+    # O caso que motivou a regra: sem DDI, virava "+15987654321" (um número dos EUA).
+    assert normalizar_telefone_contato("(15) 98765-4321") == "+5515987654321"
+    assert normalizar_telefone_contato("+1 415 523 8886") == "+14155238886"
     with pytest.raises(ValueError, match="obrigatório"):
         normalizar_telefone_contato("")
     with pytest.raises(ValueError, match="obrigatório"):
