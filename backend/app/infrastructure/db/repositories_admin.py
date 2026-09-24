@@ -220,19 +220,22 @@ class SqlTenantRepository:
     async def listar_resumos(self) -> list[ResumoEscola]:
         tenants = await self.listar()
 
-        async def _contagem(coluna) -> dict[uuid.UUID, int]:
-            stmt = select(coluna, func.count()).group_by(coluna)
+        async def _contagem(coluna, *filtros) -> dict[uuid.UUID, int]:
+            stmt = select(coluna, func.count()).where(*filtros).group_by(coluna)
             return {tid: n for tid, n in (await self._s.execute(stmt)).all()}
 
         conversas = await _contagem(ConversaORM.tenant_id)
         contatos = await _contagem(ContatoORM.tenant_id)
         broadcasts = await _contagem(BroadcastORM.tenant_id)
+        # Mesmo critério da ficha (``metricas_uso``): só quem ainda consegue entrar.
+        usuarios = await _contagem(UsuarioORM.tenant_id, UsuarioORM.ativo.is_(True))
         return [
             ResumoEscola(
                 tenant=t,
                 total_conversas=conversas.get(t.id, 0),
                 total_contatos=contatos.get(t.id, 0),
                 total_broadcasts=broadcasts.get(t.id, 0),
+                total_usuarios=usuarios.get(t.id, 0),
             )
             for t in tenants
         ]

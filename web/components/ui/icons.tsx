@@ -165,3 +165,79 @@ export const PulseIcon = (p: IconProps) => (
     <path d="M3 12h4l2.5-7 5 14L17 12h4" />
   </svg>
 );
+
+export const SearchIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </svg>
+);
+
+export const CalendarIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <path d="M16 2v4M8 2v4M3 10h18" />
+  </svg>
+);
+
+/** Balão do WhatsApp — distinto do `ChatBubbleIcon`, que é a conversa genérica do painel. */
+export const WhatsAppIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <path d="M21 11.5a8.4 8.4 0 0 1-12.3 7.4L3 21l2.1-5.6A8.4 8.4 0 1 1 21 11.5z" />
+  </svg>
+);
+
+export const DotsIcon = ({ size = 18, ...rest }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}>
+    <circle cx="5" cy="12" r="1.8" />
+    <circle cx="12" cy="12" r="1.8" />
+    <circle cx="19" cy="12" r="1.8" />
+  </svg>
+);
+
+export const PencilIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+  </svg>
+);
+
+export const CardIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <rect x="2" y="5" width="20" height="14" rx="2" />
+    <path d="M2 10h20" />
+  </svg>
+);
+
+export const LockIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  </svg>
+);
+
+export const UnlockIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 7.5-2" />
+  </svg>
+);
+
+export const XCircleIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m15 9-6 6M9 9l6 6" />
+  </svg>
+);
+
+export const TrashIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+  </svg>
+);
+
+export const InfoIcon = (p: IconProps) => (
+  <svg {...base({ strokeWidth: 2, ...p })}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 16v-4M12 8h.01" />
+  </svg>
+);
