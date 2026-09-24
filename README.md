@@ -18,6 +18,7 @@ docker compose up --build
 
 - API: http://localhost:8000 (docs em `/docs`)
 - Painel: http://localhost:3000/admin
+- E-mails (Mailpit): http://localhost:8027 — todo e-mail que o backend manda cai aqui, nada sai para fora
 
 O backend, ao subir, aplica as migrations (Alembic) e executa o **seed** com uma escola de
 demonstração, FAQs e avisos indexados (RAG). Com `LLM_PROVIDER=fake` tudo funciona sem chaves de API.
