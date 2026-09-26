@@ -48,6 +48,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 
 from app.application.conhecimento_use_cases import IngerirDocumento
+from app.application.validacao import normalizar_telefone
 from app.bootstrap import CAMPOS_SENHA_DEMO, valor_default
 from app.config import Settings, get_settings
 from app.domain.entities import Papel, TipoConhecimento, Usuario
@@ -162,8 +163,11 @@ def normalizar_slug(bruto: str) -> str:
 
 
 def normalizar_e164(bruto: str) -> str:
-    digitos = "".join(c for c in (bruto or "") if c.isdigit())
-    return f"+{digitos}" if digitos else ""
+    """Mesma regra do painel (``normalizar_telefone``): sem ``+``, o número é brasileiro."""
+    e164, aviso = normalizar_telefone(bruto)
+    if aviso:
+        raise ProvisionamentoRecusado(aviso)
+    return e164
 
 
 def so_digitos(bruto: str) -> str:

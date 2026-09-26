@@ -24,6 +24,7 @@ from app.application.admin_use_cases import (
 )
 from app.application.auditoria_use_cases import ListarAuditoria, RegistrarAuditoria
 from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
+from app.application.validacao import TelefoneInvalido
 from app.application.use_cases import VerificarRecebimentoBroadcast
 from app.application.retomada_use_cases import RetomarBroadcastsPendentes
 from app.application.tenant_use_cases import (
@@ -491,6 +492,8 @@ async def adicionar_contato(
             nome=payload.nome,
             telefone=payload.telefone,
         )
+    except TelefoneInvalido as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return ContatoSaida(id=contato.id, nome=contato.nome, telefone=contato.telefone)

@@ -47,6 +47,12 @@
   `normalizar_telefone_contato`), mas **não roteia inbound**, **não é remetente do outbound** e
   **não exige unicidade** entre escolas (duas escolas podem compartilhá-lo). Migration
   `0011_tenant_telefone_contato`. Distinto de `whatsapp_numero` (o número operado pela plataforma).
+- **Telefone sem `+` é brasileiro.** Todo número digitado no painel (contato e WhatsApp da
+  escola, responsável, professor, usuário, contato de grupo, importação, `app.provisionar`)
+  passa por `normalizar_telefone`: DDD + número ganha o `+55`; com `+`, o DDI digitado vale
+  (é assim que entra número estrangeiro). Até 24/set/2026 o telefone da escola aceitava
+  qualquer sequência — "(15) 98765-4321" virava `+15987654321`, um número dos EUA — e o
+  contato de grupo era gravado como digitado, sem casar com o E.164 do webhook.
 - **Rotas** em `app/interfaces/api/admin.py` (guard `_exige_super_admin`): `/api/admin/escolas`
   (POST/GET), `/escolas/{tenant_id}` (GET/PUT/DELETE), `/escolas/{tenant_id}/conversas`,
   `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`. `EscolaEntrada`

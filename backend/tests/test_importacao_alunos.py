@@ -57,6 +57,18 @@ def test_normalizar_telefone():
     assert e164 == "" and "não reconhecido" in aviso
 
 
+def test_normalizar_telefone_sem_mais_e_brasileiro_com_mais_respeita_o_ddi():
+    # Sem "+": DDD + número ganha o 55 — inclusive o DDD 55 (RS), que não é confundido
+    # com o DDI porque tem só 10/11 dígitos.
+    assert normalizar_telefone("(15) 98765-4321") == ("+5515987654321", "")
+    assert normalizar_telefone("55 99999-8888") == ("+5555999998888", "")
+    assert normalizar_telefone("5515987654321") == ("+5515987654321", "")
+    # Com "+": o DDI digitado vale. Antes o +1 virava DDD 14 de São Paulo.
+    assert normalizar_telefone("+1 (415) 523-8886") == ("+14155238886", "")
+    e164, aviso = normalizar_telefone("+12")
+    assert e164 == "" and aviso
+
+
 def test_extrair_json_tolera_cercas_de_codigo():
     bruto = '```json\n{"alunos": [{"nome": "Ana", "serie": "5º A"}]}\n```'
     dados = _extrair_json_objeto(bruto)
