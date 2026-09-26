@@ -119,7 +119,8 @@ SUPER=$(curl -s -X POST $API/api/admin/login \
 - [ ] **3.16** **Ficha financeira** (detalhe da escola): dias de casa, MRR/ARR, receita acumulada,
       próxima renovação, uso (usuários/contatos/alunos/conversas/broadcasts) e health score.
 - [ ] **3.17** **"Avisar vencimentos"** (`POST /api/admin/licencas/notificar-vencimento`) devolve a
-      lista de escolas avisadas; com `EMAIL_PROVIDER=log` o e-mail aparece no log do backend.
+      lista de escolas avisadas; no docker-compose o e-mail aparece no Mailpit
+      (http://localhost:8027); fora dele, com `EMAIL_PROVIDER=log`, no log do backend.
 - [ ] **3.18** 🌐 Com `EMAIL_PROVIDER=resend` + chave válida, o e-mail chega de verdade.
 - [ ] **3.19** **Remover escola** apaga tudo em cascata (conversas, contatos, alunos, fichas,
       professores…) sem violar FK. Use uma escola de teste, **nunca a demo**.

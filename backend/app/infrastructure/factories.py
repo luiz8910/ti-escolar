@@ -211,7 +211,7 @@ def criar_gestor_de_numeros(settings: Settings) -> GestorDeNumeros:
 
 
 def criar_email_sender(settings: Settings) -> EmailSender:
-    """Escolhe o adaptador de e-mail por ``EMAIL_PROVIDER`` (``log`` | ``resend``).
+    """Escolhe o adaptador de e-mail por ``EMAIL_PROVIDER`` (``log`` | ``resend`` | ``smtp``).
 
     Sem chave configurada, cai no adaptador de log em vez de falhar: um deploy sem
     RESEND_API_KEY não deve derrubar a aplicação inteira por causa do aviso de licença —
@@ -222,6 +222,12 @@ def criar_email_sender(settings: Settings) -> EmailSender:
 
         return ResendEmailSender(
             remetente=settings.email_from, api_key=settings.resend_api_key
+        )
+    if settings.email_provider == "smtp" and settings.smtp_host:
+        from app.infrastructure.messaging.email import SmtpEmailSender
+
+        return SmtpEmailSender(
+            remetente=settings.email_from, host=settings.smtp_host, porta=settings.smtp_port
         )
     from app.infrastructure.messaging.email import LogEmailSender
 

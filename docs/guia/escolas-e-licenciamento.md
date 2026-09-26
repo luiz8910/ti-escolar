@@ -73,8 +73,9 @@
   para expirar" é `dias_para_expirar` (exposto em `LicencaSaida`).
 - **Aviso por e-mail:** `NotificarLicencasAVencer` avisa os `tenant_admin` das escolas com
   **plano anual** dentro da janela `LICENSE_WARNING_DAYS` (default 30) do vencimento. Porta
-  `EmailSender` no domínio; adaptadores `LogEmailSender` (mock/log) e **`ResendEmailSender`**
-  (envio real via API HTTP do resend.com), escolhidos por `EMAIL_PROVIDER`
+  `EmailSender` no domínio; adaptadores `LogEmailSender` (mock/log), **`ResendEmailSender`**
+  (envio real via API HTTP do resend.com) e `SmtpEmailSender` (SMTP — no docker-compose,
+  sempre apontado para o **Mailpit**, caixa em http://localhost:8027), escolhidos por `EMAIL_PROVIDER`
   (`app/infrastructure/messaging/email.py`, fábrica `criar_email_sender`). Com
   `EMAIL_PROVIDER=resend` e `RESEND_API_KEY` vazia, cai no log em vez de derrubar o deploy.
   Falha do provedor é registrada e engolida: o aviso percorre várias escolas e a recusa de uma

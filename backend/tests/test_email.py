@@ -12,7 +12,11 @@ import pytest
 
 from app.config import Settings
 from app.infrastructure.factories import criar_email_sender
-from app.infrastructure.messaging.email import LogEmailSender, ResendEmailSender
+from app.infrastructure.messaging.email import (
+    LogEmailSender,
+    ResendEmailSender,
+    SmtpEmailSender,
+)
 
 
 class TransporteFake(httpx.AsyncBaseTransport):
@@ -130,3 +134,65 @@ def test_provedor_resend_sem_chave_cai_no_log():
 
 def test_default_e_o_adaptador_de_log():
     assert isinstance(criar_email_sender(_settings()), LogEmailSender)
+
+
+def test_provedor_smtp_com_host_usa_o_adaptador_smtp():
+    sender = criar_email_sender(_settings(email_provider="smtp", smtp_host="mailpit"))
+    assert isinstance(sender, SmtpEmailSender)
+
+
+def test_provedor_smtp_sem_host_cai_no_log():
+    sender = criar_email_sender(_settings(email_provider="smtp", smtp_host=""))
+    assert isinstance(sender, LogEmailSender)
+
+
+# --------------------------------------------------------------------------- #
+# SMTP (Mailpit local)
+# --------------------------------------------------------------------------- #
+
+
+class SmtpFake:
+    """Substitui ``smtplib.SMTP``: guarda a conexão e as mensagens, sem rede."""
+
+    instancias: list["SmtpFake"] = []
+
+    def __init__(self, host: str, porta: int, timeout: float) -> None:
+        self.host, self.porta = host, porta
+        self.mensagens: list = []
+        SmtpFake.instancias.append(self)
+
+    def __enter__(self) -> "SmtpFake":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def send_message(self, mensagem) -> None:
+        self.mensagens.append(mensagem)
+
+
+@pytest.mark.asyncio
+async def test_smtp_entrega_remetente_destinatario_assunto_e_corpo(monkeypatch):
+    import smtplib
+
+    SmtpFake.instancias = []
+    monkeypatch.setattr(smtplib, "SMTP", SmtpFake)
+    sender = SmtpEmailSender(remetente="no-reply@tiescolar.test", host="mailpit", porta=1025)
+
+    await sender.enviar(destinatario="diretor@escola.br", assunto="Licença", corpo="Vence.")
+
+    [conexao] = SmtpFake.instancias
+    assert (conexao.host, conexao.porta) == ("mailpit", 1025)
+    [mensagem] = conexao.mensagens
+    assert mensagem["From"] == "no-reply@tiescolar.test"
+    assert mensagem["To"] == "diretor@escola.br"
+    assert mensagem["Subject"] == "Licença"
+    assert mensagem.get_content().strip() == "Vence."
+
+
+@pytest.mark.asyncio
+async def test_smtp_fora_do_ar_nao_derruba_quem_chamou():
+    """Porta fechada: o erro vai para o log e o lote de avisos segue."""
+    sender = SmtpEmailSender(remetente="a@b.c", host="127.0.0.1", porta=1, timeout_segundos=1)
+
+    await sender.enviar(destinatario="x@y.z", assunto="a", corpo="b")

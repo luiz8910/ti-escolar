@@ -1,19 +1,25 @@
 """Adaptadores de envio de e-mail (porta ``EmailSender``).
 
-Dois adaptadores, escolhidos por ``EMAIL_PROVIDER``:
+Três adaptadores, escolhidos por ``EMAIL_PROVIDER``:
 
 - ``LogEmailSender`` (``log``): registra a mensagem no logger. É o default em
   desenvolvimento — e era o único que existia, o que significava que o aviso de licença a
   vencer (§6e) rodava, o painel dizia "avisos enviados" e o e-mail **não saía de lugar
   nenhum**.
 - ``ResendEmailSender`` (``resend``): envia de verdade pela API do resend.com.
+- ``SmtpEmailSender`` (``smtp``): entrega a um servidor SMTP. Existe para o ambiente local:
+  o docker-compose sobe o **Mailpit**, que captura tudo e mostra numa caixa de entrada em
+  http://localhost:8027 — dá para ver o e-mail como ele sai, sem mandar nada para fora.
 
 Trocar de provedor é implementar a mesma porta; domínio e aplicação não mudam.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import smtplib
+from email.message import EmailMessage
 
 import httpx
 
@@ -108,3 +114,51 @@ class ResendEmailSender:
             logger.info("E-mail enviado para %s (resend id=%s)", destinatario, identificador)
         except httpx.HTTPError as erro:
             logger.error("Falha de rede ao enviar e-mail para %s: %s", destinatario, erro)
+
+
+class SmtpEmailSender:
+    """Envio por SMTP — em desenvolvimento, para o Mailpit do docker-compose.
+
+    Sem TLS e sem autenticação: o alvo é um servidor de captura na rede local do compose,
+    não um relay de verdade. Mesma regra do Resend: **falhar não derruba quem chamou** — o
+    erro vai para o log e o lote segue.
+
+    O ``smtplib`` é síncrono; roda numa thread para não travar o event loop.
+    """
+
+    def __init__(
+        self,
+        *,
+        remetente: str,
+        host: str,
+        porta: int = 1025,
+        timeout_segundos: float = 10.0,
+    ) -> None:
+        self._remetente = remetente
+        self._host = host
+        self._porta = porta
+        self._timeout = timeout_segundos
+
+    async def enviar(self, *, destinatario: str, assunto: str, corpo: str) -> None:
+        mensagem = EmailMessage()
+        mensagem["From"] = self._remetente
+        mensagem["To"] = destinatario
+        mensagem["Subject"] = assunto
+        mensagem.set_content(corpo)
+        try:
+            await asyncio.to_thread(self._entregar, mensagem)
+            logger.info(
+                "E-mail enviado para %s (smtp %s:%s)", destinatario, self._host, self._porta
+            )
+        except (OSError, smtplib.SMTPException) as erro:
+            logger.error(
+                "Falha ao enviar e-mail para %s via SMTP %s:%s: %s",
+                destinatario,
+                self._host,
+                self._porta,
+                erro,
+            )
+
+    def _entregar(self, mensagem: EmailMessage) -> None:
+        with smtplib.SMTP(self._host, self._porta, timeout=self._timeout) as smtp:
+            smtp.send_message(mensagem)
