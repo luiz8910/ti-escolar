@@ -102,3 +102,13 @@
   impressão não tem `expira_em`, então para ela o lifecycle é o **mecanismo**, não a rede.
 - **Precisa de deploy?** produção, quando entrar — a migration `0046_chave_impressao_120`
   alarga a coluna da fila de 64 para 120 caracteres.
+
+## 2026-09-23 — tela de Escolas no design novo (lista + painel lateral)
+
+- **Andou?** sim, localmente — lista com filtros/busca/menu "⋯", cadastro e edição no painel
+  lateral, e `total_usuarios` na listagem; verificado num compose isolado contra Postgres real.
+  Na branch `feat/admin-escolas-redesign`, sem commit.
+- **Rótulo:** —
+- **Próxima ação:** revisar e abrir o PR. Achado fora do escopo: `normalizar_telefone_contato`
+  grava "(15) 98765-4321" como `+15987654321` (não assume o DDI 55).
+- **Precisa de deploy?** sim, back-end e painel — sem migration.

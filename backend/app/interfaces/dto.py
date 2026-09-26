@@ -336,6 +336,7 @@ class EscolaResumoSaida(BaseModel):
     total_conversas: int
     total_contatos: int
     total_broadcasts: int
+    total_usuarios: int = 0
     licenca: LicencaSaida
 
 

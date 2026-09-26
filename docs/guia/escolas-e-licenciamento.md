@@ -50,9 +50,19 @@
 - **Rotas** em `app/interfaces/api/admin.py` (guard `_exige_super_admin`): `/api/admin/escolas`
   (POST/GET), `/escolas/{tenant_id}` (GET/PUT/DELETE), `/escolas/{tenant_id}/conversas`,
   `/escolas/{tenant_id}/conversas/{conversa_id}` e `/escolas/{tenant_id}/broadcasts`. `EscolaEntrada`
-  e `Escola(Resumo)Saida` carregam `whatsapp_numero` e `telefone_contato`.
-- **Painel:** `web/app/admin/escolas/` (lista com campo de WhatsApp no cadastro/edição + detalhe por
-  `[tenantId]`).
+  e `Escola(Resumo)Saida` carregam `whatsapp_numero` e `telefone_contato`. A listagem
+  (`EscolaResumoSaida`) traz ainda os contadores `total_conversas`, `total_contatos`,
+  `total_broadcasts` e `total_usuarios` — este conta só **logins ativos** do painel, o mesmo
+  critério da ficha (`metricas_uso`), e não se confunde com contatos (os números dos pais).
+- **Painel:** `web/app/admin/escolas/` + detalhe por `[tenantId]`. A lista tem filtros que
+  **particionam** as escolas (Ativas / Vencendo / Bloqueadas, e Canceladas só quando existe
+  alguma) — bloqueio e cancelamento vencem o prazo, e licença expirada conta como "vencendo" —,
+  busca por nome, slug ou dígitos de telefone, e vira cartões abaixo de 1440px (com a sidebar, a
+  tabela não cabe antes disso). Estados que mudam a escola ficam no menu "⋯"; a escola bloqueada
+  ou cancelada mostra na linha a única ação que se vem fazer com ela (Desbloquear / Reativar).
+  Cadastro e edição são **o mesmo painel lateral** (`components/ui/Drawer.tsx`), em três blocos —
+  identificação, expediente e WhatsApp (opcional); o onboarding do número na Meta segue na tela
+  própria `/admin/escolas/whatsapp`, porque cada passo dele tem efeito real fora do banco.
 
 ### 6e. Licenciamento, cobrança e bloqueio (super admin)
 

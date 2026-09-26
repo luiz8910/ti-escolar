@@ -409,6 +409,8 @@ class ResumoEscola:
     total_conversas: int = 0
     total_contatos: int = 0
     total_broadcasts: int = 0
+    # Logins ativos no painel — não confundir com contatos (os números dos pais).
+    total_usuarios: int = 0
 
 
 @dataclass

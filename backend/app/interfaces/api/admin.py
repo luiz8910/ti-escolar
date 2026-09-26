@@ -682,6 +682,7 @@ async def listar_escolas(
             total_conversas=r.total_conversas,
             total_contatos=r.total_contatos,
             total_broadcasts=r.total_broadcasts,
+            total_usuarios=r.total_usuarios,
             licenca=_licenca_saida(r.tenant),
         )
         for r in resumos

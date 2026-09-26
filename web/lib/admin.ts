@@ -155,6 +155,8 @@ export interface Escola {
   total_conversas: number;
   total_contatos: number;
   total_broadcasts: number;
+  /** Logins ativos no painel (não confundir com contatos, os números dos pais). */
+  total_usuarios: number;
   licenca: Licenca;
 }
 
