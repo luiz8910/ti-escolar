@@ -38,6 +38,7 @@ const PRINCIPAL: NavItem[] = [
   // (/admin/salas) segue de pé, redirecionando — a secretaria guarda link em favorito.
   { href: "/admin/turmas", label: "Turmas", icon: UsersIcon },
   { href: "/admin/alunos", label: "Alunos", icon: CapIcon },
+  { href: "/admin/responsaveis", label: "Responsáveis", icon: UsersIcon },
   { href: "/admin/progressao", label: "Progressão de série", icon: CapIcon },
   { href: "/admin/professores", label: "Professores", icon: TeacherIcon },
   { href: "/admin/usuarios", label: "Equipe da escola", icon: UsersIcon },
