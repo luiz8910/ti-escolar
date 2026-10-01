@@ -54,7 +54,10 @@ services:
   # (§0.6 do plano de 10/08). Console em http://localhost:9001 (minioadmin/minioadmin).
   minio:
     # quay.io e tag fixa: em 20/set/2026 o Docker Hub passou a recusar `minio/minio`
-    # (`pull access denied`), e o CI foi junto. Mesma imagem do `ci.yml`.
+    # (`pull access denied`), e o CI foi junto. Em 01/out/2026 o quay.io também parou de
+    # servi-la: **esta imagem só sobe em máquina que já a tem em cache**. O `ci.yml` passou
+    # para a da Chainguard; aqui ela ainda não foi trocada porque aquela roda como usuário
+    # sem privilégio (65532) e o volume local existente pertence ao root.
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
