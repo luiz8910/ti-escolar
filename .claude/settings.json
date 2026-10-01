@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "ask": [
+      "Agent(qa-browser)",
+      "Agent(atendimento-eval)"
+    ]
+  }
+}
