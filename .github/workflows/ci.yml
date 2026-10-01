@@ -48,7 +48,8 @@ jobs:
       # não deixa passar comando à imagem, e a imagem oficial do MinIO precisa de
       # `server /data`. Era por isso que aqui havia `minio/minio:edge-cicd`, a tag que já
       # subia o servidor sozinha — e em 20/set/2026 o Docker Hub passou a recusá-la
-      # (`pull access denied for minio/minio`), deixando **todo PR vermelho**.
+      # (`pull access denied for minio/minio`), deixando **todo PR vermelho**. De onde a
+      # imagem vem hoje está no comentário do passo.
 
     env:
       DATABASE_URL: postgresql+psycopg://tiescolar:tiescolar@localhost:5432/tiescolar
@@ -104,13 +105,32 @@ jobs:
       # S3 de verdade para o adaptador (§0.6 do plano de 10/08). Sem isto, os testes de
       # `S3ArquivoStorage` pulam sozinhos e o adaptador chegaria a produção sem nunca ter
       # escrito um byte — que é exatamente o impasse que o deixou anos no papel.
-      # Imagem do quay.io, que é onde a MinIO publica, e **tag fixa**: `latest` quebraria o
-      # CI num dia qualquer, sem commit nenhum, que é a falha que se está consertando aqui.
+      #
+      # A imagem é a da Chainguard porque a MinIO deixou de publicar: o Docker Hub recusa
+      # `minio/minio` desde 20/set/2026 e o quay.io, para onde o CI tinha ido, passou a
+      # responder `unauthorized` em 01/out — duas vezes o CI ficou vermelho sem commit
+      # nenhum. É o mesmo servidor (um build do código da MinIO), com o mesmo `server /data`.
+      #
+      # Fixada por **digest**: a Chainguard só dá de graça a tag `latest`, que muda sozinha.
+      # Se um dia o digest deixar de existir, o passo cai para a `latest` e **avisa** em vez
+      # de reprovar — um CI vermelho por imagem sumida já custou dias de homolog parado.
+      # Ao ver o aviso, troque o digest abaixo pelo da `latest` do dia
+      # (`docker buildx imagetools inspect cgr.dev/chainguard/minio:latest`).
       - name: Sobe o MinIO
+        env:
+          MINIO_IMAGEM: cgr.dev/chainguard/minio@sha256:9dcc028b309030afa86fc1fc8d93907ae373ea3fb75277cca3fc77e4645932b7
+          MINIO_RESERVA: cgr.dev/chainguard/minio:latest
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          sobe() {
+            docker run -d --name minio -p 9000:9000 \
+              -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+              "$1" server /data
+          }
+          if ! sobe "$MINIO_IMAGEM"; then
+            echo "::warning::O digest fixado do MinIO não está mais disponível; usando a tag latest. Atualize MINIO_IMAGEM no ci.yml."
+            docker rm -f minio >/dev/null 2>&1 || true
+            sobe "$MINIO_RESERVA"
+          fi
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
               echo "MinIO pronto"; exit 0
