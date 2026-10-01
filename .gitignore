@@ -24,8 +24,15 @@ npm-debug.log*
 # diretório-pai está excluído, então negar `.claude/agents/` só funciona se a exclusão
 # for dos filhos. Os agentes são versionados de propósito — valem para a equipe toda,
 # como o CLAUDE.md; sessão, memória e worktrees continuam locais.
+# O `settings.json` entra junto porque carrega a regra que acompanha os agentes: o
+# `qa-browser` e o `atendimento-eval` só rodam depois de o usuário confirmar (`ask`). O
+# `settings.local.json` segue local. `evals/` e `release/` são o estado que dois agentes
+# mantêm entre execuções (a bateria do atendimento e o inventário de variáveis, só nomes).
 .claude/*
 !.claude/agents/
+!.claude/settings.json
+!.claude/evals/
+!.claude/release/
 
 # OS / editor
 .DS_Store

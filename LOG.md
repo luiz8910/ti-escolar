@@ -19,16 +19,24 @@
 
 ---
 
-## 2026-10-01 — simulador local do WhatsApp e os agentes de QA
+## 2026-10-01 — simulador local do WhatsApp, agentes e o CI de volta ao verde
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; entrou ferramenta de desenvolvimento.
 - **Rótulo:** `infra`.
-- **Próxima ação:** fechar a correção do `greenlet` (`sqlalchemy[asyncio]` no
-  `pyproject.toml`, parada sem commit na `fix/sqlalchemy-greenlet`): é ela que deixa o CI
-  vermelho desde 24/set e trava o deploy do homolog. Depois, escolher **um** fluxo do corte.
-- **Precisa de deploy?** não — o simulador só existe com `APP_ENV` de desenvolvimento.
+- **Próxima ação:** decidir o nono dígito do telefone (opções A/B/C em
+  [`docs/qa/2026-10-01-tela-responsaveis.md`](docs/qa/2026-10-01-tela-responsaveis.md)) e
+  corrigir num `fix/`; é o achado da primeira rodada do `qa-browser`. Depois, escolher
+  **um** fluxo do corte.
+- **Precisa de deploy?** não para o que entrou. Mas o homolog **segue sem publicar**: o CI
+  da `develop` voltou a passar (#102 `greenlet`, #103 imagem do MinIO) e a esteira pulou o
+  deploy por falta do `RENDER_DEPLOY_HOOK_URL`
+  ([`docs/pendencias-externas.md`](docs/pendencias-externas.md) §1).
 - Entrou: `/api/dev/whatsapp` (tela de conversa sobre o canal demo, pelo mesmo
-  `ProcessarInboundMeta` da produção) e, em outra branch, os agentes `qa` e `qa-browser`.
+  `ProcessarInboundMeta` da produção) e seis agentes em `.claude/agents/` — `qa`,
+  `qa-browser`, `migrations`, `templates-meta`, `release` e `atendimento-eval` —, escritos
+  no Claude web e conferidos contra o código. `qa-browser` e `atendimento-eval` só rodam com
+  confirmação (`ask` em `.claude/settings.json`). Pendência: o `docker-compose` ainda aponta
+  para a imagem do MinIO que o quay.io deixou de servir; só sobe onde já está em cache.
 
 ## 2026-09-18 — os usuários IAM do S3, por CloudFormation
 
