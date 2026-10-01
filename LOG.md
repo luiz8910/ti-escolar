@@ -19,6 +19,17 @@
 
 ---
 
+## 2026-10-01 — simulador local do WhatsApp e os agentes de QA
+
+- **Andou?** não — nenhum fluxo do beta mudou de estado; entrou ferramenta de desenvolvimento.
+- **Rótulo:** `infra`.
+- **Próxima ação:** fechar a correção do `greenlet` (`sqlalchemy[asyncio]` no
+  `pyproject.toml`, parada sem commit na `fix/sqlalchemy-greenlet`): é ela que deixa o CI
+  vermelho desde 24/set e trava o deploy do homolog. Depois, escolher **um** fluxo do corte.
+- **Precisa de deploy?** não — o simulador só existe com `APP_ENV` de desenvolvimento.
+- Entrou: `/api/dev/whatsapp` (tela de conversa sobre o canal demo, pelo mesmo
+  `ProcessarInboundMeta` da produção) e, em outra branch, os agentes `qa` e `qa-browser`.
+
 ## 2026-09-18 — os usuários IAM do S3, por CloudFormation
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; caiu um bloqueio que estava no §2

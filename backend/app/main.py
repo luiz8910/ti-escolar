@@ -36,6 +36,7 @@ from app.interfaces.api import (
     progressao,
     respostas_rapidas,
     seguranca,
+    simulador,
     templates,
     wabas,
     webhook,
@@ -163,6 +164,9 @@ app.include_router(wabas.router)
 app.include_router(onboarding.router)
 app.include_router(logs.router)
 app.include_router(webhook.router)
+# Sem login, e responde com LLM: só na máquina do dev e com o canal demo (ver o módulo).
+if simulador.simulador_habilitado(settings):
+    app.include_router(simulador.router)
 
 
 @app.get("/health", tags=["infra"])

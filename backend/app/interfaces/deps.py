@@ -57,6 +57,7 @@ from app.domain.ports import (
     CatalogoTemplates,
     LLMProvider,
     MessageChannel,
+    TenantRepository,
 )
 from app.infrastructure.db.pgvector_store import PgVectorStore
 from app.infrastructure.db.repositories import (
@@ -280,8 +281,21 @@ def get_processar_inbound_meta(
     settings: Settings = Depends(get_settings_dep),
 ) -> ProcessarInboundMeta:
     """Inbound do webhook da Meta: roteia a mensagem à escola e responde por ela (§9e.1)."""
+    return montar_processar_inbound_meta(
+        session=session, settings=settings, tenants=SqlTenantRepository(session)
+    )
+
+
+def montar_processar_inbound_meta(
+    *, session: AsyncSession, settings: Settings, tenants: TenantRepository
+) -> ProcessarInboundMeta:
+    """O inbound com a busca de escola injetada.
+
+    Separado da dependência para o simulador local (``/api/dev/whatsapp``) rodar
+    **exatamente** este caminho, trocando só como o ``phone_number_id`` vira escola.
+    """
     return ProcessarInboundMeta(
-        tenants=SqlTenantRepository(session),
+        tenants=tenants,
         # O inbound real atende por ``AtenderConversa`` (tool use): é o modelo que decide
         # buscar conhecimento, recuperar documento ou chamar a secretaria — e é esse
         # caminho que registra a resposta da LLM na auditoria (§13).

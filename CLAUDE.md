@@ -35,11 +35,16 @@ documentos, usuários, templates e cota de mensagens.
 **Front-ends:**
 - O **painel** (`web/`, Next.js) é a interface da escola: administração do tenant, portal do
   professor e super admin. É o único front do produto.
-- Não há mais simulador de chat. Até o inbound real entrar no ar (10/ago/2026), a raiz `/`
-  servia um **demo em Next.js que imitava a interface do WhatsApp**, atendido por rotas
-  públicas `/api/chat/*`; com o canal da Meta atendendo de verdade ele deixou de ter função e
-  foi removido — era a única superfície sem login que gravava conversa e consumia LLM. A raiz
-  agora redireciona para `/admin`.
+- Não há mais simulador de chat **publicado**. Até o inbound real entrar no ar (10/ago/2026),
+  a raiz `/` servia um **demo em Next.js que imitava a interface do WhatsApp**, atendido por
+  rotas públicas `/api/chat/*`; com o canal da Meta atendendo de verdade ele deixou de ter
+  função e foi removido — era a única superfície sem login que gravava conversa e consumia
+  LLM. A raiz agora redireciona para `/admin`.
+- O que existe é um **simulador local, só em desenvolvimento**: `/api/dev/whatsapp` no
+  back-end mostra o que o canal demo "enviou" e deixa escrever como o responsável, passando
+  pelo mesmo `ProcessarInboundMeta` da produção. A rota só é registrada com `APP_ENV` de
+  desenvolvimento **e** canal efetivo `demo` — no homolog (que também está em `demo`) e na
+  produção ela não existe. (`app/interfaces/api/simulador.py::simulador_habilitado`)
 
 ---
 
