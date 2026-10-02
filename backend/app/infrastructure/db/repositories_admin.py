@@ -592,7 +592,7 @@ class SqlGrupoRepository:
     ) -> Contato:
         grupo = await self._orm(tenant_id=tenant_id, grupo_id=grupo_id)
         if grupo is None:
-            raise ValueError("Grupo não encontrado para o tenant.")
+            raise ValueError("Grupo não encontrado nesta escola.")
 
         contato = await self._contato_por_telefone(tenant_id=tenant_id, telefone=telefone)
         if contato is None:
@@ -765,7 +765,7 @@ class SqlContatoRepository:
     async def atualizar(self, contato: Contato) -> Contato:
         row = await self._orm(tenant_id=contato.tenant_id, contato_id=contato.id)
         if row is None:
-            raise ValueError("Contato não encontrado para o tenant.")
+            raise ValueError("Contato não encontrado nesta escola.")
         row.nome = contato.nome
         row.telefone = contato.telefone
         row.ativo = contato.ativo
@@ -885,7 +885,7 @@ class SqlSalaRepository:
     async def atualizar(self, sala: Sala) -> Sala:
         row = await self._orm(tenant_id=sala.tenant_id, sala_id=sala.id)
         if row is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         row.nome = sala.nome
         row.descricao = sala.descricao
         row.ano_letivo = sala.ano_letivo
@@ -921,7 +921,7 @@ class SqlSalaRepository:
         """
         row = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
         if row is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         pais = await self._pais_das_salas(tenant_id=tenant_id, sala_ids=[sala_id])
         return pais.get(sala_id, [])
 
@@ -930,14 +930,14 @@ class SqlSalaRepository:
     ) -> Sala:
         sala = await self._orm(tenant_id=tenant_id, sala_id=sala_id)
         if sala is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         if professor_id is not None:
             stmt = select(ProfessorORM).where(
                 ProfessorORM.id == professor_id, ProfessorORM.tenant_id == tenant_id
             )
             professor = (await self._s.execute(stmt)).scalar_one_or_none()
             if professor is None:
-                raise ValueError("Professor não encontrado para o tenant.")
+                raise ValueError("Professor não encontrado nesta escola.")
         sala.professor_id = professor_id
         await self._s.flush()
         await self._s.refresh(sala, attribute_names=["professor"])
@@ -1020,7 +1020,7 @@ class SqlProfessorRepository:
     async def atualizar(self, professor: Professor) -> Professor:
         row = await self._orm(tenant_id=professor.tenant_id, professor_id=professor.id)
         if row is None:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
         row.nome = professor.nome
         row.telefone = professor.telefone
         row.cpf = professor.cpf
@@ -1160,7 +1160,7 @@ class SqlAlunoRepository:
     async def atualizar(self, aluno: Aluno) -> Aluno:
         row = await self._orm(tenant_id=aluno.tenant_id, aluno_id=aluno.id)
         if row is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         row.nome = aluno.nome
         row.matricula = aluno.matricula
         row.sala_id = aluno.sala_id
@@ -1194,10 +1194,10 @@ class SqlAlunoRepository:
     ) -> None:
         aluno = await self._orm(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         contato = await self._contato_do_tenant(tenant_id=tenant_id, contato_id=contato_id)
         if contato is None:
-            raise ValueError("Responsável não encontrado para o tenant.")
+            raise ValueError("Responsável não encontrado nesta escola.")
         if all(c.id != contato_id for c in aluno.responsaveis):
             aluno.responsaveis.append(contato)
             await self._s.flush()
@@ -1207,6 +1207,6 @@ class SqlAlunoRepository:
     ) -> None:
         aluno = await self._orm(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         aluno.responsaveis = [c for c in aluno.responsaveis if c.id != contato_id]
         await self._s.flush()

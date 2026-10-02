@@ -84,7 +84,7 @@ class SqlFonteConhecimentoRepository:
         )
         row = (await self._s.execute(stmt)).scalar_one_or_none()
         if row is None:
-            raise ValueError("Documento não encontrado para o tenant.")
+            raise ValueError("Documento não encontrado nesta escola.")
         row.nome = fonte.nome
         row.tipo = fonte.tipo.value
         row.total_trechos = fonte.total_trechos
@@ -184,7 +184,7 @@ class SqlRespostaRapidaRepository:
     async def atualizar(self, resposta: RespostaRapida) -> RespostaRapida:
         row = await self._orm(tenant_id=resposta.tenant_id, resposta_id=resposta.id)
         if row is None:
-            raise ValueError("Resposta rápida não encontrada para o tenant.")
+            raise ValueError("Resposta rápida não encontrada nesta escola.")
         row.chave = resposta.chave
         row.conteudo = resposta.conteudo
         row.ativo = resposta.ativo

@@ -47,7 +47,7 @@ class DefinirFotoDoAluno:
 
         aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
 
         anterior = aluno.foto_chave
         chave = nova_chave(tenant_id, "foto")
@@ -95,7 +95,7 @@ class RemoverFotoDoAluno:
     async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno:
         aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         if not aluno.foto_chave:
             return aluno
         chave, aluno.foto_chave = aluno.foto_chave, ""

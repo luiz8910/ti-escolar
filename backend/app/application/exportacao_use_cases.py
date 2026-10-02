@@ -47,7 +47,7 @@ class ExportarConversaLegal:
             tenant_id=tenant_id, conversa_id=conversa_id
         )
         if conversa is None:
-            raise ValueError("Conversa não encontrada para o tenant.")
+            raise ValueError("Conversa não encontrada nesta escola.")
 
         mensagens = await self._conversas.mensagens(conversa_id=conversa_id)
         # Recorte por período (inclusivo), quando informado.

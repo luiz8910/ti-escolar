@@ -117,13 +117,13 @@ class CadastrarPai:
         # procura o remetente em E.164.
         telefone = _e164_ou_erro(telefone, campo="Telefone")
         if await self._contatos.por_telefone(tenant_id=tenant_id, telefone=telefone):
-            raise ValueError("Já existe um responsável com este telefone neste tenant.")
+            raise ValueError("Já existe um responsável com este telefone nesta escola.")
 
         validos = _validar_dados_responsavel(dados or DadosResponsavel())
         if validos.cpf and await self._contatos.por_cpf(
             tenant_id=tenant_id, cpf=validos.cpf
         ):
-            raise ValueError("Já existe um responsável com este CPF neste tenant.")
+            raise ValueError("Já existe um responsável com este CPF nesta escola.")
 
         return await self._contatos.criar(
             Contato(
@@ -162,14 +162,14 @@ class AtualizarPai:
     ) -> Contato:
         atual = await self._contatos.obter(tenant_id=tenant_id, contato_id=contato_id)
         if atual is None:
-            raise ValueError("Responsável não encontrado para o tenant.")
+            raise ValueError("Responsável não encontrado nesta escola.")
 
         telefone = _e164_ou_erro(telefone, campo="Telefone")
         # Telefone só pode mudar para um valor ainda não usado por outro responsável.
         if telefone != atual.telefone:
             existente = await self._contatos.por_telefone(tenant_id=tenant_id, telefone=telefone)
             if existente is not None and existente.id != contato_id:
-                raise ValueError("Já existe um responsável com este telefone neste tenant.")
+                raise ValueError("Já existe um responsável com este telefone nesta escola.")
 
         atual.nome = nome
         atual.telefone = telefone
@@ -181,7 +181,7 @@ class AtualizarPai:
                     tenant_id=tenant_id, cpf=validos.cpf
                 )
                 if duplicado is not None and duplicado.id != contato_id:
-                    raise ValueError("Já existe um responsável com este CPF neste tenant.")
+                    raise ValueError("Já existe um responsável com este CPF nesta escola.")
             for campo, valor in asdict(validos).items():
                 setattr(atual, campo, valor)
         return await self._contatos.atualizar(atual)
@@ -289,7 +289,7 @@ class ObterSala:
     async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> Sala:
         sala = await self._salas.obter(tenant_id=tenant_id, sala_id=sala_id)
         if sala is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         return sala
 
 
@@ -308,7 +308,7 @@ class AtualizarSala:
     ) -> Sala:
         atual = await self._salas.obter(tenant_id=tenant_id, sala_id=sala_id)
         if atual is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         atual.descricao = descricao
         _aplicar_dados_turma(atual, dados, nome=nome)
         await _exige_turma_unica(self._salas, atual, ignorar=sala_id)
@@ -403,7 +403,7 @@ class CoberturaDeContatosDaSala:
     async def executar(self, *, tenant_id: UUID, sala_id: UUID) -> CoberturaContatosSala:
         sala = await self._salas.obter(tenant_id=tenant_id, sala_id=sala_id)
         if sala is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         alunos = await self._alunos.listar(tenant_id=tenant_id, sala_id=sala_id)
         return _cobertura(sala, alunos)
 
@@ -493,7 +493,7 @@ class NotificarProfessorContatosFaltantes:
 async def _validar_sala(salas: SalaRepository, *, tenant_id: UUID, sala_id: UUID) -> None:
     """Garante que a série/sala informada pertence ao tenant."""
     if await salas.obter(tenant_id=tenant_id, sala_id=sala_id) is None:
-        raise ValueError("Série/sala não encontrada para o tenant.")
+        raise ValueError("Série/sala não encontrada nesta escola.")
 
 
 class CadastrarAluno:
@@ -561,7 +561,7 @@ class ObterAluno:
     async def executar(self, *, tenant_id: UUID, aluno_id: UUID) -> Aluno:
         aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         return aluno
 
 
@@ -582,7 +582,7 @@ class AtualizarAluno:
     ) -> Aluno:
         atual = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if atual is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         await _validar_sala(self._salas, tenant_id=tenant_id, sala_id=sala_id)
         atual.nome = nome
         atual.sala_id = sala_id
@@ -775,12 +775,12 @@ class CadastrarProfessor:
     ) -> Professor:
         telefone = _e164_ou_erro(telefone, campo="Telefone")
         if await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone):
-            raise ValueError("Já existe um professor com este telefone neste tenant.")
+            raise ValueError("Já existe um professor com este telefone nesta escola.")
         validos = _validar_dados_professor(dados or DadosProfessor())
         if validos.cpf and await self._professores.por_cpf(
             tenant_id=tenant_id, cpf=validos.cpf
         ):
-            raise ValueError("Já existe um professor com este CPF neste tenant.")
+            raise ValueError("Já existe um professor com este CPF nesta escola.")
         # Senha opcional habilita o login do professor no mural (§A1).
         senha_hash = hash_senha(senha) if senha else ""
         return await self._professores.criar(
@@ -828,7 +828,7 @@ class ObterProfessor:
     async def executar(self, *, tenant_id: UUID, professor_id: UUID) -> Professor:
         professor = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
         if professor is None:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
         return professor
 
 
@@ -848,12 +848,12 @@ class AtualizarProfessor:
     ) -> Professor:
         atual = await self._professores.obter(tenant_id=tenant_id, professor_id=professor_id)
         if atual is None:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
         telefone = _e164_ou_erro(telefone, campo="Telefone")
         if telefone != atual.telefone:
             existente = await self._professores.por_telefone(tenant_id=tenant_id, telefone=telefone)
             if existente is not None and existente.id != professor_id:
-                raise ValueError("Já existe um professor com este telefone neste tenant.")
+                raise ValueError("Já existe um professor com este telefone nesta escola.")
         atual.nome = nome
         atual.telefone = telefone
         if dados is not None:
@@ -863,7 +863,7 @@ class AtualizarProfessor:
                     tenant_id=tenant_id, cpf=validos.cpf
                 )
                 if duplicado is not None and duplicado.id != professor_id:
-                    raise ValueError("Já existe um professor com este CPF neste tenant.")
+                    raise ValueError("Já existe um professor com este CPF nesta escola.")
             for campo, valor in asdict(validos).items():
                 setattr(atual, campo, valor)
         # ``senha=None`` mantém a atual; string vazia limpa o acesso; texto define nova senha.

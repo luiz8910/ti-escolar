@@ -89,7 +89,7 @@ class AnexarDocumentoMatricula:
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
         )
         if solicitacao is None:
-            raise ValueError("Solicitação de matrícula não encontrada para o tenant.")
+            raise ValueError("Solicitação de matrícula não encontrada nesta escola.")
         if solicitacao.status == StatusMatricula.CANCELADA:
             raise ValueError("A solicitação de matrícula está cancelada.")
 
@@ -130,7 +130,7 @@ class AtualizarStatusMatricula:
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
         )
         if solicitacao is None:
-            raise ValueError("Solicitação de matrícula não encontrada para o tenant.")
+            raise ValueError("Solicitação de matrícula não encontrada nesta escola.")
         solicitacao.status = status
         if observacao is not None:
             solicitacao.observacao = observacao.strip()

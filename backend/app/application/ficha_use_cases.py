@@ -170,7 +170,7 @@ class SalvarFichaMatricula:
     ) -> FichaMatricula:
         aluno = await self._alunos.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if aluno is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
 
         faltando = [
             rotulo

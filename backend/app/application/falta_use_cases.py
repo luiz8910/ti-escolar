@@ -50,7 +50,7 @@ class RegistrarFaltaProfessor:
                 tenant_id=tenant_id, professor_id=professor_id
             )
             if professor is None:
-                raise ValueError("Professor não encontrado para o tenant.")
+                raise ValueError("Professor não encontrado nesta escola.")
             nome = professor.nome
 
         return await self._faltas.criar(
@@ -109,7 +109,7 @@ class ChamarEventual:
 
         aviso = await self._faltas.obter(tenant_id=tenant_id, aviso_id=aviso_id)
         if aviso is None:
-            raise ValueError("Aviso de falta não encontrado para o tenant.")
+            raise ValueError("Aviso de falta não encontrado nesta escola.")
         if aviso.status == StatusFalta.CANCELADA:
             raise ValueError("Não é possível chamar eventual para uma falta cancelada.")
 
@@ -159,7 +159,7 @@ class ConfirmarEventual:
 
         aviso = await self._faltas.obter(tenant_id=tenant_id, aviso_id=aviso_id)
         if aviso is None:
-            raise ValueError("Aviso de falta não encontrado para o tenant.")
+            raise ValueError("Aviso de falta não encontrado nesta escola.")
         if aviso.status == StatusFalta.CANCELADA:
             raise ValueError("Não é possível cobrir uma falta cancelada.")
 
@@ -179,7 +179,7 @@ class CancelarFalta:
     async def executar(self, *, tenant_id: UUID, aviso_id: UUID) -> AvisoFalta:
         aviso = await self._faltas.obter(tenant_id=tenant_id, aviso_id=aviso_id)
         if aviso is None:
-            raise ValueError("Aviso de falta não encontrado para o tenant.")
+            raise ValueError("Aviso de falta não encontrado nesta escola.")
         aviso.status = StatusFalta.CANCELADA
         aviso.atualizado_em = _now()
         return await self._faltas.atualizar(aviso)

@@ -94,7 +94,7 @@ class FakeFonteConhecimentoRepo:
     async def atualizar(self, fonte):
         atual = self.fontes.get(fonte.id)
         if atual is None or atual.tenant_id != fonte.tenant_id:
-            raise ValueError("Documento não encontrado para o tenant.")
+            raise ValueError("Documento não encontrado nesta escola.")
         self.fontes[fonte.id] = fonte
         return fonte
 
@@ -829,7 +829,7 @@ class FakeSalaRepo:
     async def atualizar(self, sala):
         atual = await self.obter(tenant_id=sala.tenant_id, sala_id=sala.id)
         if atual is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         self.salas[sala.id] = sala
         return sala
 
@@ -848,7 +848,7 @@ class FakeSalaRepo:
         """
         s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
         if s is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         if self.alunos is None:
             return list(s.pais)
         derivados: list = []
@@ -866,14 +866,14 @@ class FakeSalaRepo:
     async def definir_professor(self, *, tenant_id, sala_id, professor_id):
         s = await self.obter(tenant_id=tenant_id, sala_id=sala_id)
         if s is None:
-            raise ValueError("Sala não encontrada para o tenant.")
+            raise ValueError("Sala não encontrada nesta escola.")
         if professor_id is None:
             s.professor_id = None
             s.professor_nome = ""
             return s
         professor = self.professores.professores.get(professor_id) if self.professores else None
         if professor is None or professor.tenant_id != tenant_id:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
         s.professor_id = professor.id
         s.professor_nome = professor.nome
         return s
@@ -939,17 +939,17 @@ class FakeAlunoRepo:
     async def vincular_responsavel(self, *, tenant_id, aluno_id, contato_id):
         a = await self.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if a is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         contato = self.contatos.contatos.get(contato_id) if self.contatos else None
         if contato is None or contato.tenant_id != tenant_id:
-            raise ValueError("Responsável não encontrado para o tenant.")
+            raise ValueError("Responsável não encontrado nesta escola.")
         if all(c.id != contato_id for c in a.responsaveis):
             a.responsaveis.append(contato)
 
     async def desvincular_responsavel(self, *, tenant_id, aluno_id, contato_id):
         a = await self.obter(tenant_id=tenant_id, aluno_id=aluno_id)
         if a is None:
-            raise ValueError("Aluno não encontrado para o tenant.")
+            raise ValueError("Aluno não encontrado nesta escola.")
         a.responsaveis = [c for c in a.responsaveis if c.id != contato_id]
 
 
@@ -1079,7 +1079,7 @@ class FakeAvisoFaltaRepo:
 
     async def atualizar(self, aviso):
         if aviso.id not in self.avisos:
-            raise ValueError("Aviso de falta não encontrado para o tenant.")
+            raise ValueError("Aviso de falta não encontrado nesta escola.")
         self.avisos[aviso.id] = aviso
         return aviso
 
@@ -1149,7 +1149,7 @@ class FakeSolicitacaoMatriculaRepo:
 
     async def atualizar(self, solicitacao):
         if solicitacao.id not in self.solicitacoes:
-            raise ValueError("Solicitação de matrícula não encontrada para o tenant.")
+            raise ValueError("Solicitação de matrícula não encontrada nesta escola.")
         self.solicitacoes[solicitacao.id] = solicitacao
         return solicitacao
 

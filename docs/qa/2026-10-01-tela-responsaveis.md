@@ -1,8 +1,8 @@
 # QA exploratório — tela de Responsáveis (01/out/2026)
 
 > Relatório do agente `qa-browser`, guardado para a correção ser feita em outra sessão.
-> **Estado: nada foi corrigido.** O achado 1 depende de uma decisão do Luiz (ver
-> [Decisão pendente](#decisão-pendente)).
+> **Estado: achados 1 e 2 corrigidos** na branch `fix/telefone-nono-digito` (ver
+> [Resolução](#resolução)). Os achados 3 e 4 seguem sem ação, como o relatório já previa.
 
 ## Contexto da rodada
 
@@ -62,7 +62,40 @@ da automação. Fica só o registro; não há o que corrigir sem reproduzir.
 "Extra attributes from the server: cz-shortcut-listen". Vem provavelmente de extensão do
 navegador (ColorZilla), não do painel. Não houve erro 4xx/5xx de API no fluxo. Sem ação.
 
-## Decisão pendente
+## Resolução
+
+Decidido pelo Luiz em 01/out/2026:
+
+| Pergunta | Decisão |
+|---|---|
+| Nono dígito | **Opção A** — inserir o `9` no celular de oito dígitos; fixo intocado |
+| Registros já gravados sem o 9 | **Não tratar agora** — sem migration de dados |
+| `from` da Meta sem o 9 no inbound | **Fora deste PR** |
+
+O que entrou:
+
+- **Achado 1:** `_com_nono_digito` em `backend/app/application/validacao.py`, aplicada por
+  `normalizar_telefone` nos três caminhos (com `+55`, com `55` e só com o DDD). O passo 2 da
+  reprodução usava `+55 11 9999-0002`, então tratar só o número sem DDI não bastaria.
+- **Achado 2:** "neste tenant" e "para o tenant" viraram "nesta escola" em todas as
+  mensagens de erro do back-end (aplicação, repositórios e os fakes de teste), mais
+  "Acesso negado a esta escola" e a mensagem de criação de usuário.
+- Testes em `test_cadastro_pais_salas.py`, `test_cadastro_professores.py` e
+  `test_importacao_alunos.py`.
+
+O que **fica em aberto**, de propósito:
+
+- **Legado:** um responsável ou professor gravado antes desta correção sem o nono dígito
+  continua assim, e o mesmo número ainda pode ser cadastrado de novo com o 9. Reabrir e
+  salvar o cadastro corrige aquele registro.
+- **Inbound:** `normalizar_origem` (`backend/app/application/inbound_use_cases.py`) só põe o
+  `+` no `from`. A hipótese do achado 1 segue **não conferida**: falta olhar nos logs da
+  produção se a Meta entrega remetente brasileiro com 12 dígitos.
+- O alcance é maior que o relatório dizia: `normalizar_telefone_contato` e o número de
+  WhatsApp da escola chamam `telefone_ou_erro`, que usa a mesma normalização. Um celular
+  de contato digitado sem o 9 também passa a ganhá-lo.
+
+## Decisão pendente (histórico)
 
 Telefone fixo brasileiro tem 10 dígitos de verdade (DDD + 8), então **recusar todo número
 de 10 dígitos barraria fixos legítimos**. As opções para o achado 1:

@@ -39,6 +39,10 @@ def normalizar_telefone(bruto: str) -> tuple[str, str]:
     **Com ``+``, o DDI foi informado** e é respeitado (8 a 15 dígitos): é a porta para o
     número estrangeiro, que antes ganhava um 55 na frente e virava outro telefone.
 
+    **Celular brasileiro sai sempre com o nono dígito** (``_com_nono_digito``), venha com ou
+    sem ``+55``: "(11) 9999-0002" e "(11) 99999-0002" são o mesmo aparelho e têm de dar o
+    mesmo E.164, senão a checagem de duplicidade deixa a mesma pessoa entrar duas vezes.
+
     Devolve aviso em vez de levantar porque nasceu para a **importação em massa**, onde
     uma linha ruim não pode derrubar a planilha inteira. Quem valida um campo só —
     cadastro de professor, de responsável — transforma o aviso em erro.
@@ -48,12 +52,30 @@ def normalizar_telefone(bruto: str) -> tuple[str, str]:
         return "", ""
     if (bruto or "").strip().startswith("+"):
         if 8 <= len(digitos) <= 15:
-            return "+" + digitos, ""
+            return _com_nono_digito("+" + digitos), ""
     elif digitos.startswith("55") and len(digitos) in (12, 13):
-        return "+" + digitos, ""
+        return _com_nono_digito("+" + digitos), ""
     elif len(digitos) in (10, 11):
-        return "+55" + digitos, ""
+        return _com_nono_digito("+55" + digitos), ""
     return "", f"Telefone em formato não reconhecido: {bruto.strip()}"
+
+
+# +55, DDD e oito dígitos começando em 6 a 9: celular digitado à moda antiga.
+_CELULAR_BR_SEM_NONO = re.compile(r"^\+55(\d{2})([6-9]\d{7})$")
+
+
+def _com_nono_digito(e164: str) -> str:
+    """Insere o nono dígito no celular brasileiro que veio sem ele.
+
+    Só mexe em número de oito dígitos que começa em 6, 7, 8 ou 9 — a faixa que era de
+    celular antes do nono dígito. **Fixo (2 a 5) tem oito dígitos de verdade** e fica como
+    está: recusar ou "corrigir" todo número de dez dígitos estragaria o telefone de
+    trabalho do responsável e o da secretaria.
+
+    Não alcança o que já está gravado sem o nono dígito: um cadastro antigo assim ainda
+    deixa o mesmo número entrar de novo, agora com o 9.
+    """
+    return _CELULAR_BR_SEM_NONO.sub(r"+55\g<1>9\2", e164)
 
 
 def telefone_ou_erro(bruto: str, *, campo: str) -> str:

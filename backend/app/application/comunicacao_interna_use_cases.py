@@ -62,7 +62,7 @@ class AbrirSolicitacaoInterna:
                 tenant_id=tenant_id, professor_id=professor_id
             )
             if professor is None:
-                raise ValueError("Professor não encontrado para o tenant.")
+                raise ValueError("Professor não encontrado nesta escola.")
             professor_nome = professor.nome
 
         return await self._solicitacoes.criar(
@@ -122,7 +122,7 @@ class ObterSolicitacaoInterna:
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
         )
         if solicitacao is None:
-            raise ValueError("Solicitação interna não encontrada para o tenant.")
+            raise ValueError("Solicitação interna não encontrada nesta escola.")
         return solicitacao
 
 

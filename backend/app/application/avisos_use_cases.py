@@ -58,7 +58,7 @@ class ObterAvisoTemporizado:
     async def executar(self, *, tenant_id: UUID, aviso_id: UUID) -> AvisoTemporizado:
         aviso = await self._avisos.obter(tenant_id=tenant_id, aviso_id=aviso_id)
         if aviso is None:
-            raise ValueError("Aviso não encontrado para o tenant.")
+            raise ValueError("Aviso não encontrado nesta escola.")
         return aviso
 
 
@@ -88,7 +88,7 @@ class AtualizarAvisoTemporizado:
     ) -> AvisoTemporizado:
         atual = await self._avisos.obter(tenant_id=tenant_id, aviso_id=aviso_id)
         if atual is None:
-            raise ValueError("Aviso não encontrado para o tenant.")
+            raise ValueError("Aviso não encontrado nesta escola.")
         mensagem = mensagem.strip()
         if not mensagem:
             raise ValueError("O aviso precisa de uma mensagem.")

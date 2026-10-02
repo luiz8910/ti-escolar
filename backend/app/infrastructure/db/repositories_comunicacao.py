@@ -133,7 +133,7 @@ class SqlAvisoTemporizadoRepository:
     async def atualizar(self, aviso: AvisoTemporizado) -> AvisoTemporizado:
         row = await self._orm(tenant_id=aviso.tenant_id, aviso_id=aviso.id)
         if row is None:
-            raise ValueError("Aviso não encontrado para o tenant.")
+            raise ValueError("Aviso não encontrado nesta escola.")
         row.mensagem = aviso.mensagem
         row.ativo = aviso.ativo
         row.inicia_em = aviso.inicia_em
@@ -241,7 +241,7 @@ class SqlSolicitacaoImpressaoRepository:
             tenant_id=solicitacao.tenant_id, solicitacao_id=solicitacao.id
         )
         if row is None:
-            raise ValueError("Solicitação de impressão não encontrada para o tenant.")
+            raise ValueError("Solicitação de impressão não encontrada nesta escola.")
         row.status = solicitacao.status.value
         row.observacao = solicitacao.observacao
         row.copias = solicitacao.copias
@@ -489,7 +489,7 @@ class SqlSolicitacaoInternaRepository:
             tenant_id=solicitacao.tenant_id, solicitacao_id=solicitacao.id
         )
         if row is None:
-            raise ValueError("Solicitação interna não encontrada para o tenant.")
+            raise ValueError("Solicitação interna não encontrada nesta escola.")
         row.assunto = solicitacao.assunto
         row.corpo = solicitacao.corpo
         row.categoria = solicitacao.categoria.value

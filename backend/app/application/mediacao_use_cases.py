@@ -65,7 +65,7 @@ class EnviarMensagemAoResponsavel:
             tenant_id=tenant_id, professor_id=professor_id
         )
         if professor is None:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
 
         remetente: str | None = None
         if self._tenants is not None:
@@ -135,7 +135,7 @@ class RegistrarMensagemDoResponsavel:
             tenant_id=tenant_id, professor_id=professor_id
         )
         if professor is None:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
 
         nome = contato_nome.strip()
         if not nome and self._contatos is not None:

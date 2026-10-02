@@ -115,7 +115,7 @@ class ObterStatusLeitura:
     ) -> StatusLeituraRecado:
         recado = await self._mural.obter(tenant_id=tenant_id, recado_id=recado_id)
         if recado is None:
-            raise ValueError("Recado não encontrado para o tenant.")
+            raise ValueError("Recado não encontrado nesta escola.")
         professores = await self._professores.listar(tenant_id=tenant_id)
         leituras = {
             leitura.professor_id: leitura.lido_em
@@ -214,7 +214,7 @@ class ConfirmarLeituraRecado:
     ) -> None:
         recado = await self._mural.obter(tenant_id=tenant_id, recado_id=recado_id)
         if recado is None:
-            raise ValueError("Recado não encontrado para o tenant.")
+            raise ValueError("Recado não encontrado nesta escola.")
         await self._mural.marcar_leitura(
             tenant_id=tenant_id, recado_id=recado_id, professor_id=professor_id
         )

@@ -23,7 +23,7 @@ from app.domain.ports import AlunoRepository, ContatoRepository, SalaRepository
 async def _obter_sala(salas: SalaRepository, *, tenant_id: UUID, sala_id: UUID):
     sala = await salas.obter(tenant_id=tenant_id, sala_id=sala_id)
     if sala is None:
-        raise ValueError("Série/sala não encontrada para o tenant.")
+        raise ValueError("Série/sala não encontrada nesta escola.")
     return sala
 
 

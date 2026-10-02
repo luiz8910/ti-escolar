@@ -185,7 +185,7 @@ class AtualizarFonteConhecimento:
     ) -> FonteConhecimento:
         atual = await self._fontes.obter(tenant_id=tenant_id, fonte_id=fonte_id)
         if atual is None:
-            raise ValueError("Documento não encontrado para o tenant.")
+            raise ValueError("Documento não encontrado nesta escola.")
         nome = nome.strip()
         if not nome:
             raise ValueError("O documento precisa de um nome.")
@@ -229,7 +229,7 @@ class DefinirAtivoFonteConhecimento:
     ) -> FonteConhecimento:
         atual = await self._fontes.obter(tenant_id=tenant_id, fonte_id=fonte_id)
         if atual is None:
-            raise ValueError("Documento não encontrado para o tenant.")
+            raise ValueError("Documento não encontrado nesta escola.")
         if atual.ativo == ativo:
             return atual
         atual.ativo = ativo

@@ -69,6 +69,20 @@ def test_normalizar_telefone_sem_mais_e_brasileiro_com_mais_respeita_o_ddi():
     assert e164 == "" and aviso
 
 
+def test_normalizar_telefone_unifica_o_celular_no_nono_digito():
+    # Com e sem o 9, com e sem o 55, com e sem o "+": um aparelho, um E.164.
+    for escrito in ("1199990002", "11999990002", "551199990002", "+55 11 9999-0002"):
+        assert normalizar_telefone(escrito) == ("+5511999990002", "")
+    # Fixo (primeiro dígito de 2 a 5) tem oito dígitos de verdade e não ganha o 9.
+    assert normalizar_telefone("1132110000") == ("+551132110000", "")
+    assert normalizar_telefone("+55 15 3333-4444") == ("+551533334444", "")
+    # DDD 55 (RS) sem DDI não é confundido com o 55 do país.
+    assert normalizar_telefone("55 9999-8888") == ("+5555999998888", "")
+    # Número estrangeiro com "+" não é tocado, mesmo com 12 dígitos.
+    assert normalizar_telefone("+1 (415) 523-8886") == ("+14155238886", "")
+    assert normalizar_telefone("+44 20 7946 0958") == ("+442079460958", "")
+
+
 def test_extrair_json_tolera_cercas_de_codigo():
     bruto = '```json\n{"alunos": [{"nome": "Ana", "serie": "5º A"}]}\n```'
     dados = _extrair_json_objeto(bruto)

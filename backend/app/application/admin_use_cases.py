@@ -96,7 +96,7 @@ class CriarUsuario:
         if papel == Papel.SUPER_ADMIN and not criador.eh_super_admin:
             raise PermissionError("Apenas o super admin pode criar outro super admin.")
         if not criador.eh_super_admin and tenant_id != criador.tenant_id:
-            raise PermissionError("Admin de tenant só pode criar usuários do próprio tenant.")
+            raise PermissionError("O administrador da escola só pode criar usuários da própria escola.")
 
         if papel == Papel.SUPER_ADMIN:
             cargo = None  # não ocupa posto em escola nenhuma
