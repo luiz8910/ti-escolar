@@ -219,7 +219,7 @@ async def usuario_autenticado(
 def _exige_acesso_tenant(usuario: Usuario, tenant_id: UUID) -> None:
     """Super admin acessa qualquer tenant; admin de tenant só o seu."""
     if not usuario.eh_super_admin and usuario.tenant_id != tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso negado ao tenant")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso negado a esta escola")
 
 
 def _exige_super_admin(usuario: Usuario) -> None:

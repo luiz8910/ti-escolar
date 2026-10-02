@@ -53,6 +53,15 @@ async def test_telefone_duplicado_no_tenant_falha():
         await cadastrar.executar(tenant_id=TENANT, nome="Outra", telefone="+5511988880001")
 
 
+async def test_celular_com_e_sem_nono_digito_e_o_mesmo_professor():
+    professores, _ = _repos()
+    cadastrar = CadastrarProfessor(professores=professores)
+    prof = await cadastrar.executar(tenant_id=TENANT, nome="Ana", telefone="(15) 9753-6978")
+    assert prof.telefone == "+5515997536978"
+    with pytest.raises(ValueError, match="telefone nesta escola"):
+        await cadastrar.executar(tenant_id=TENANT, nome="Outra", telefone="15 99753-6978")
+
+
 async def test_mesmo_telefone_em_tenants_diferentes_e_permitido():
     professores, _ = _repos()
     cadastrar = CadastrarProfessor(professores=professores)

@@ -757,7 +757,7 @@ class EnviarBroadcast:
             tenant_id=broadcast.tenant_id, template_id=broadcast.template_id
         )
         if template is None:
-            raise ValueError("Template não encontrado para o tenant.")
+            raise ValueError("Template não encontrado nesta escola.")
 
         # Número da própria escola como remetente (multi-tenant); vazio = padrão do canal.
         # ``remetente_canal`` entrega o ``meta_phone_number_id`` (o que a Graph API exige na

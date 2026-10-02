@@ -70,6 +70,56 @@ async def test_mesmo_telefone_em_tenants_diferentes_e_permitido():
     await cadastrar.executar(tenant_id=OUTRO_TENANT, nome="Maria", telefone="+5511999990001")
 
 
+async def test_celular_com_e_sem_nono_digito_e_o_mesmo_responsavel():
+    """QA de 01/out/2026: "(11) 9999-0002" e "(11) 99999-0002" entravam como duas pessoas."""
+    contatos, _ = _repos()
+    cadastrar = CadastrarPai(contatos=contatos)
+    pai = await cadastrar.executar(tenant_id=TENANT, nome="Maria", telefone="1199990002")
+    assert pai.telefone == "+5511999990002"
+
+    for mesmo_numero in ("11999990002", "+5511999990002", "+55 11 9999-0002", "551199990002"):
+        with pytest.raises(ValueError, match="telefone nesta escola"):
+            await cadastrar.executar(tenant_id=TENANT, nome="Outra", telefone=mesmo_numero)
+
+
+async def test_editar_para_celular_sem_nono_digito_grava_com_o_nono():
+    contatos, _ = _repos()
+    cadastrar = CadastrarPai(contatos=contatos)
+    p1 = await cadastrar.executar(tenant_id=TENANT, nome="Maria", telefone="+5511999990001")
+    await cadastrar.executar(tenant_id=TENANT, nome="João", telefone="+5511999990002")
+    atualizar = AtualizarPai(contatos=contatos)
+
+    # Tomar o número do João escrevendo-o sem o nono dígito era o caminho do duplicado.
+    with pytest.raises(ValueError, match="telefone nesta escola"):
+        await atualizar.executar(
+            tenant_id=TENANT, contato_id=p1.id, nome="Maria", telefone="+55 11 9999-0002"
+        )
+
+    atualizado = await atualizar.executar(
+        tenant_id=TENANT, contato_id=p1.id, nome="Maria", telefone="+55 11 9999-0003"
+    )
+    assert atualizado.telefone == "+5511999990003"
+
+
+async def test_fixo_de_dez_digitos_e_aceito_e_nao_ganha_o_nove():
+    contatos, _ = _repos()
+    pai = await CadastrarPai(contatos=contatos).executar(
+        tenant_id=TENANT, nome="Só fixo", telefone="1132110000"
+    )
+    assert pai.telefone == "+551132110000"
+
+
+async def test_mensagem_de_duplicado_fala_em_escola_e_nao_em_tenant():
+    contatos, _ = _repos()
+    cadastrar = CadastrarPai(contatos=contatos)
+    await cadastrar.executar(tenant_id=TENANT, nome="Maria", telefone="+5511999990001")
+    with pytest.raises(ValueError) as erro:
+        await cadastrar.executar(tenant_id=TENANT, nome="Outra", telefone="+5511999990001")
+    assert "tenant" not in str(erro.value)
+    # O mesmo número em outra escola segue permitido, também escrito sem o nono dígito.
+    await cadastrar.executar(tenant_id=OUTRO_TENANT, nome="Maria", telefone="1199990001")
+
+
 async def test_atualizar_pai_mantendo_unicidade_de_telefone():
     contatos, salas = _repos()
     cadastrar = CadastrarPai(contatos=contatos)

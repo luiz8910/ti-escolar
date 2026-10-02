@@ -81,7 +81,7 @@ class SolicitarImpressao:
                 tenant_id=tenant_id, professor_id=professor_id
             )
             if professor is None:
-                raise ValueError("Professor não encontrado para o tenant.")
+                raise ValueError("Professor não encontrado nesta escola.")
             professor_nome = professor.nome
 
         return await self._solicitacoes.criar(
@@ -156,7 +156,7 @@ class ObterSolicitacaoImpressao:
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
         )
         if solicitacao is None:
-            raise ValueError("Solicitação de impressão não encontrada para o tenant.")
+            raise ValueError("Solicitação de impressão não encontrada nesta escola.")
         return solicitacao
 
 
@@ -208,7 +208,7 @@ class AtualizarStatusImpressao:
             tenant_id=tenant_id, solicitacao_id=solicitacao_id
         )
         if solicitacao is None:
-            raise ValueError("Solicitação de impressão não encontrada para o tenant.")
+            raise ValueError("Solicitação de impressão não encontrada nesta escola.")
         solicitacao.status = status
         solicitacao.atualizado_em = _now()
         return await self._solicitacoes.atualizar(solicitacao)
@@ -282,7 +282,7 @@ class DefinirCotaImpressao:
             tenant_id=tenant_id, professor_id=professor_id
         )
         if professor is None:
-            raise ValueError("Professor não encontrado para o tenant.")
+            raise ValueError("Professor não encontrado nesta escola.")
         cota = CotaImpressao(
             tenant_id=tenant_id,
             professor_id=professor_id,

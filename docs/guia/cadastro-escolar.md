@@ -140,6 +140,16 @@
     do mesmo número. A normalização vem **antes** da checagem, senão a mesma família
     entra duas vezes. Vazio segue aceito: professor sem número existe, e responsável sem
     telefone é o que a cobertura de contatos (§6c-ter) acusa.
+  - **Celular sai sempre com o nono dígito** desde 01/out/2026 (`_com_nono_digito`).
+    "(11) 9999-0002" e "(11) 99999-0002" davam E.164 diferentes, e o mesmo aparelho
+    entrava como duas pessoas. A regra insere o `9` quando o número brasileiro tem oito
+    dígitos começando em 6 a 9; **fixo (2 a 5) fica como está**, porque tem oito dígitos
+    de verdade. Vale para tudo que passa por `normalizar_telefone` — responsável,
+    professor, importação, provisionamento e os telefones da escola. **Não alcança o que
+    já foi gravado** sem o nono dígito (decisão: não migrar agora), e **o inbound não
+    usa esta regra**: `normalizar_origem` só acrescenta o `+` ao `from` da Meta. Se ela
+    entregar um remetente sem o 9, ele não casa com o cadastro — conferir nos logs da
+    produção antes de mexer, porque o telefone é a chave da conversa.
   - **Máscara é conforto de digitação, não contrato de dado** (`web/lib/mascaras.ts` +
     `web/components/ui/campos.tsx`): CPF, telefone, RA e data ganham formato na tela,
     mas quem decide o que é gravado continua sendo o back-end. A **data deixou de ser

@@ -19,13 +19,22 @@
 
 ---
 
+## 2026-10-01 — nono dígito no telefone e "escola" no lugar de "tenant"
+
+- **Andou?** não — nenhum fluxo do beta mudou de estado; foi correção dos achados 1 e 2 do
+  `qa-browser` na tela de Responsáveis (opção A: o celular de oito dígitos ganha o `9`).
+- **Rótulo:** `polimento`.
+- **Próxima ação:** conferir nos logs da produção se o `from` da Meta chega sem o nono
+  dígito — se chegar, o inbound não casa com o cadastro. Depois, escolher **um** fluxo do corte.
+- **Precisa de deploy?** sim, back-end (homolog e produção) — sem migration. Cadastros já
+  gravados sem o 9 não são corrigidos.
+
 ## 2026-10-01 — simulador local do WhatsApp, agentes e o CI de volta ao verde
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; entrou ferramenta de desenvolvimento.
 - **Rótulo:** `infra`.
-- **Próxima ação:** decidir o nono dígito do telefone (opções A/B/C em
-  [`docs/qa/2026-10-01-tela-responsaveis.md`](docs/qa/2026-10-01-tela-responsaveis.md)) e
-  corrigir num `fix/`; é o achado da primeira rodada do `qa-browser`. Depois, escolher
+- **Próxima ação:** decidir o nono dígito do telefone (opções A/B/C do relatório de QA da
+  tela de Responsáveis, retirado depois da correção — PR #105) e corrigir num `fix/`; é o achado da primeira rodada do `qa-browser`. Depois, escolher
   **um** fluxo do corte.
 - **Precisa de deploy?** não para o que entrou. Mas o homolog **segue sem publicar**: o CI
   da `develop` voltou a passar (#102 `greenlet`, #103 imagem do MinIO) e a esteira pulou o

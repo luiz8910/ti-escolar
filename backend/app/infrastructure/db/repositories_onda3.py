@@ -105,7 +105,7 @@ class SqlAvisoFaltaRepository:
     async def atualizar(self, aviso: AvisoFalta) -> AvisoFalta:
         row = await self._orm(tenant_id=aviso.tenant_id, aviso_id=aviso.id)
         if row is None:
-            raise ValueError("Aviso de falta não encontrado para o tenant.")
+            raise ValueError("Aviso de falta não encontrado nesta escola.")
         row.professor_id = aviso.professor_id
         row.professor_nome = aviso.professor_nome
         row.data = aviso.data
@@ -321,7 +321,7 @@ class SqlSolicitacaoMatriculaRepository:
             tenant_id=solicitacao.tenant_id, solicitacao_id=solicitacao.id
         )
         if row is None:
-            raise ValueError("Solicitação de matrícula não encontrada para o tenant.")
+            raise ValueError("Solicitação de matrícula não encontrada nesta escola.")
         row.nome_responsavel = solicitacao.nome_responsavel
         row.nome_aluno = solicitacao.nome_aluno
         row.status = solicitacao.status.value

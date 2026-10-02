@@ -80,7 +80,7 @@ class CriarRespostaRapida:
         if not conteudo:
             raise ValueError("A resposta rápida precisa de um conteúdo.")
         if await self._respostas.por_chave(tenant_id=tenant_id, chave=chave):
-            raise ValueError("Já existe uma resposta rápida com esta chave neste tenant.")
+            raise ValueError("Já existe uma resposta rápida com esta chave nesta escola.")
 
         resposta = RespostaRapida(
             tenant_id=tenant_id, chave=chave, conteudo=conteudo, ativo=ativo
@@ -105,7 +105,7 @@ class ObterRespostaRapida:
     async def executar(self, *, tenant_id: UUID, resposta_id: UUID) -> RespostaRapida:
         resposta = await self._respostas.obter(tenant_id=tenant_id, resposta_id=resposta_id)
         if resposta is None:
-            raise ValueError("Resposta rápida não encontrada para o tenant.")
+            raise ValueError("Resposta rápida não encontrada nesta escola.")
         return resposta
 
 
@@ -138,7 +138,7 @@ class AtualizarRespostaRapida:
     ) -> RespostaRapida:
         atual = await self._respostas.obter(tenant_id=tenant_id, resposta_id=resposta_id)
         if atual is None:
-            raise ValueError("Resposta rápida não encontrada para o tenant.")
+            raise ValueError("Resposta rápida não encontrada nesta escola.")
         chave = chave.strip()
         conteudo = conteudo.strip()
         if not chave:
@@ -148,7 +148,7 @@ class AtualizarRespostaRapida:
         if chave != atual.chave:
             existente = await self._respostas.por_chave(tenant_id=tenant_id, chave=chave)
             if existente is not None and existente.id != resposta_id:
-                raise ValueError("Já existe uma resposta rápida com esta chave neste tenant.")
+                raise ValueError("Já existe uma resposta rápida com esta chave nesta escola.")
 
         # Reindexação: remove o conteúdo antigo do RAG e indexa o novo (se ativa).
         await self._rag.remover(atual)
