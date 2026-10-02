@@ -80,7 +80,7 @@ resumo e **pulam o deploy** — em vez de falhar por um motivo que não é de c�
 | Nome | Tipo | Onde conseguir |
 |---|---|---|
 | `RENDER_DEPLOY_HOOK_URL` | secret | Render → serviço → Settings → **Deploy Hook** |
-| `FLY_API_TOKEN` | secret | `fly tokens create org` (o mesmo de `~/.openclaw/fly/credenciais.env`) |
+| `FLY_API_TOKEN` | secret | `fly tokens create org` (o mesmo de `~/.config/ti-escolar/segredos/fly.env`) |
 | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` | secrets | já exigidos por `web.yml` e `site.yml` |
 | `HOMOLOG_BASE_URL` | variable | URL da API no Render (ex.: `https://ti-escolar.onrender.com`) |
 | `PRODUCAO_BASE_URL` | variable | `https://api.tiescolar.com.br` |

@@ -25,7 +25,7 @@ Até 02/set/2026 o deploy era manual, como no Render. O comando continua valendo
 rollback, para depurar o build, ou quando a esteira estiver indisponível:
 
 ```bash
-export FLY_API_TOKEN=...        # ~/.openclaw/fly/credenciais.env (Organization Token)
+export FLY_API_TOKEN=...        # ~/.config/ti-escolar/segredos/fly.env (Organization Token)
 cd backend && fly deploy --build-arg GIT_SHA=$(git rev-parse HEAD)
 # o contexto do build é backend/, não a raiz
 ```
@@ -60,7 +60,8 @@ Três coisas que o `fly.toml` faz de propósito, e que quebram se alguém "simpl
 
 Ficam na Fly (`fly secrets`), nunca no repositório. A Fly **não mostra o valor depois de
 gravado** — só o digest —, então os que foram gerados aqui estão em
-`~/.openclaw/fly/ti-escolar-producao.env` (permissão 600), na mesma pasta do token.
+`~/.config/ti-escolar/segredos/` (permissão 600), na mesma pasta do token: `producao-fly.env`,
+`producao-meta.env` e `s3-prod.env`.
 
 ```bash
 fly secrets list --app ti-escolar                    # nomes e digests
@@ -76,10 +77,20 @@ grep -v '^#' arquivo.env | fly secrets import --app ti-escolar
 | `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` | gravados em 29/ago/2026 — o token é o mesmo system user `ti_escolar_backend` do homolog, porque ele é do portfólio e não do ambiente |
 | `META_APP_SECRET` | gravado em 30/ago/2026. **Confira-o antes do deploy** com `GET /oauth/access_token?grant_type=client_credentials`: é a única chamada que prova o par app_id + segredo sem efeito colateral, e um segredo errado não falha no boot — só aparece como 403 em todo webhook, depois que a URL já foi apontada |
 | `OPENAI_API_KEY` + `LLM_PROVIDER` / `LLM_MODEL` / `EMBEDDINGS_*` | gravados em 30/ago/2026 (`openai_compatible`, `gpt-4o-mini`). Sem eles o bot responde com o provider `fake`: o transporte funciona e o **conteúdo é mentira**, que é a falha mais fácil de confundir com sucesso num teste. `LLM_BASE_URL` fica de fora **de propósito** — o default do código já é `https://api.openai.com/v1` |
+| `ARQUIVO_STORAGE`, `S3_BUCKET_DOCUMENTOS`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | gravados (`fly secrets import` de `s3-prod.env`); o `/health` responde `"storage": "s3"` (conferido em 01/out/2026). `S3_KMS_KEY_ID` e `S3_ENDPOINT_URL` ficam **vazios** — o endpoint é só para o MinIO local e do CI |
+| `RESEND_API_KEY` | ❌ **falta** (01/out/2026). Sem ela o adaptador cai no de log: o processo sobe, **nenhum e-mail sai** (aviso de licença a vencer, §6e) e só o painel de segurança acusa. O que destrava está em [`pendencias-externas.md`](pendencias-externas.md) §5 |
+| `EMAIL_PROVIDER`, `EMAIL_FROM` | ❌ **faltam** — entram junto com a chave. Não são segredo: o lugar delas é o `[env]` do `fly.toml` (`EMAIL_PROVIDER = "resend"`, `EMAIL_FROM = "no-reply@tiescolar.com.br"`). Os defaults do código são `log` e `no-reply@tiescolar.test`: só a chave, sem as duas, **continua não enviando nada** |
+| `ANTHROPIC_API_KEY` | ❌ não gravada. A resposta do bot não depende dela (o provider é `openai_compatible`), mas a **leitura de documento por IA** (§6k.1) só tem adaptador da Anthropic e, sem a chave, cai no leitor falso |
 
 O que **não** é segredo (`APP_ENV`, `MESSAGE_CHANNEL`, CORS…) mora no `[env]` do `fly.toml`,
 versionado, porque esconder configuração de ambiente num painel é como o deploy do Render
 ficou atrás da `main` sem ninguém perceber.
+
+> **O que não aparece na tabela tem default no código** e não precisa existir na Fly: logs
+> (`LOG_*`), limite de taxa (`RATE_LIMIT_*`), retomada de disparo (`BROADCAST_RETOMADA_*`),
+> `EMBEDDINGS_MODEL`, `LICENSE_WARNING_DAYS`, `DOCUMENTO_RETENCAO_DIAS`. `SEED_DEMO` e as
+> `DEMO_*` não se aplicam: produção não semeia. A lista inteira, com o default de cada uma,
+> é a classe `Settings` em `backend/app/config.py`.
 
 ## O canal do WhatsApp — ligado em 29–30/ago/2026
 

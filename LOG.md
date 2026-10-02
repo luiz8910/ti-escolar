@@ -19,6 +19,20 @@
 
 ---
 
+## 2026-10-01 — inventário de variáveis de ambiente e os documentos que mentiam
+
+- **Andou?** não — nenhum fluxo do beta mudou de estado.
+- **Rótulo:** `documentação`.
+- **Próxima ação:** cadastrar os quatro nomes das esteiras no GitHub
+  ([`docs/pendencias-externas.md`](docs/pendencias-externas.md) §1) e publicar o homolog,
+  que roda código anterior à própria esteira. Depois, a chave do Resend (§5).
+- **Precisa de deploy?** não — só documentação.
+- Entrou: §1 e §2 das pendências reescritos contra o que está no ar (PR #87 mergeado em
+  07/set; S3 ligado na produção), §5 novo (e-mail), a tabela de segredos de
+  `producao-fly.md` com S3, e-mail e `ANTHROPIC_API_KEY`, e o caminho dos segredos
+  (`~/.config/ti-escolar/segredos`, não mais `~/.openclaw`). Conferido por
+  `fly secrets list`, `gh secret list` e `/health` — Render e Vercel **não** foram olhados.
+
 ## 2026-10-01 — nono dígito no telefone e "escola" no lugar de "tenant"
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; foi correção dos achados 1 e 2 do
