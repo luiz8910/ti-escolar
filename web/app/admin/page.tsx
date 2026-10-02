@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   adicionarContato,
+  atualizarGrupo,
   consultarQuota,
+  Contato,
   criarGrupo,
   enviarParaGrupo,
   exigeEscolhaDeEscola,
@@ -17,6 +19,8 @@ import {
   ParametroDisparo,
   placeholdersDoCorpo,
   Quota,
+  removerContatoDoGrupo,
+  removerGrupo,
   ResultadoEnvioGrupo,
   TemplateMensagem,
   trechoDoPlaceholder,
@@ -27,12 +31,13 @@ import { AppShell } from "@/components/layout/AppShell";
 import { QuotaBar } from "@/components/layout/QuotaBar";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Input, Select, Textarea } from "@/components/ui/form";
+import { Field, Input, Select, Textarea } from "@/components/ui/form";
+import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { CampoTelefone } from "@/components/ui/campos";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
-import { UsersIcon, PlusIcon } from "@/components/ui/icons";
+import { PencilIcon, PlusIcon, TrashIcon, UsersIcon } from "@/components/ui/icons";
 import { formatarTelefone } from "@/lib/mascaras";
 
 export default function AdminDashboard() {
@@ -104,6 +109,11 @@ export default function AdminDashboard() {
   );
 }
 
+/** "1 contato", "2 contatos" — a tela dizia "Enviar para 1 contatos". */
+function plural(n: number, um: string, varios: string): string {
+  return `${n} ${n === 1 ? um : varios}`;
+}
+
 function GruposPanel({
   grupos,
   selecionado,
@@ -117,17 +127,26 @@ function GruposPanel({
 }) {
   const toast = useToast();
   const [novo, setNovo] = useState("");
+  const [criando, setCriando] = useState(false);
 
   async function criar(e: React.FormEvent) {
     e.preventDefault();
-    if (!novo.trim()) return;
+    if (criando || !novo.trim()) return;
+    setCriando(true);
     try {
       await criarGrupo(novo.trim(), "");
       setNovo("");
       await onCriado();
       toast({ tone: "success", title: "Grupo criado." });
-    } catch {
-      toast({ tone: "danger", title: "Não foi possível criar o grupo." });
+    } catch (err) {
+      // O servidor diz o motivo (nome repetido, por exemplo); "não foi possível" sozinho
+      // deixava a secretaria tentando de novo o mesmo nome.
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Não foi possível criar o grupo.",
+      });
+    } finally {
+      setCriando(false);
     }
   }
 
@@ -164,7 +183,7 @@ function GruposPanel({
       </div>
       <form onSubmit={criar} className="mt-auto flex gap-2 border-t border-n-100 pt-3.5">
         <Input value={novo} onChange={(e) => setNovo(e.target.value)} placeholder="Novo grupo…" />
-        <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+        <Button size="sm" type="submit" loading={criando} leftIcon={<PlusIcon size={15} />}>
           Criar
         </Button>
       </form>
@@ -189,6 +208,10 @@ function GrupoDetalhe({
   const [resultado, setResultado] = useState<ResultadoEnvioGrupo | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [adicionando, setAdicionando] = useState(false);
+  const [salvandoContato, setSalvandoContato] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [excluindoGrupo, setExcluindoGrupo] = useState(false);
+  const [removendo, setRemovendo] = useState<Contato | null>(null);
 
   // Só os aprovados **na conta desta escola**: quem decide isso é o servidor, que conhece
   // o vínculo escola → conta. Oferecer os demais seria convidar a um disparo que a Graph
@@ -238,7 +261,8 @@ function GrupoDetalhe({
 
   async function addContato(e: React.FormEvent) {
     e.preventDefault();
-    if (!nome.trim() || !telefone.trim()) return;
+    if (salvandoContato || !nome.trim() || !telefone.trim()) return;
+    setSalvandoContato(true);
     try {
       await adicionarContato(grupo!.id, nome.trim(), telefone.trim());
       setNome("");
@@ -250,6 +274,38 @@ function GrupoDetalhe({
       toast({
         tone: "danger",
         title: err instanceof Error ? err.message : "Falha ao adicionar contato.",
+      });
+    } finally {
+      setSalvandoContato(false);
+    }
+  }
+
+  async function confirmarRemocaoDoContato() {
+    if (!removendo) return;
+    const contato = removendo;
+    setRemovendo(null);
+    try {
+      await removerContatoDoGrupo(grupo!.id, contato.id);
+      await onMudou();
+      toast({ tone: "success", title: `${contato.nome} saiu do grupo.` });
+    } catch (err) {
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao remover o contato.",
+      });
+    }
+  }
+
+  async function confirmarExclusaoDoGrupo() {
+    setExcluindoGrupo(false);
+    try {
+      await removerGrupo(grupo!.id);
+      await onMudou();
+      toast({ tone: "success", title: "Grupo excluído." });
+    } catch (err) {
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao excluir o grupo.",
       });
     }
   }
@@ -270,10 +326,13 @@ function GrupoDetalhe({
       setTitulo("");
       setParametros((atuais) => atuais.map((p) => ({ ...p, texto: "" })));
       await onMudou();
+      // Cancelado por outra tela enquanto saía: dizer "concluído" esconderia que parte
+      // do grupo não recebeu.
+      const cancelado = r.broadcast.status === "cancelado";
       toast({
-        tone: "success",
-        title: "Disparo concluído.",
-        description: `${r.broadcast.enviados} enviados · ${r.broadcast.restante_cota} restantes na cota.`,
+        tone: cancelado ? "info" : "success",
+        title: cancelado ? "Disparo cancelado durante o envio." : "Disparo concluído.",
+        description: `${plural(r.broadcast.enviados, "enviado", "enviados")} · ${r.broadcast.restante_cota} restantes na cota.`,
       });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao enviar." });
@@ -288,20 +347,39 @@ function GrupoDetalhe({
         title={
           <>
             {grupo.nome}{" "}
-            <span className="font-semibold text-n-400">· {grupo.total_membros} contatos</span>
+            <span className="font-semibold text-n-400">· {plural(grupo.total_membros, "contato", "contatos")}</span>
           </>
         }
         action={
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<PlusIcon size={14} />}
-            onClick={() => setAdicionando((v) => !v)}
-          >
-            Contato
-          </Button>
+          <div className="flex flex-wrap justify-end gap-1.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<PlusIcon size={14} />}
+              onClick={() => setAdicionando((v) => !v)}
+            >
+              Contato
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<PencilIcon size={14} />}
+              onClick={() => setEditando(true)}
+            >
+              Editar
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              leftIcon={<TrashIcon size={14} />}
+              onClick={() => setExcluindoGrupo(true)}
+            >
+              Excluir
+            </Button>
+          </div>
         }
       />
+      {grupo.descricao && <p className="-mt-2 mb-3 text-xs text-n-500">{grupo.descricao}</p>}
 
       <TableWrap>
         <Table>
@@ -309,6 +387,7 @@ function GrupoDetalhe({
             <tr>
               <Th>Responsável</Th>
               <Th>WhatsApp</Th>
+              <Th className="text-right">Ações</Th>
             </tr>
           </thead>
           <tbody>
@@ -316,11 +395,16 @@ function GrupoDetalhe({
               <Tr key={c.id}>
                 <Td className="font-medium">{c.nome}</Td>
                 <Td className="font-mono text-xs text-n-500">{formatarTelefone(c.telefone)}</Td>
+                <Td className="text-right">
+                  <Button size="sm" variant="danger" onClick={() => setRemovendo(c)}>
+                    Remover
+                  </Button>
+                </Td>
               </Tr>
             ))}
             {grupo.membros.length === 0 && (
               <Tr>
-                <Td colSpan={2} className="text-n-400">
+                <Td colSpan={3} className="text-n-400">
                   Sem contatos neste grupo.
                 </Td>
               </Tr>
@@ -343,7 +427,7 @@ function GrupoDetalhe({
             value={telefone}
             onChange={setTelefone}
           />
-          <Button variant="secondary" size="sm" type="submit">
+          <Button variant="secondary" size="sm" type="submit" loading={salvandoContato}>
             Adicionar
           </Button>
         </form>
@@ -436,14 +520,20 @@ function GrupoDetalhe({
               disabled={!template}
               className="self-start"
             >
-              {enviando ? "Enviando…" : `Enviar para ${grupo.total_membros} contatos`}
+              {enviando
+                ? "Enviando…"
+                : `Enviar para ${plural(grupo.total_membros, "contato", "contatos")}`}
             </Button>
           </form>
         )}
 
         {resultado && (
           <div className="mt-4 rounded-md bg-success-soft p-3 text-[13px] text-success">
-            ✓ Disparo concluído — <b>{resultado.broadcast.enviados}</b> enviados
+            {resultado.broadcast.status === "cancelado"
+              ? "Disparo cancelado durante o envio"
+              : "✓ Disparo concluído"}{" "}
+            — <b>{resultado.broadcast.enviados}</b>{" "}
+            {resultado.broadcast.enviados === 1 ? "enviado" : "enviados"}
             {resultado.broadcast.falhas > 0 && `, ${resultado.broadcast.falhas} falhas`}
             {resultado.broadcast.bloqueados_por_limite > 0 &&
               `, ${resultado.broadcast.bloqueados_por_limite} bloqueados pela cota`}
@@ -451,6 +541,120 @@ function GrupoDetalhe({
           </div>
         )}
       </div>
+
+      {editando && (
+        <EditarGrupoModal grupo={grupo} onClose={() => setEditando(false)} onMudou={onMudou} />
+      )}
+
+      <ConfirmDialog
+        open={excluindoGrupo}
+        onClose={() => setExcluindoGrupo(false)}
+        onConfirm={confirmarExclusaoDoGrupo}
+        title={`Excluir grupo — ${grupo.nome}`}
+        message={
+          "O grupo deixa de existir e não poderá mais receber disparos. " +
+          (grupo.total_membros > 0
+            ? `${plural(grupo.total_membros, "contato continua", "contatos continuam")} ` +
+              "em Responsáveis, e os "
+            : "Os ") +
+          "disparos já feitos continuam no histórico."
+        }
+      />
+
+      <ConfirmDialog
+        open={removendo !== null}
+        onClose={() => setRemovendo(null)}
+        onConfirm={confirmarRemocaoDoContato}
+        title="Remover do grupo"
+        confirmLabel="Remover"
+        message={
+          removendo
+            ? `${removendo.nome} deixa de receber os disparos de “${grupo.nome}”, mas ` +
+              `continua cadastrado em Responsáveis.`
+            : ""
+        }
+      />
     </Card>
+  );
+}
+
+/** Nome e descrição do grupo. Os contatos são geridos na lista, não aqui. */
+function EditarGrupoModal({
+  grupo,
+  onClose,
+  onMudou,
+}: {
+  grupo: Grupo;
+  onClose: () => void;
+  onMudou: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [nome, setNome] = useState(grupo.nome);
+  const [descricao, setDescricao] = useState(grupo.descricao);
+  const [erro, setErro] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (salvando) return;
+    if (!nome.trim()) {
+      setErro("Informe o nome do grupo.");
+      return;
+    }
+    setSalvando(true);
+    setErro("");
+    try {
+      await atualizarGrupo(grupo.id, nome.trim(), descricao.trim());
+      onClose();
+      await onMudou();
+      toast({ tone: "success", title: "Grupo atualizado." });
+    } catch (err) {
+      // Nome repetido é o erro comum: fica no formulário, para corrigir sem reabrir.
+      setErro(err instanceof Error ? err.message : "Falha ao salvar o grupo.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Editar grupo"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button size="sm" onClick={() => salvar()} loading={salvando}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={salvar} className="flex flex-col gap-3">
+        <Field label="Nome" htmlFor="grupo-nome">
+          <Input
+            id="grupo-nome"
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+            autoFocus
+          />
+        </Field>
+        <Field label="Descrição (opcional)" htmlFor="grupo-descricao">
+          <Textarea
+            id="grupo-descricao"
+            value={descricao}
+            onChange={(e) => setDescricao(e.target.value)}
+            rows={2}
+          />
+        </Field>
+        {erro && (
+          <p className="rounded-lg bg-danger-soft px-3 py-2 text-[12.5px] text-danger">{erro}</p>
+        )}
+        {/* Enter no campo salva; os botões ficam no rodapé do modal. */}
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
+    </Modal>
   );
 }

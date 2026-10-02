@@ -74,6 +74,15 @@ export function mascaraTelefone(bruto: string): string {
   return `(${ddd}) ${resto.slice(0, corte)}-${resto.slice(corte)}`;
 }
 
+/**
+ * DDD + número: 10 dígitos (fixo, ou celular digitado sem o 9) ou 11. Mesma régua do
+ * back-end para número sem DDI — o campo com máscara não deixa digitar outra coisa.
+ */
+export function telefoneCompleto(bruto: string): boolean {
+  const total = somenteDigitos(mascaraTelefone(bruto)).length;
+  return total === 10 || total === 11;
+}
+
 /** Telefone vindo da API (E.164) pronto para exibição em lista. */
 export function formatarTelefone(e164: string): string {
   const mascarado = mascaraTelefone(e164);

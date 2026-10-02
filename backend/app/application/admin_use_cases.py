@@ -7,11 +7,12 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.application.use_cases import EnviarBroadcast, ResultadoBroadcast
-from app.application.validacao import TelefoneInvalido, normalizar_telefone, telefone_ou_erro
+from app.application.validacao import TelefoneInvalido, telefone_ou_erro
 from app.application.validacao_template import placeholders_do_corpo
 from app.domain.entities import (
     Broadcast,
     Cargo,
+    Contato,
     DestinatarioBroadcast,
     Grupo,
     Papel,
@@ -41,9 +42,7 @@ class DadosUsuario:
 
 
 def _validar_dados_usuario(dados: DadosUsuario) -> DadosUsuario:
-    e164, aviso = normalizar_telefone(dados.telefone)
-    if aviso:
-        raise ValueError(f"Telefone: {aviso}")
+    e164 = telefone_ou_erro(dados.telefone, campo="Telefone")
     return DadosUsuario(telefone=e164, endereco=dados.endereco.strip(), turno=dados.turno)
 
 
@@ -225,12 +224,96 @@ class AutenticarUsuario:
 # --------------------------------------------------------------------------- #
 # Grupos e contatos
 # --------------------------------------------------------------------------- #
+class GrupoNaoEncontrado(LookupError):
+    """O grupo não existe **nesta escola** — o de outra escola é indistinguível disso."""
+
+
+async def _nome_de_grupo_livre(
+    grupos: GrupoRepository, *, tenant_id: UUID, nome: str, ignorar: UUID | None = None
+) -> str:
+    """Nome aparado, recusando vazio e repetido na escola.
+
+    O banco já tem ``uq_grupo_tenant_nome``; conferir antes troca o 409 genérico da
+    restrição por uma frase que diz o que corrigir. Compara sem diferenciar maiúsculas:
+    "Turma 5º A" e "turma 5º a" na mesma lista são o mesmo grupo para quem escolhe o
+    destino de um disparo.
+    """
+    nome = nome.strip()
+    if not nome:
+        raise ValueError("Informe o nome do grupo.")
+    for existente in await grupos.listar(tenant_id=tenant_id):
+        if existente.id != ignorar and existente.nome.strip().casefold() == nome.casefold():
+            raise ValueError(f"Já existe um grupo chamado '{existente.nome}' nesta escola.")
+    return nome
+
+
 class CriarGrupo:
     def __init__(self, *, grupos: GrupoRepository) -> None:
         self._grupos = grupos
 
     async def executar(self, *, tenant_id: UUID, nome: str, descricao: str = "") -> Grupo:
-        return await self._grupos.criar(Grupo(tenant_id=tenant_id, nome=nome, descricao=descricao))
+        nome = await _nome_de_grupo_livre(self._grupos, tenant_id=tenant_id, nome=nome)
+        return await self._grupos.criar(
+            Grupo(tenant_id=tenant_id, nome=nome, descricao=descricao.strip())
+        )
+
+
+class AtualizarGrupo:
+    """Renomeia o grupo e troca a descrição. Os contatos não mudam."""
+
+    def __init__(self, *, grupos: GrupoRepository) -> None:
+        self._grupos = grupos
+
+    async def executar(
+        self, *, tenant_id: UUID, grupo_id: UUID, nome: str, descricao: str = ""
+    ) -> Grupo:
+        grupo = await self._grupos.obter(tenant_id=tenant_id, grupo_id=grupo_id)
+        if grupo is None:
+            raise GrupoNaoEncontrado("Grupo não encontrado nesta escola.")
+        grupo.nome = await _nome_de_grupo_livre(
+            self._grupos, tenant_id=tenant_id, nome=nome, ignorar=grupo_id
+        )
+        grupo.descricao = descricao.strip()
+        atualizado = await self._grupos.atualizar(grupo)
+        if atualizado is None:
+            raise GrupoNaoEncontrado("Grupo não encontrado nesta escola.")
+        return atualizado
+
+
+class RemoverGrupo:
+    """Exclui o grupo. **Os contatos ficam**: são os responsáveis da escola, e o grupo é
+    só uma lista de distribuição por cima deles. O histórico de disparos também fica —
+    o disparo guarda os destinatários, não o grupo."""
+
+    def __init__(self, *, grupos: GrupoRepository) -> None:
+        self._grupos = grupos
+
+    async def executar(self, *, tenant_id: UUID, grupo_id: UUID) -> Grupo:
+        grupo = await self._grupos.obter(tenant_id=tenant_id, grupo_id=grupo_id)
+        if grupo is None or not await self._grupos.remover(
+            tenant_id=tenant_id, grupo_id=grupo_id
+        ):
+            raise GrupoNaoEncontrado("Grupo não encontrado nesta escola.")
+        return grupo
+
+
+class RemoverContatoDoGrupo:
+    """Tira um contato do grupo, sem apagar o responsável do cadastro."""
+
+    def __init__(self, *, grupos: GrupoRepository) -> None:
+        self._grupos = grupos
+
+    async def executar(
+        self, *, tenant_id: UUID, grupo_id: UUID, contato_id: UUID
+    ) -> tuple[Grupo, Contato]:
+        """Devolve o grupo e o contato como eram, para a auditoria dizer quem saiu de onde."""
+        grupo = await self._grupos.obter(tenant_id=tenant_id, grupo_id=grupo_id)
+        contato = next((c for c in grupo.membros if c.id == contato_id), None) if grupo else None
+        if contato is None or not await self._grupos.remover_contato(
+            tenant_id=tenant_id, grupo_id=grupo_id, contato_id=contato_id
+        ):
+            raise GrupoNaoEncontrado("Contato ou grupo não encontrado nesta escola.")
+        return grupo, contato
 
 
 class AdicionarContatoAoGrupo:

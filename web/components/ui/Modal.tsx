@@ -90,6 +90,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Excluir",
+  cancelLabel = "Cancelar",
 }: {
   open: boolean;
   onClose: () => void;
@@ -97,6 +98,9 @@ export function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel?: string;
+  /** Para quando a ação confirmada **é** um cancelamento: "Cancelar" ao lado de
+   *  "Cancelar disparo" não diz qual dos dois desiste. */
+  cancelLabel?: string;
 }) {
   return (
     <Modal
@@ -106,7 +110,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>
-            Cancelar
+            {cancelLabel}
           </Button>
           <Button variant="danger" size="sm" onClick={onConfirm}>
             {confirmLabel}

@@ -38,12 +38,43 @@ sob a seção **HISTÓRICO** da sidebar (`web/app/admin/historico/`). Tudo escop
   `ListarBroadcastsDaEscola` resolve o nome do template em lote; `ObterBroadcastDaEscola` monta o
   detalhe (`GET /api/admin/escolas/{tenant_id}/broadcasts[/{broadcast_id}]`). Conecta-se à
   confirmação de recebimento (§9b: `.../nao-entregues`).
+  - **Renomear** (`PUT .../broadcasts/{broadcast_id}`). Do disparo só o **título** muda:
+    template, destinatários e texto já saíram para o WhatsApp, e editá-los faria o
+    histórico contar uma mensagem que ninguém recebeu. `renomear` não passa por `salvar`,
+    que regrava os destinatários e atropelaria um status chegando do webhook.
+  - **Disparo não se exclui.** O que já saiu é o registro de que a escola avisou, e de
+    quem recebeu; apagar não desfaz a mensagem e só some com a prova. A exclusão chegou a
+    existir por um dia (out/2026) e foi retirada: só servia para o disparo concluído, que
+    é justamente o que não há motivo para apagar.
+  - **Cancelar** (`POST .../broadcasts/{broadcast_id}/cancelar`, `CancelarBroadcastDaEscola`)
+    vale para o que ainda tem mensagem por enviar — `em_envio`, `parcial_limite`,
+    `agendado`. O disparo vira `cancelado` e os destinatários pendentes também (status de
+    entrega `cancelado`, que **não é falha**: nada foi tentado). Quem já recebeu continua
+    como recebeu. Disparo encerrado responde 409.
+  - **Cancelar interrompe de verdade**, e são três cuidados em `EnviarBroadcast`:
+    1. **O disparo novo é gravado e confirmado antes do primeiro envio.** Antes ele só
+       existia no banco ao fim do lote — durante o minuto ou dois em que 250 mensagens
+       saem, não aparecia no histórico e não havia o que cancelar.
+    2. **O status é relido do banco antes de cada destinatário** (`status_atual`, só a
+       coluna, pela chave primária). O envio trabalha sobre uma cópia em memória e não
+       veria o cancelamento de outra sessão de outro jeito. Sai, no máximo, a mensagem
+       que já estava a caminho.
+    3. **A última leitura trava a linha** (`FOR UPDATE`) e o envio confirma logo depois de
+       gravar. `salvar` regrava status e destinatários: um cancelamento que entrasse entre
+       a leitura e a escrita seria apagado, o disparo voltaria a `parcial_limite` e **a
+       retomada mandaria o resto no dia seguinte**.
+    A retomada também relê o status ao começar cada disparo — ela lista os pendentes e só
+    depois os percorre.
+  - **A contagem do cancelamento em curso é um teto.** O progresso do lote só é gravado
+    quando ele para; cancelar um disparo `em_envio` devolve "todos aguardavam", e o número
+    certo aparece no histórico assim que o envio encerra. A tela diz isso em vez do número.
 - **Auditoria de ações** (`/historico/auditoria`): log de **quem fez o quê e quando**, para
   rastreabilidade/compliance. A entidade `RegistroAuditoria` (`ator` ∈ {`usuario`, `llm`,
   `sistema`}, `acao`, `descricao`, `metadados` JSON) é persistida em `auditoria`
   (migration `0007_auditoria`) via porta `AuditLogRepository`. **Instrumentado:** ações de
   usuários logados no `app/interfaces/api/admin.py` (`login`, `usuario.criar`, `grupo.criar`,
-  `broadcast.grupo.enviar`). Casos de uso `RegistrarAuditoria`/`ListarAuditoria`
+  `grupo.atualizar`, `grupo.excluir`, `grupo.contato.remover`, `broadcast.grupo.enviar`,
+  `broadcast.renomear`, `broadcast.cancelar`). Casos de uso `RegistrarAuditoria`/`ListarAuditoria`
   (`app/application/auditoria_use_cases.py`); auditar é **tolerante a falhas** (nunca derruba
   a ação auditada). Endpoint: `GET /api/admin/escolas/{tenant_id}/auditoria?limite=`.
   - **O ator é reidentificado na leitura** (12/ago/2026). `RegistroAuditoria.ator_nome` é

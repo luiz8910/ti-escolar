@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,7 @@ from app.domain.entities import (
     Mensagem,
     MessageTemplate,
     ResumoConversa,
+    STATUS_BROADCAST_CANCELAVEIS,
     StatusBroadcast,
     StatusEntrega,
     StatusTemplate,
@@ -564,6 +565,67 @@ class SqlBroadcastRepository:
                 )
             ).scalar_one()
         )
+
+    async def _do_tenant(
+        self, *, tenant_id: uuid.UUID, broadcast_id: uuid.UUID
+    ) -> BroadcastORM | None:
+        stmt = (
+            select(BroadcastORM)
+            .where(BroadcastORM.id == broadcast_id, BroadcastORM.tenant_id == tenant_id)
+            .options(selectinload(BroadcastORM.destinatarios))
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def renomear(
+        self, *, tenant_id: uuid.UUID, broadcast_id: uuid.UUID, titulo: str
+    ) -> bool:
+        row = await self._do_tenant(tenant_id=tenant_id, broadcast_id=broadcast_id)
+        if row is None:
+            return False
+        row.titulo = titulo
+        await self._s.flush()
+        return True
+
+    async def status_atual(
+        self, broadcast_id: uuid.UUID, *, travar: bool = False
+    ) -> StatusBroadcast | None:
+        # Só a coluna, e não a entidade: `session.get` devolveria o objeto já carregado
+        # nesta sessão, com o status de antes do cancelamento.
+        stmt = select(BroadcastORM.status).where(BroadcastORM.id == broadcast_id)
+        if travar:
+            stmt = stmt.with_for_update()
+        bruto = (await self._s.execute(stmt)).scalar_one_or_none()
+        return StatusBroadcast(bruto) if bruto is not None else None
+
+    async def cancelar(self, *, tenant_id: uuid.UUID, broadcast_id: uuid.UUID) -> int | None:
+        # `FOR UPDATE`: se o envio estiver gravando o resultado neste instante, espera ele
+        # terminar e decide sobre o status que ficou — não sobre o que havia antes.
+        stmt = (
+            select(BroadcastORM)
+            .where(BroadcastORM.id == broadcast_id, BroadcastORM.tenant_id == tenant_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        cancelaveis = {s.value for s in STATUS_BROADCAST_CANCELAVEIS}
+        if row is None or row.status not in cancelaveis:
+            return None
+        row.status = StatusBroadcast.CANCELADO.value
+        resultado = await self._s.execute(
+            update(DestinatarioORM)
+            .where(
+                DestinatarioORM.broadcast_id == broadcast_id,
+                DestinatarioORM.status.in_(
+                    [StatusEntrega.PENDENTE.value, StatusEntrega.ENFILEIRADO.value]
+                ),
+            )
+            .values(status=StatusEntrega.CANCELADO.value, atualizado_em=_now())
+        )
+        await self._s.flush()
+        return int(resultado.rowcount or 0)
+
+    async def confirmar(self) -> None:
+        await self._s.commit()
 
     async def listar(
         self,

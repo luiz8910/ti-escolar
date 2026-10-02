@@ -56,9 +56,9 @@ const STATUS_ATENDIMENTO: Record<string, { rotulo: string; tone: "success" | "wa
 // Opções de itens por página — o usuário escolhe, o padrão é o menor (item 7).
 const TAMANHOS = [10, 25, 50, 100];
 const JANELAS = [
-  { valor: 1, rotulo: "última hora" },
-  { valor: 24, rotulo: "últimas 24h" },
-  { valor: 168, rotulo: "últimos 7 dias" },
+  { valor: 1, rotulo: "Resumo da última hora" },
+  { valor: 24, rotulo: "Resumo das últimas 24h" },
+  { valor: 168, rotulo: "Resumo dos últimos 7 dias" },
 ];
 
 function hora(data: string): string {
@@ -208,7 +208,7 @@ export default function LogsPage() {
           >
             {JANELAS.map((j) => (
               <option key={j.valor} value={j.valor}>
-                Resumo das {j.rotulo}
+                {j.rotulo}
               </option>
             ))}
           </Select>

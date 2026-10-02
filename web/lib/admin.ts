@@ -432,8 +432,40 @@ export async function criarGrupo(nome: string, descricao: string): Promise<Grupo
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
   });
-  if (!resp.ok) throw new Error(`Erro ${resp.status} ao criar grupo`);
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao criar grupo`);
   return resp.json();
+}
+
+export async function atualizarGrupo(
+  grupoId: string,
+  nome: string,
+  descricao: string,
+): Promise<Grupo> {
+  const resp = await apiFetch(`${API_URL}/api/admin/grupos/${grupoId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tenant_id: tenantEmFoco(), nome, descricao }),
+  });
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao salvar o grupo`);
+  return resp.json();
+}
+
+/** Exclui o grupo. Os contatos continuam cadastrados como responsáveis. */
+export async function removerGrupo(grupoId: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/grupos/${grupoId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao excluir o grupo`);
+}
+
+/** Tira o contato do grupo, sem apagar o responsável do cadastro. */
+export async function removerContatoDoGrupo(grupoId: string, contatoId: string): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/grupos/${grupoId}/contatos/${contatoId}?tenant_id=${tenantEmFoco()}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao remover o contato`);
 }
 
 export async function adicionarContato(
@@ -840,6 +872,40 @@ export async function obterBroadcast(
     { headers: authHeaders() }
   );
   if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao abrir o disparo`);
+  return resp.json();
+}
+
+/** Corrige o título do disparo no histórico. O que foi enviado não muda. */
+export async function renomearBroadcast(
+  tenantId: string,
+  broadcastId: string,
+  titulo: string,
+): Promise<void> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/broadcasts/${broadcastId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ titulo }),
+    },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao renomear o disparo`);
+}
+
+/**
+ * Interrompe um disparo que ainda tem mensagem por enviar. Quem já recebeu continua no
+ * histórico. `cancelados` é quantos ainda aguardavam — um teto quando `em_envio`, porque o
+ * progresso do lote em curso só é gravado quando ele para.
+ */
+export async function cancelarBroadcast(
+  tenantId: string,
+  broadcastId: string,
+): Promise<{ cancelados: number; em_envio: boolean }> {
+  const resp = await apiFetch(
+    `${API_URL}/api/admin/escolas/${tenantId}/broadcasts/${broadcastId}/cancelar`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!resp.ok) throw await erroDe(resp, `Erro ${resp.status} ao cancelar o disparo`);
   return resp.json();
 }
 

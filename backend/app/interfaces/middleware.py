@@ -21,6 +21,7 @@ import time
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -133,6 +134,29 @@ def registrar_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={"detail": exc.errors(), "id_correlacao": correlacao},
+            headers={CABECALHO_CORRELACAO: correlacao},
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def _conflito(request: Request, exc: IntegrityError) -> JSONResponse:
+        # Duas gravações do mesmo registro em paralelo (duplo clique, reenvio): as duas
+        # passam na checagem de duplicidade do caso de uso e a segunda só é barrada pela
+        # restrição do banco. Isso é conflito, não erro interno — e, como 500, saía do
+        # handler genérico sem os cabeçalhos de CORS, virando "Failed to fetch" na tela.
+        correlacao = correlacao_de(request)
+        logger.warning(
+            "Conflito de gravação em %s %s", request.method, request.url.path,
+            extra={"status_code": 409},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": (
+                    "Este registro já existe ou acabou de ser gravado. Atualize a página "
+                    "e confira antes de tentar de novo."
+                ),
+                "id_correlacao": correlacao,
+            },
             headers={CABECALHO_CORRELACAO: correlacao},
         )
 

@@ -154,3 +154,16 @@
 - **Próxima ação:** revisar e abrir o PR. Achado fora do escopo: `normalizar_telefone_contato`
   grava "(15) 98765-4321" como `+15987654321` (não assume o DDI 55).
 - **Precisa de deploy?** sim, back-end e painel — sem migration.
+
+## 2026-10-02 — QA do painel no navegador; grupos editáveis e cancelar disparo
+
+- **Andou?** sim — disparo a grupo conferido ponta a ponta no ambiente local (envio, simulador,
+  cota, histórico, auditoria); o grupo agora é editável e excluível, e o disparo pode ser
+  cancelado, inclusive enquanto sai. Na branch `fix/qa-painel-achados`, com PR contra a `develop`.
+- **Rótulo:** —
+- **Próxima ação:** revisar o PR. Em aberto, fora dele: cadastro (aluno, turma, professor,
+  responsável) não gera registro na Auditoria; o super admin aparece na Equipe da escola;
+  permissões de secretaria e professor não foram testadas no navegador; cancelar um disparo em
+  andamento só foi exercitado com canal lento, não pela tela.
+- **Precisa de deploy?** sim, back-end e painel — sem migration (`cancelado` é valor novo em
+  coluna de texto).

@@ -21,7 +21,7 @@ from app.application.validacao import (
     normalizar_cpf,
     normalizar_data,
     normalizar_email,
-    normalizar_telefone,
+    telefone_ou_erro,
 )
 from app.application.grade_horario import validar_grade
 from app.domain.entities import (
@@ -226,13 +226,16 @@ def _aplicar_dados_turma(sala: Sala, dados: DadosTurma | None, *, nome: str = ""
         sala.turma = dados.turma.strip().upper()
         sala.numero_sala = dados.numero_sala.strip()
         sala.periodo = dados.periodo
-        sala.grade_horario = validar_grade(dados.grade_horario)
     sala.nome = (nome.strip() or sala.nome).strip()
     derivado = sala.nome_derivado
     if derivado:
         sala.nome = derivado
     if not sala.nome:
         raise ValueError("A turma precisa de um nome (ou de etapa e turma).")
+    # A grade vem depois da identificação, na ordem do formulário: com tudo em branco, a
+    # tela acusava o horário de entrada e só depois lembrava que faltava a série.
+    if dados is not None:
+        sala.grade_horario = validar_grade(dados.grade_horario)
     return sala
 
 
@@ -750,12 +753,9 @@ def _e164_ou_erro(bruto: str, *, campo: str) -> str:
     a normalização acontece aqui, e não na tela: máscara é conforto de digitação, não
     contrato de dado.
     """
-    e164, aviso = normalizar_telefone(bruto)
-    if aviso:
-        raise ValueError(f"{campo}: {aviso}")
     # Vazio continua aceito: professor sem número existe (não entra na chamada de
     # eventual, §I1) e responsável sem telefone é o que a cobertura de contatos acusa.
-    return e164
+    return telefone_ou_erro(bruto, campo=campo)
 
 
 class CadastrarProfessor:

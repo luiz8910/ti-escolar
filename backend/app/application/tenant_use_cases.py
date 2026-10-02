@@ -23,6 +23,7 @@ from app.application.paginacao import (
     normalizar_paginacao,
 )
 from app.domain.entities import (
+    STATUS_BROADCAST_CANCELAVEIS,
     TIMEZONE_PADRAO,
     Broadcast,
     Conversa,
@@ -608,6 +609,71 @@ class ListarBroadcastsDaEscola:
             for b in bs
         ]
         return Pagina(itens=itens, total=total, pagina=pagina, por_pagina=por_pagina)
+
+
+class DisparoNaoEncontrado(LookupError):
+    """O disparo não existe **nesta escola**."""
+
+
+class DisparoJaEncerrado(ValueError):
+    """Não há envio pendente para cancelar: o disparo já terminou ou já foi cancelado."""
+
+
+class RenomearBroadcastDaEscola:
+    """Corrige o título do disparo — a única coisa que dá para mudar depois do envio.
+
+    O título é só o rótulo do histórico; template, destinatários e texto já saíram para o
+    WhatsApp, e editá-los aqui faria o registro contar uma mensagem que ninguém recebeu.
+    """
+
+    def __init__(self, *, broadcasts: BroadcastRepository) -> None:
+        self._broadcasts = broadcasts
+
+    async def executar(self, *, tenant_id: UUID, broadcast_id: UUID, titulo: str) -> str:
+        titulo = titulo.strip()
+        if not titulo:
+            raise ValueError("Informe o título do disparo.")
+        if len(titulo) > 300:
+            raise ValueError("O título do disparo tem no máximo 300 caracteres.")
+        if not await self._broadcasts.renomear(
+            tenant_id=tenant_id, broadcast_id=broadcast_id, titulo=titulo
+        ):
+            raise DisparoNaoEncontrado("Disparo não encontrado")
+        return titulo
+
+
+class CancelarBroadcastDaEscola:
+    """Interrompe um disparo que ainda tem mensagem por enviar.
+
+    Vale para o que está saindo agora, para o que a cota deixou pela metade e para o
+    agendado. Quem já recebeu continua no histórico como recebeu; os demais passam a
+    ``CANCELADO`` e a retomada não volta a eles. **Disparo enviado não se apaga**: o
+    histórico é o registro de que a escola avisou, e de quem.
+
+    O envio em curso descobre o cancelamento sozinho — ``EnviarBroadcast`` relê o status
+    antes de cada destinatário. Por isso aqui basta gravar.
+    """
+
+    def __init__(self, *, broadcasts: BroadcastRepository) -> None:
+        self._broadcasts = broadcasts
+
+    async def executar(self, *, tenant_id: UUID, broadcast_id: UUID) -> tuple[Broadcast, int]:
+        """Devolve o disparo como estava e quantos destinatários ainda aguardavam."""
+        broadcast = await self._broadcasts.obter(broadcast_id)
+        if broadcast is None or broadcast.tenant_id != tenant_id:
+            raise DisparoNaoEncontrado("Disparo não encontrado")
+        ja_encerrado = DisparoJaEncerrado(
+            "Este disparo já terminou — não há envio pendente para cancelar."
+        )
+        if broadcast.status not in STATUS_BROADCAST_CANCELAVEIS:
+            raise ja_encerrado
+        cancelados = await self._broadcasts.cancelar(
+            tenant_id=tenant_id, broadcast_id=broadcast_id
+        )
+        if cancelados is None:
+            # Terminou entre a leitura acima e a gravação.
+            raise ja_encerrado
+        return broadcast, cancelados
 
 
 @dataclass

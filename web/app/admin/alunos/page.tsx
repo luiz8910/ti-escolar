@@ -147,10 +147,14 @@ function AlunoForm({ salas, onMudou }: { salas: Sala[]; onMudou: () => Promise<v
   const [nome, setNome] = useState("");
   const [matricula, setMatricula] = useState("");
   const [salaId, setSalaId] = useState("");
+  const [salvando, setSalvando] = useState(false);
 
   async function cadastrar(e: React.FormEvent) {
     e.preventDefault();
-    if (!nome.trim() || !salaId) return;
+    // Sem a trava, um duplo clique manda dois POSTs antes de o formulário limpar — e o
+    // aluno entra duas vezes, idêntico, sem que nada no cadastro acuse a repetição.
+    if (salvando || !nome.trim() || !salaId) return;
+    setSalvando(true);
     try {
       await cadastrarAluno(nome.trim(), salaId, matricula.trim());
       setNome("");
@@ -163,6 +167,8 @@ function AlunoForm({ salas, onMudou }: { salas: Sala[]; onMudou: () => Promise<v
         tone: "danger",
         title: err instanceof Error ? err.message : "Falha ao cadastrar aluno.",
       });
+    } finally {
+      setSalvando(false);
     }
   }
 
@@ -171,7 +177,7 @@ function AlunoForm({ salas, onMudou }: { salas: Sala[]; onMudou: () => Promise<v
       <Card>
         <CardHeader title="Cadastrar aluno" />
         <p className="text-sm text-n-500">
-          Cadastre uma série em <strong>Salas e pais</strong> antes de matricular alunos — todo
+          Cadastre uma série em <strong>Turmas</strong> antes de matricular alunos — todo
           aluno pertence a uma série.
         </p>
       </Card>
@@ -209,7 +215,13 @@ function AlunoForm({ salas, onMudou }: { salas: Sala[]; onMudou: () => Promise<v
             </option>
           ))}
         </Select>
-        <Button size="sm" type="submit" disabled={!salaId} leftIcon={<PlusIcon size={15} />}>
+        <Button
+          size="sm"
+          type="submit"
+          loading={salvando}
+          disabled={!salaId}
+          leftIcon={<PlusIcon size={15} />}
+        >
           Cadastrar
         </Button>
       </form>

@@ -432,6 +432,20 @@ class ConversaDetalheSaida(BaseModel):
     mensagens: list[MensagemConversaSaida] = []
 
 
+class BroadcastTituloEntrada(BaseModel):
+    titulo: str
+
+
+class CancelamentoBroadcastSaida(BaseModel):
+    status: str
+    # Destinatários que ainda aguardavam e não vão mais receber.
+    cancelados: int
+    # O disparo estava saindo naquele instante. Nesse caso `cancelados` é um **teto**: o
+    # progresso do lote só é gravado ao fim, então parte desses já tinha recebido — a
+    # contagem certa aparece no histórico assim que o envio para.
+    em_envio: bool = False
+
+
 class BroadcastResumoSaida(BaseModel):
     id: UUID
     titulo: str
