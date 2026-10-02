@@ -33,9 +33,8 @@
 
 - **Andou?** não — nenhum fluxo do beta mudou de estado; entrou ferramenta de desenvolvimento.
 - **Rótulo:** `infra`.
-- **Próxima ação:** decidir o nono dígito do telefone (opções A/B/C em
-  [`docs/qa/2026-10-01-tela-responsaveis.md`](docs/qa/2026-10-01-tela-responsaveis.md)) e
-  corrigir num `fix/`; é o achado da primeira rodada do `qa-browser`. Depois, escolher
+- **Próxima ação:** decidir o nono dígito do telefone (opções A/B/C do relatório de QA da
+  tela de Responsáveis, retirado depois da correção — PR #105) e corrigir num `fix/`; é o achado da primeira rodada do `qa-browser`. Depois, escolher
   **um** fluxo do corte.
 - **Precisa de deploy?** não para o que entrou. Mas o homolog **segue sem publicar**: o CI
   da `develop` voltou a passar (#102 `greenlet`, #103 imagem do MinIO) e a esteira pulou o
