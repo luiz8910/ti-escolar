@@ -14,25 +14,27 @@
 
 ---
 
-## 1. Esteira de deploy — código pronto, sem push, sem PR  ⛔ **maior bloqueio hoje**
+## 1. Esteira de deploy — no repositório, sem os segredos  ⛔ **maior bloqueio hoje**
 
-**Estado:** a branch **`feat/pipelines-homolog-producao`** (commit `4090235`, escrito em
-02/set/2026) ficou **três dias só na máquina** — sem push, sem PR. Foi publicada em
-06/set e está no **[PR #87](https://github.com/luiz8910/ti-escolar/pull/87)**, aguardando
-merge. Ela traz `deploy-homolog.yml`, `deploy-producao.yml`, `postura.yml`, o `/health`
-ecoando o **commit da imagem** (`versao`), `scripts/aguarda_deploy.sh` e `docs/pipelines.md`.
+**Estado:** o **[PR #87](https://github.com/luiz8910/ti-escolar/pull/87)** entrou na `main`
+em 07/set/2026. `deploy-homolog.yml`, `deploy-producao.yml`, `postura.yml`, o `/health`
+ecoando o **commit da imagem** (`versao`), `scripts/aguarda_deploy.sh` e `docs/pipelines.md`
+estão no ar. O que falta é só a tabela abaixo — e em **01/out/2026** nenhum dos quatro
+itens marcados com ❌ existia (`gh secret list` / `gh variable list`).
 
-**O que está travado:** enquanto o PR não entrar, continua valendo o aviso do índice —
-*mergear na `main` não publica nada*. Foi exatamente esse silêncio que deixou o Render dias
-atrás da `main` em 09/ago, com `/health/pronto` respondendo 404 em produção. **E o merge
-sozinho não basta:** sem os segredos abaixo a esteira entra no ar e pula o deploy.
+**O que está travado:** sem eles, cada push roda o CI, avisa no resumo, **pula o deploy e
+termina verde**. Continua valendo o aviso do índice — *mergear não publica nada*. O retrato
+de 01/out: a produção está no head da `main` porque foi publicada **à mão**
+(`fly deploy`); o homolog respondia um `/health` **sem o campo `versao`**, isto é, rodava
+código anterior à própria esteira — no mesmo dia em que `deploy-homolog.yml` terminou com
+*success* duas vezes. É o mesmo silêncio que deixou o Render dias atrás da `main` em 09/ago.
 
 **O que só você faz** (Settings → Secrets and variables → Actions):
 
 | Nome | Tipo | Onde conseguir | Já existe? |
 |---|---|---|---|
 | `RENDER_DEPLOY_HOOK_URL` | secret | Render → serviço → Settings → **Deploy Hook** | ❌ |
-| `FLY_API_TOKEN` | secret | `fly tokens create org` (o mesmo de `~/.openclaw/fly/credenciais.env`) | ❌ |
+| `FLY_API_TOKEN` | secret | `fly tokens create org` (o mesmo de `~/.config/ti-escolar/segredos/fly.env`) | ❌ |
 | `HOMOLOG_BASE_URL` | variable | `https://ti-escolar.onrender.com` | ❌ |
 | `PRODUCAO_BASE_URL` | variable | `https://api.tiescolar.com.br` | ❌ |
 | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` | secrets | já cadastrados (21/ago e 26/jul) | ✅ |
@@ -50,20 +52,25 @@ E três ajustes nos painéis, fora do git:
 o **mesmo `versao`** do commit empurrado. Sem os segredos a esteira **não falha** — ela avisa
 no resumo e **pula o deploy**, de propósito, para não reprovar por motivo que não é de código.
 
-> **Ordem que importa:** mergear o PR #87 **e** cadastrar os quatro itens acima. Segredo sem
-> a esteira no repositório não faz nada; esteira sem segredo publica nada.
+> **Os quatro juntos.** O secret publica e a variable confere: com `FLY_API_TOKEN` e sem
+> `PRODUCAO_BASE_URL` a esteira não tem onde comparar o `versao`. Há ainda um secret
+> `OPENAI_API_KEY` no repositório que nenhum workflow usa — sobra, pode ser apagado.
 
 ---
 
-## 2. Arquivos no S3 — falta publicar o adaptador e colar as envs
+## 2. Arquivos no S3 — produção ligada; falta o homolog
 
 **Estado:** `ti-escolar-190446415519-sa-east-1-an` (produção) e
 `ti-escolar-homolog-190446415519-sa-east-1-an` (homolog) estão criados em `sa-east-1`, com
 acesso público bloqueado, ACLs desligadas, `aws:SecureTransport = false` negado e lifecycle
 (`rede-de-seguranca-doc-395d`, `rede-de-seguranca-impressao-180d`). O adaptador
-`S3ArquivoStorage` **está na `develop`** desde 16/set/2026, com `listar_chaves` para o
-varredor de órfãos, e a fábrica `criar_arquivo_storage`/`storage_efetivo` escolhe o adaptador
-pela env. Testado contra MinIO de verdade (compose + CI), não contra mock.
+`S3ArquivoStorage` está na `main` (chegou à `develop` em 16/set/2026), com `listar_chaves`
+para o varredor de órfãos, e a fábrica `criar_arquivo_storage`/`storage_efetivo` escolhe o
+adaptador pela env. Testado contra MinIO de verdade (compose + CI), não contra mock.
+
+**Produção: feito.** As cinco envs estão na Fly e o `/health` de `api.tiescolar.com.br`
+responde `"storage": "s3"` (conferido em 01/out/2026). O registro permanente está em
+[`producao-fly.md`](producao-fly.md), na tabela de segredos.
 
 > Antes disso ele passou **um mês numa branch que nunca foi mergeada** (`feat/arquivos-no-s3`,
 > 17/ago/2026): estava "escrito e testado" e, ao mesmo tempo, ausente do código que roda. Foi
@@ -89,25 +96,21 @@ passam no próprio bucket e o objeto sai `aws:kms`; o bucket do outro ambiente,
 > (`aws iam create-access-key --profile tiescolar --user-name ti-escolar-<amb>-s3`) e
 > desativa-se a anterior.
 
-**O que está travado:** o adaptador está na `develop` e a **produção roda a `main`** — e
-mergear na `main` **não publica**, porque `FLY_API_TOKEN` e `PRODUCAO_BASE_URL` ainda não
-estão cadastrados (§1): a esteira roda o CI, avisa e pula o deploy, verde. Até o adaptador
-subir, `storage_efetivo` devolve `postgres` e os bytes seguem no `bytea` — inclusive a foto
-do aluno, que nasce lá para ser migrada depois.
+**O que está travado:** o **homolog**. Em 01/out/2026 o `/health` do Render não trazia nem
+`versao` nem `storage` — o serviço roda código anterior ao adaptador, porque o *deploy hook*
+não está cadastrado (§1) e ninguém apertou o *Manual Deploy*. Até o adaptador subir lá,
+`storage_efetivo` devolve `postgres` e os bytes seguem no `bytea`.
 
 **O que só você faz, e a ordem importa:**
 
-1. **Guardar as duas chaves** no gerenciador de senhas e apagar os `.env`.
-2. **PR `develop` → `main`**, e mergear.
-3. **Publicar**: cadastrar `FLY_API_TOKEN` e `PRODUCAO_BASE_URL` e rodar a esteira, ou
-   `cd backend && fly deploy` na mão. Confira o `versao` do `/health`: verde não prova
-   deploy, ele responde `ok` na versão velha também. Aqui o `/health` ainda diz
+1. **Guardar as duas chaves** no gerenciador de senhas e apagar os `.env` — em 01/out
+   `s3-prod.env` e `s3-homolog.env` ainda estavam em `~/.config/ti-escolar/segredos/`.
+2. **Publicar o homolog**: cadastrar `RENDER_DEPLOY_HOOK_URL` e `HOMOLOG_BASE_URL` e rodar a
+   esteira, ou *Manual Deploy → Deploy latest commit*. Confira o `versao` do `/health`:
+   verde não prova deploy, ele responde `ok` na versão velha também. Aqui o `/health` diz
    `"storage": "postgres"`, e está certo — as envs não foram coladas.
-4. **Só então as envs.** Produção:
-   `cd backend && fly secrets import < ~/.config/ti-escolar/segredos/s3-prod.env` (reinicia
-   a máquina sozinho). Homolog: *Render → Environment → Save* com as cinco linhas de
-   `s3-homolog.env` (o *deploy hook* também não está cadastrado, então o deploy de lá é
-   *Manual Deploy*).
+3. **Só então as envs:** *Render → Environment → Save* com as cinco linhas de
+   `s3-homolog.env`.
 
 > **O que a virada deixa para trás:** documento e foto guardados **antes** dela ficam no
 > `bytea`, e a leitura vai procurá-los no bucket — ou seja, **404**. É decisão de
@@ -209,6 +212,37 @@ Os textos no ar em `site/` foram redigidos a partir do funcionamento real do pro
 **valem** para a Meta e para o usuário — mas ainda **não passaram por advogado**, e é como
 instrumento contratual com escola pagante que eles vão ser lidos. Não bloqueia código;
 bloqueia assinar contrato.
+
+---
+
+## 5. E-mail real em produção — falta a chave do Resend
+
+**Estado:** o `ResendEmailSender` está na `main` (§6e) e a produção **não tem nenhuma das
+três envs de e-mail** (`fly secrets list` e o `[env]` do `fly.toml`, 01/out/2026). Com os
+defaults do código (`EMAIL_PROVIDER=log`, `EMAIL_FROM=no-reply@tiescolar.test`) o adaptador
+em uso é o de log.
+
+**O que está travado:** o aviso de licença a vencer. `NotificarLicencasAVencer` roda,
+devolve a lista de escolas avisadas e **nenhum e-mail sai** — o texto vai para o log do
+processo. Nada quebra e só o painel de segurança acusa.
+
+**O que só você faz:**
+
+1. **Verificar `tiescolar.com.br` no Resend** (SPF/DKIM na zona da Cloudflare). Sem o domínio
+   verificado o Resend recusa o envio com o remetente `no-reply@tiescolar.com.br`. Os
+   registros são **adicionais**: a zona já tem os MX do Email Routing que atende
+   `contato@`, e eles ficam como estão.
+2. **Criar a API key** (Resend → API Keys) e gravá-la:
+   `fly secrets set RESEND_API_KEY=… --app ti-escolar` (reinicia a máquina sozinho).
+
+O resto é código e fica comigo: `EMAIL_PROVIDER = "resend"` e
+`EMAIL_FROM = "no-reply@tiescolar.com.br"` no `[env]` do `fly.toml`, por PR. **As três
+andam juntas** — a chave sem `EMAIL_PROVIDER=resend` continua no adaptador de log, e
+`resend` sem a chave também cai nele, em silêncio.
+
+**Como conferir que caiu:** o item 3.18 do
+[`checklist-teste-manual.md`](checklist-teste-manual.md) — o e-mail chega de verdade — e o
+log da produção passa a trazer `E-mail enviado para … (resend id=…)`.
 
 ---
 

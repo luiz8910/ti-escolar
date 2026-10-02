@@ -176,7 +176,7 @@ preciso ler tudo.
 |---|---|
 | [`LOG.md`](LOG.md) | abrir ou fechar sessão — quatro linhas por sessão, é o que faz o §0 funcionar |
 | [`docs/pendencias-externas.md`](docs/pendencias-externas.md) | **algo estiver travado e não for código** — segredo, credencial, cartão, chip, clique no painel de um provedor |
-| [`docs/pipelines.md`](docs/pipelines.md) | mexer nas esteiras de deploy por branch *(chega com o PR #87)* |
+| [`docs/pipelines.md`](docs/pipelines.md) | mexer nas esteiras de deploy por branch |
 | [`docs/producao-fly.md`](docs/producao-fly.md) | deploy, segredos, DNS, rollback e custo do back-end de produção |
 | [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) | go-live do canal na Meta |
 | [`docs/plano-correcoes-teste-10-08.md`](docs/plano-correcoes-teste-10-08.md) | os apontamentos do teste de 10/ago e a Fase 0 (arquivos no S3) |
@@ -216,14 +216,13 @@ tarde já foi pago uma vez.
   está em `MESSAGE_CHANNEL=demo`**: manter os dois ligados é impossível, e um homolog em
   `meta` ainda dispararia WhatsApp real a partir de dado de teste. Ligar o canal num
   ambiente é desligá-lo no outro. (§9c, [`docs/producao-whatsapp.md`](docs/producao-whatsapp.md) §11)
-- **Nenhum dos dois back-ends publica sozinho:** mergear na `main` não sobe a API. No
-  **homolog** (Render) é *Manual Deploy → Deploy latest commit*; na **produção**
+- **Nenhum dos dois back-ends publica sozinho — ainda:** as esteiras estão na `main` desde
+  07/set/2026 (PR #87), mas **rodam verdes e pulam o deploy** enquanto `FLY_API_TOKEN`,
+  `RENDER_DEPLOY_HOOK_URL`, `PRODUCAO_BASE_URL` e `HOMOLOG_BASE_URL` não estiverem
+  cadastrados no GitHub — e em 01/out/2026 nenhum dos quatro estava. Até lá mergear não sobe
+  a API: no **homolog** (Render) é *Manual Deploy → Deploy latest commit*; na **produção**
   (Fly.io, app `ti-escolar`) é `cd backend && fly deploy`. (§12a,
-  [`docs/producao-fly.md`](docs/producao-fly.md))
-  > A esteira que conserta isso está no **PR #87** (`feat/pipelines-homolog-producao`) e
-  > **ainda não foi mergeada** — e, mesmo depois do merge, ela **pula o deploy** enquanto os
-  > segredos que só o Luiz cadastra não existirem. Até lá o aviso acima continua valendo.
-  > ([`docs/pendencias-externas.md`](docs/pendencias-externas.md) §1)
+  [`docs/pendencias-externas.md`](docs/pendencias-externas.md) §1)
 - **Travou e não é código? Não improvise:** segredo, credencial da AWS, cartão na Meta, chip,
   branch no painel do Render — está tudo em
   [`docs/pendencias-externas.md`](docs/pendencias-externas.md), com o **como conferir que
@@ -231,9 +230,9 @@ tarde já foi pago uma vez.
 - **A branch é o ambiente:** `develop` publica no **homolog** (Render + Vercel) e `main`
   publica na **produção** (Fly.io + Cloudflare Pages), pelas esteiras `deploy-homolog.yml`
   e `deploy-producao.yml`. Trabalho novo sai da `develop`; produção é um PR
-  `develop → main`. Até 02/set/2026 nenhum dos dois back-ends publicava sozinho — se algum
-  documento ainda mandar abrir o painel do Render ou rodar `fly deploy` na mão, é resquício
-  disso (os comandos seguem valendo como rollback). (§12a,
+  `develop → main`. Esse é o desenho; **o que falta para ele valer é o aviso acima** — sem
+  os quatro nomes no GitHub a esteira não publica, e abrir o painel do Render ou rodar
+  `fly deploy` na mão segue sendo o caminho (depois, ficam como rollback). (§12a,
   [`docs/pipelines.md`](docs/pipelines.md))
 - **Deploy verde não é prova de deploy feito:** o `/health` responde `ok` na versão velha
   também. Quem distingue é o campo `versao` (o commit da imagem), que a esteira compara com
