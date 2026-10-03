@@ -86,9 +86,17 @@ function NovoAviso({ onMudou }: { onMudou: () => Promise<void> }) {
   const [inicia, setInicia] = useState("");
   const [expira, setExpira] = useState("");
 
+  const [enviando, setEnviando] = useState(false);
+
   async function criar(e: React.FormEvent) {
     e.preventDefault();
-    if (!mensagem.trim()) return;
+    // Trava de envio: um duplo clique mandava dois POSTs antes de o formulário limpar.
+    if (enviando) return;
+    if (!mensagem.trim()) {
+      toast({ tone: "danger", title: "Escreva a mensagem do aviso." });
+      return;
+    }
+    setEnviando(true);
     try {
       await criarAviso(mensagem.trim(), true, paraISO(inicia), paraISO(expira));
       setMensagem("");
@@ -98,6 +106,8 @@ function NovoAviso({ onMudou }: { onMudou: () => Promise<void> }) {
       toast({ tone: "success", title: "Aviso publicado." });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao publicar." });
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -126,7 +136,7 @@ function NovoAviso({ onMudou }: { onMudou: () => Promise<void> }) {
           </label>
         </div>
         <div>
-          <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+          <Button size="sm" type="submit" loading={enviando} leftIcon={<PlusIcon size={15} />}>
             Publicar aviso
           </Button>
         </div>

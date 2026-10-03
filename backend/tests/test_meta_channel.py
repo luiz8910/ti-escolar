@@ -93,6 +93,12 @@ class _BroadcastRepo:
     async def salvar(self, broadcast):
         return broadcast
 
+    async def status_atual(self, broadcast_id, *, travar=False):
+        return None
+
+    async def confirmar(self):
+        return None
+
 
 async def _disparar(escola: Tenant) -> _CanalEspiao:
     template = MessageTemplate(

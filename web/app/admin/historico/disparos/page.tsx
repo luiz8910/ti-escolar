@@ -5,11 +5,13 @@ import { useCallback, useEffect, useState } from "react";
 import {
   BroadcastDetalhe,
   BroadcastResumo,
+  cancelarBroadcast,
   exigeEscolhaDeEscola,
   getSessao,
   listarBroadcasts,
   logout,
   obterBroadcast,
+  renomearBroadcast,
   tenantEmFoco,
   Usuario,
 } from "@/lib/admin";
@@ -17,6 +19,9 @@ import {
 import { AppShell } from "@/components/layout/AppShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/form";
+import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
@@ -27,7 +32,7 @@ import {
   type PaginaMeta,
 } from "@/components/ui/Paginacao";
 import { cn } from "@/components/ui/cn";
-import { BellIcon } from "@/components/ui/icons";
+import { BellIcon, PencilIcon, XCircleIcon } from "@/components/ui/icons";
 
 function formatar(data: string | null): string {
   if (!data) return "—";
@@ -46,6 +51,7 @@ const ROTULO_BROADCAST: Record<string, string> = {
   em_envio: "Em envio",
   concluido: "Concluído",
   parcial_limite: "Parcial (cota)",
+  cancelado: "Cancelado",
 };
 
 const TONE_BROADCAST: Record<string, "neutral" | "brand" | "success" | "warning"> = {
@@ -54,7 +60,12 @@ const TONE_BROADCAST: Record<string, "neutral" | "brand" | "success" | "warning"
   em_envio: "brand",
   concluido: "success",
   parcial_limite: "warning",
+  cancelado: "neutral",
 };
+
+// Só estes ainda têm mensagem por enviar — e, portanto, algo para cancelar. Disparo
+// concluído não se apaga: é o registro de que a escola avisou, e de quem recebeu.
+const STATUS_CANCELAVEIS = ["em_envio", "parcial_limite", "agendado"];
 
 // Status de entrega por destinatário (vocabulário da Meta).
 const ROTULO_ENTREGA: Record<string, string> = {
@@ -64,6 +75,7 @@ const ROTULO_ENTREGA: Record<string, string> = {
   delivered: "Entregue",
   read: "Lido",
   failed: "Falhou",
+  cancelado: "Cancelado",
 };
 
 const TONE_ENTREGA: Record<string, "neutral" | "brand" | "success" | "warning" | "danger"> = {
@@ -73,6 +85,7 @@ const TONE_ENTREGA: Record<string, "neutral" | "brand" | "success" | "warning" |
   delivered: "success",
   read: "success",
   failed: "danger",
+  cancelado: "neutral",
 };
 
 export default function HistoricoDisparos() {
@@ -142,6 +155,7 @@ export default function HistoricoDisparos() {
             broadcasts={broadcasts}
             meta={meta}
             onPagina={setPagina}
+            onMudou={recarregar}
             onTamanho={(t) => {
               salvarTamanhoPreferido("disparos", t);
               setPorPagina(t);
@@ -159,15 +173,44 @@ function Disparos({
   meta,
   onPagina,
   onTamanho,
+  onMudou,
 }: {
   broadcasts: BroadcastResumo[];
   meta: PaginaMeta | null;
   onPagina: (p: number) => void;
   onTamanho: (t: number) => void;
+  onMudou: () => Promise<void>;
 }) {
   const toast = useToast();
   const [aberto, setAberto] = useState<BroadcastDetalhe | null>(null);
   const [carregandoId, setCarregandoId] = useState<string | null>(null);
+  const [renomeando, setRenomeando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
+
+  async function confirmarCancelamento() {
+    if (!aberto) return;
+    const alvo = aberto;
+    setCancelando(false);
+    try {
+      const r = await cancelarBroadcast(tenantEmFoco(), alvo.id);
+      toast({
+        tone: "success",
+        title: "Disparo cancelado.",
+        description: r.em_envio
+          ? "O envio em curso para na próxima mensagem. Atualize para ver quem chegou a receber."
+          : `${r.cancelados} destinatário(s) ainda aguardavam e não vão receber.`,
+      });
+    } catch (err) {
+      // 409 = terminou antes do clique. A tela é recarregada de qualquer jeito, para
+      // mostrar o estado real em vez do que estava aberto.
+      toast({
+        tone: "danger",
+        title: err instanceof Error ? err.message : "Falha ao cancelar o disparo.",
+      });
+    }
+    await onMudou().catch(() => undefined);
+    await abrir(alvo.id);
+  }
 
   async function abrir(id: string) {
     setCarregandoId(id);
@@ -253,14 +296,128 @@ function Disparos({
             />
           </div>
         ) : (
-          <DetalheDisparo detalhe={aberto} />
+          <DetalheDisparo
+            detalhe={aberto}
+            onRenomear={() => setRenomeando(true)}
+            onCancelar={() => setCancelando(true)}
+          />
         )}
       </Card>
+
+      {renomeando && aberto && (
+        <RenomearDisparoModal
+          detalhe={aberto}
+          onClose={() => setRenomeando(false)}
+          onSalvo={async (titulo) => {
+            setAberto({ ...aberto, titulo });
+            await onMudou();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={cancelando && aberto !== null}
+        onClose={() => setCancelando(false)}
+        onConfirm={confirmarCancelamento}
+        title="Cancelar disparo"
+        confirmLabel="Cancelar disparo"
+        cancelLabel="Voltar"
+        message={
+          aberto
+            ? `“${aberto.titulo}” para de ser enviado: quem ainda não recebeu não vai mais ` +
+              `receber, nem agora nem na retomada. Quem já recebeu continua no histórico — ` +
+              `mensagem entregue não tem como ser desfeita. O cancelamento não pode ser revertido.`
+            : ""
+        }
+      />
     </div>
   );
 }
 
-function DetalheDisparo({ detalhe }: { detalhe: BroadcastDetalhe }) {
+function RenomearDisparoModal({
+  detalhe,
+  onClose,
+  onSalvo,
+}: {
+  detalhe: BroadcastDetalhe;
+  onClose: () => void;
+  onSalvo: (titulo: string) => Promise<void>;
+}) {
+  const toast = useToast();
+  const [titulo, setTitulo] = useState(detalhe.titulo);
+  const [erro, setErro] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (salvando) return;
+    if (!titulo.trim()) {
+      setErro("Informe o título do disparo.");
+      return;
+    }
+    setSalvando(true);
+    setErro("");
+    try {
+      await renomearBroadcast(tenantEmFoco(), detalhe.id, titulo.trim());
+      onClose();
+      await onSalvo(titulo.trim());
+      toast({ tone: "success", title: "Título atualizado." });
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Falha ao renomear o disparo.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Renomear disparo"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button size="sm" onClick={() => salvar()} loading={salvando}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={salvar} className="flex flex-col gap-3">
+        <Field
+          label="Título"
+          htmlFor="disparo-titulo"
+          hint="Só o rótulo do histórico. O texto enviado aos responsáveis não muda."
+        >
+          <Input
+            id="disparo-titulo"
+            value={titulo}
+            maxLength={300}
+            onChange={(e) => setTitulo(e.target.value)}
+            autoFocus
+          />
+        </Field>
+        {erro && (
+          <p className="rounded-lg bg-danger-soft px-3 py-2 text-[12.5px] text-danger">{erro}</p>
+        )}
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
+    </Modal>
+  );
+}
+
+function DetalheDisparo({
+  detalhe,
+  onRenomear,
+  onCancelar,
+}: {
+  detalhe: BroadcastDetalhe;
+  onRenomear: () => void;
+  onCancelar: () => void;
+}) {
+  const cancelavel = STATUS_CANCELAVEIS.includes(detalhe.status);
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2 border-b border-n-100 pb-3">
@@ -275,9 +432,31 @@ function DetalheDisparo({ detalhe }: { detalhe: BroadcastDetalhe }) {
             {formatar(detalhe.criado_em)} · {detalhe.total_destinatarios} destinatário(s)
           </p>
         </div>
-        <Badge tone={TONE_BROADCAST[detalhe.status] ?? "neutral"}>
-          {ROTULO_BROADCAST[detalhe.status] ?? detalhe.status}
-        </Badge>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <Badge tone={TONE_BROADCAST[detalhe.status] ?? "neutral"}>
+            {ROTULO_BROADCAST[detalhe.status] ?? detalhe.status}
+          </Badge>
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<PencilIcon size={14} />}
+            onClick={onRenomear}
+          >
+            Renomear
+          </Button>
+          {/* Só aparece enquanto há o que interromper: num disparo concluído o botão
+              prometeria desfazer uma mensagem que já está no WhatsApp dos pais. */}
+          {cancelavel && (
+            <Button
+              size="sm"
+              variant="danger"
+              leftIcon={<XCircleIcon size={14} />}
+              onClick={onCancelar}
+            >
+              Cancelar disparo
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">

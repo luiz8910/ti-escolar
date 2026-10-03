@@ -252,9 +252,17 @@ function NovaSolicitacao({
   const [frenteVerso, setFrenteVerso] = useState(false);
   const [observacao, setObservacao] = useState("");
 
+  const [enviando, setEnviando] = useState(false);
+
   async function criar(e: React.FormEvent) {
     e.preventDefault();
-    if (!arquivo.trim() || copias < 1) return;
+    // Trava de envio: um duplo clique mandava dois POSTs antes de o formulário limpar.
+    if (enviando) return;
+    if (!arquivo.trim() || copias < 1) {
+      toast({ tone: "danger", title: "Informe o arquivo e ao menos uma cópia." });
+      return;
+    }
+    setEnviando(true);
     try {
       await criarImpressao({
         arquivo_nome: arquivo.trim(),
@@ -274,6 +282,8 @@ function NovaSolicitacao({
       toast({ tone: "success", title: "Solicitação adicionada à fila." });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao criar." });
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -326,7 +336,7 @@ function NovaSolicitacao({
           />
         </div>
         <div>
-          <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+          <Button size="sm" type="submit" loading={enviando} leftIcon={<PlusIcon size={15} />}>
             Adicionar à fila
           </Button>
         </div>

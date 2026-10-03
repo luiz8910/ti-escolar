@@ -20,6 +20,8 @@ from app.domain.entities import (
     FonteConhecimento,
     Grupo,
     MessageQuota,
+    StatusBroadcast,
+    StatusEntrega,
     MessageTemplate,
     LeituraRecado,
     Professor,
@@ -394,6 +396,8 @@ class FakeRateLimiter:
 class FakeBroadcastRepo:
     def __init__(self) -> None:
         self.salvos: dict[uuid.UUID, Broadcast] = {}
+        self.cancelados: set[uuid.UUID] = set()
+        self.confirmacoes = 0
 
     async def salvar(self, broadcast: Broadcast) -> None:
         self.salvos[broadcast.id] = broadcast
@@ -407,6 +411,39 @@ class FakeBroadcastRepo:
 
     async def contar(self, *, tenant_id):
         return len([b for b in self.salvos.values() if b.tenant_id == tenant_id])
+
+    async def renomear(self, *, tenant_id, broadcast_id, titulo) -> bool:
+        b = self.salvos.get(broadcast_id)
+        if b is None or b.tenant_id != tenant_id:
+            return False
+        b.titulo = titulo
+        return True
+
+    async def status_atual(self, broadcast_id, *, travar=False):
+        # O fake guarda o **mesmo objeto** que o caso de uso altera em memória; o
+        # cancelamento vindo "de outra sessão" fica à parte, como ficaria no banco.
+        if broadcast_id in self.cancelados:
+            return StatusBroadcast.CANCELADO
+        b = self.salvos.get(broadcast_id)
+        return b.status if b else None
+
+    async def cancelar(self, *, tenant_id, broadcast_id):
+        from app.domain.entities import STATUS_BROADCAST_CANCELAVEIS
+
+        b = self.salvos.get(broadcast_id)
+        if b is None or b.tenant_id != tenant_id or b.status not in STATUS_BROADCAST_CANCELAVEIS:
+            return None
+        self.cancelados.add(broadcast_id)
+        return len(
+            [
+                d
+                for d in b.destinatarios
+                if d.status in (StatusEntrega.PENDENTE, StatusEntrega.ENFILEIRADO)
+            ]
+        )
+
+    async def confirmar(self) -> None:
+        self.confirmacoes += 1
 
     async def registrar_status(self, *, mensagem_id_externo, status) -> bool:
         from app.domain.entities import _now
@@ -583,6 +620,27 @@ class FakeGrupoRepo:
     async def membros(self, *, tenant_id, grupo_id):
         g = await self.obter(tenant_id=tenant_id, grupo_id=grupo_id)
         return list(g.membros) if g else []
+
+    async def atualizar(self, grupo):
+        atual = await self.obter(tenant_id=grupo.tenant_id, grupo_id=grupo.id)
+        if atual is None:
+            return None
+        atual.nome, atual.descricao = grupo.nome, grupo.descricao
+        return atual
+
+    async def remover(self, *, tenant_id, grupo_id):
+        if await self.obter(tenant_id=tenant_id, grupo_id=grupo_id) is None:
+            return False
+        del self.grupos[grupo_id]
+        return True
+
+    async def remover_contato(self, *, tenant_id, grupo_id, contato_id):
+        g = await self.obter(tenant_id=tenant_id, grupo_id=grupo_id)
+        if g is None:
+            return False
+        antes = len(g.membros)
+        g.membros = [c for c in g.membros if c.id != contato_id]
+        return len(g.membros) < antes
 
 
 class FakeContatoRepo:

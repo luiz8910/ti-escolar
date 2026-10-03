@@ -79,9 +79,17 @@ function NovoRecado({ onMudou }: { onMudou: () => Promise<void> }) {
   const [titulo, setTitulo] = useState("");
   const [corpo, setCorpo] = useState("");
 
+  const [enviando, setEnviando] = useState(false);
+
   async function publicar(e: React.FormEvent) {
     e.preventDefault();
-    if (!titulo.trim() || !corpo.trim()) return;
+    // Trava de envio: um duplo clique mandava dois POSTs antes de o formulário limpar.
+    if (enviando) return;
+    if (!titulo.trim() || !corpo.trim()) {
+      toast({ tone: "danger", title: "Preencha o título e a mensagem do recado." });
+      return;
+    }
+    setEnviando(true);
     try {
       await publicarRecado(titulo.trim(), corpo.trim());
       setTitulo("");
@@ -90,6 +98,8 @@ function NovoRecado({ onMudou }: { onMudou: () => Promise<void> }) {
       toast({ tone: "success", title: "Recado publicado no mural." });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao publicar." });
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -109,7 +119,7 @@ function NovoRecado({ onMudou }: { onMudou: () => Promise<void> }) {
           placeholder="Mensagem do recado"
         />
         <div>
-          <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+          <Button size="sm" type="submit" loading={enviando} leftIcon={<PlusIcon size={15} />}>
             Publicar
           </Button>
         </div>

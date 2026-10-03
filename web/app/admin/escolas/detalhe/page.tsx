@@ -414,6 +414,7 @@ const ROTULO_STATUS: Record<string, string> = {
   em_envio: "Em envio",
   concluido: "Concluído",
   parcial_limite: "Parcial (cota)",
+  cancelado: "Cancelado",
 };
 
 const TONE_STATUS: Record<string, "neutral" | "brand" | "success" | "warning"> = {
@@ -422,6 +423,7 @@ const TONE_STATUS: Record<string, "neutral" | "brand" | "success" | "warning"> =
   em_envio: "brand",
   concluido: "success",
   parcial_limite: "warning",
+  cancelado: "neutral",
 };
 
 function BroadcastsAba({ broadcasts }: { broadcasts: BroadcastResumo[] }) {

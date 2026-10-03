@@ -617,6 +617,39 @@ class SqlGrupoRepository:
             return []
         return [_to_contato(c) for c in row.membros]
 
+    async def atualizar(self, grupo: Grupo) -> Grupo | None:
+        row = await self._orm(tenant_id=grupo.tenant_id, grupo_id=grupo.id)
+        if row is None:
+            return None
+        row.nome = grupo.nome
+        row.descricao = grupo.descricao
+        await self._s.flush()
+        return await self.obter(tenant_id=grupo.tenant_id, grupo_id=grupo.id)
+
+    async def remover(self, *, tenant_id: uuid.UUID, grupo_id: uuid.UUID) -> bool:
+        row = await self._orm(tenant_id=tenant_id, grupo_id=grupo_id)
+        if row is None:
+            return False
+        # Esvaziar `membros` apaga as linhas de `grupo_contatos`; os contatos ficam.
+        row.membros.clear()
+        await self._s.flush()
+        await self._s.delete(row)
+        await self._s.flush()
+        return True
+
+    async def remover_contato(
+        self, *, tenant_id: uuid.UUID, grupo_id: uuid.UUID, contato_id: uuid.UUID
+    ) -> bool:
+        row = await self._orm(tenant_id=tenant_id, grupo_id=grupo_id)
+        if row is None:
+            return False
+        alvo = next((c for c in row.membros if c.id == contato_id), None)
+        if alvo is None:
+            return False
+        row.membros.remove(alvo)
+        await self._s.flush()
+        return True
+
 
 def _to_professor(row: ProfessorORM) -> Professor:
     return Professor(

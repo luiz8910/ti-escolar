@@ -27,6 +27,16 @@ from app.infrastructure.db.models import (
 )
 
 
+def _em_utc(momento: datetime) -> datetime:
+    """Devolve o instante com o fuso que a coluna não guarda.
+
+    ``logs_aplicacao`` e ``inbound_atendimento`` gravam UTC em coluna **sem** fuso. Sem
+    o offset, a API serializa ``2026-10-02T00:46:00`` e o navegador lê como hora local —
+    o painel mostrava os logs três horas à frente do resto das telas.
+    """
+    return momento if momento.tzinfo else momento.replace(tzinfo=timezone.utc)
+
+
 def _para_registro(r: LogAplicacaoORM) -> RegistroLog:
     return RegistroLog(
         id=r.id,
@@ -41,7 +51,7 @@ def _para_registro(r: LogAplicacaoORM) -> RegistroLog:
         tenant_id=r.tenant_id,
         excecao=r.excecao,
         metadados=r.metadados or {},
-        criado_em=r.criado_em,
+        criado_em=_em_utc(r.criado_em),
     )
 
 
@@ -218,8 +228,8 @@ class SqlLogRepository:
                 status=r.status,
                 origem=r.origem,
                 resumo=r.resumo,
-                criado_em=r.criado_em,
-                atualizado_em=r.atualizado_em,
+                criado_em=_em_utc(r.criado_em),
+                atualizado_em=_em_utc(r.atualizado_em),
                 tenant_id=r.tenant_id,
                 tenant_nome=nome or "",
             )

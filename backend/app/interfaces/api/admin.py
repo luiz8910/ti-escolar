@@ -15,12 +15,16 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application.admin_use_cases import (
     AdicionarContatoAoGrupo,
+    AtualizarGrupo,
     AtualizarUsuario,
     DadosUsuario,
     AutenticarUsuario,
     CriarGrupo,
     CriarUsuario,
     EnviarBroadcastParaGrupo,
+    GrupoNaoEncontrado,
+    RemoverContatoDoGrupo,
+    RemoverGrupo,
 )
 from app.application.auditoria_use_cases import ListarAuditoria, RegistrarAuditoria
 from app.application.paginacao import POR_PAGINA_MAXIMO, POR_PAGINA_PADRAO
@@ -30,10 +34,13 @@ from app.application.retomada_use_cases import RetomarBroadcastsPendentes
 from app.application.tenant_use_cases import (
     AtualizarEscola,
     BloquearEscola,
+    CancelarBroadcastDaEscola,
     CancelarEscola,
     CriarEscola,
     DefinirLicenca,
     DesbloquearEscola,
+    DisparoJaEncerrado,
+    DisparoNaoEncontrado,
     ListarBroadcastsDaEscola,
     ListarConversasDaEscola,
     ListarEscolas,
@@ -44,6 +51,7 @@ from app.application.tenant_use_cases import (
     ObterFichaFinanceira,
     ReativarEscola,
     RemoverEscola,
+    RenomearBroadcastDaEscola,
 )
 from app.config import Settings
 from app.domain.entities import (
@@ -95,6 +103,8 @@ from app.interfaces.dto import (
     BloqueioEntrada,
     BroadcastDetalheSaida,
     BroadcastResumoSaida,
+    BroadcastTituloEntrada,
+    CancelamentoBroadcastSaida,
     BroadcastsPaginaSaida,
     CancelamentoEntrada,
     ContatoEntrada,
@@ -449,9 +459,12 @@ async def criar_grupo(
     auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
 ) -> GrupoSaida:
     _exige_acesso_tenant(usuario, payload.tenant_id)
-    grupo = await CriarGrupo(grupos=grupos).executar(
-        tenant_id=payload.tenant_id, nome=payload.nome, descricao=payload.descricao
-    )
+    try:
+        grupo = await CriarGrupo(grupos=grupos).executar(
+            tenant_id=payload.tenant_id, nome=payload.nome, descricao=payload.descricao
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     await _auditar_usuario(
         auditoria,
         usuario=usuario,
@@ -497,6 +510,92 @@ async def adicionar_contato(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     return ContatoSaida(id=contato.id, nome=contato.nome, telefone=contato.telefone)
+
+
+@router.put("/grupos/{grupo_id}", response_model=GrupoSaida)
+async def atualizar_grupo(
+    grupo_id: UUID,
+    payload: GrupoEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    grupos: SqlGrupoRepository = Depends(get_grupo_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> GrupoSaida:
+    _exige_acesso_tenant(usuario, payload.tenant_id)
+    try:
+        grupo = await AtualizarGrupo(grupos=grupos).executar(
+            tenant_id=payload.tenant_id,
+            grupo_id=grupo_id,
+            nome=payload.nome,
+            descricao=payload.descricao,
+        )
+    except GrupoNaoEncontrado as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="grupo.atualizar",
+        tenant_id=payload.tenant_id,
+        descricao=f"Alterou o grupo '{grupo.nome}'",
+        metadados={"grupo_id": str(grupo.id)},
+    )
+    return _grupo_saida(grupo)
+
+
+@router.delete("/grupos/{grupo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remover_grupo(
+    grupo_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    grupos: SqlGrupoRepository = Depends(get_grupo_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> None:
+    """Exclui o grupo. Os contatos continuam cadastrados como responsáveis."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        grupo = await RemoverGrupo(grupos=grupos).executar(
+            tenant_id=tenant_id, grupo_id=grupo_id
+        )
+    except GrupoNaoEncontrado as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="grupo.excluir",
+        tenant_id=tenant_id,
+        descricao=f"Excluiu o grupo '{grupo.nome}' ({len(grupo.membros)} contato(s))",
+        metadados={"grupo_id": str(grupo_id), "total_membros": len(grupo.membros)},
+    )
+
+
+@router.delete(
+    "/grupos/{grupo_id}/contatos/{contato_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def remover_contato_do_grupo(
+    grupo_id: UUID,
+    contato_id: UUID,
+    tenant_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    grupos: SqlGrupoRepository = Depends(get_grupo_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> None:
+    """Tira o contato do grupo. Não apaga o responsável do cadastro."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        grupo, contato = await RemoverContatoDoGrupo(grupos=grupos).executar(
+            tenant_id=tenant_id, grupo_id=grupo_id, contato_id=contato_id
+        )
+    except GrupoNaoEncontrado as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="grupo.contato.remover",
+        tenant_id=tenant_id,
+        descricao=f"Removeu {contato.nome} do grupo '{grupo.nome}'",
+        metadados={"grupo_id": str(grupo_id), "contato_id": str(contato_id)},
+    )
 
 
 def _parametro(entrada: ParametroTemplateEntrada) -> ParametroTemplate:
@@ -1079,6 +1178,86 @@ async def obter_broadcast(
             )
             for d in detalhe.destinatarios
         ],
+    )
+
+
+@router.put("/escolas/{tenant_id}/broadcasts/{broadcast_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def renomear_broadcast(
+    tenant_id: UUID,
+    broadcast_id: UUID,
+    payload: BroadcastTituloEntrada,
+    usuario: Usuario = Depends(usuario_autenticado),
+    broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> None:
+    """Corrige o título do disparo no histórico. O que foi enviado não muda."""
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        titulo = await RenomearBroadcastDaEscola(broadcasts=broadcasts).executar(
+            tenant_id=tenant_id, broadcast_id=broadcast_id, titulo=payload.titulo
+        )
+    except DisparoNaoEncontrado as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="broadcast.renomear",
+        tenant_id=tenant_id,
+        descricao=f"Renomeou um disparo para '{titulo}'",
+        metadados={"broadcast_id": str(broadcast_id)},
+    )
+
+
+@router.post(
+    "/escolas/{tenant_id}/broadcasts/{broadcast_id}/cancelar",
+    response_model=CancelamentoBroadcastSaida,
+)
+async def cancelar_broadcast(
+    tenant_id: UUID,
+    broadcast_id: UUID,
+    usuario: Usuario = Depends(usuario_autenticado),
+    broadcasts: SqlBroadcastRepository = Depends(get_broadcast_repo),
+    auditoria: SqlAuditLogRepository = Depends(get_audit_repo),
+) -> CancelamentoBroadcastSaida:
+    """Interrompe um disparo que ainda tem mensagem por enviar.
+
+    Quem já recebeu continua no histórico. O envio em curso para no destinatário seguinte;
+    o que esperava a cota ou o horário agendado não sai mais.
+    """
+    _exige_acesso_tenant(usuario, tenant_id)
+    try:
+        b, cancelados = await CancelarBroadcastDaEscola(broadcasts=broadcasts).executar(
+            tenant_id=tenant_id, broadcast_id=broadcast_id
+        )
+    except DisparoNaoEncontrado as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except DisparoJaEncerrado as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    em_envio = b.status is StatusBroadcast.EM_ENVIO
+    await _auditar_usuario(
+        auditoria,
+        usuario=usuario,
+        acao="broadcast.cancelar",
+        tenant_id=tenant_id,
+        descricao=(
+            f"Interrompeu o disparo '{b.titulo}' enquanto era enviado"
+            if em_envio
+            else f"Cancelou o disparo '{b.titulo}' "
+            f"({cancelados} de {len(b.destinatarios)} destinatário(s) ainda aguardavam)"
+        ),
+        metadados={
+            "broadcast_id": str(broadcast_id),
+            "status_anterior": b.status.value,
+            "aguardavam": cancelados,
+            "total_destinatarios": len(b.destinatarios),
+        },
+    )
+    return CancelamentoBroadcastSaida(
+        status=StatusBroadcast.CANCELADO.value,
+        cancelados=cancelados,
+        em_envio=em_envio,
     )
 
 

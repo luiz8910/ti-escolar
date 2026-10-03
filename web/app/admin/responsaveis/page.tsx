@@ -33,7 +33,7 @@ import {
   Usuario,
   vincularResponsavelAoAluno,
 } from "@/lib/admin";
-import { formatarTelefone } from "@/lib/mascaras";
+import { formatarTelefone, telefoneCompleto } from "@/lib/mascaras";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { BuscaAluno } from "@/components/admin/BuscaAluno";
@@ -425,6 +425,10 @@ function ResponsavelDrawer({
     e?.preventDefault();
     if (!nome.trim() || !telefone.trim()) {
       toast({ tone: "danger", title: "Nome e WhatsApp são obrigatórios." });
+      return;
+    }
+    if (!telefoneCompleto(telefone)) {
+      toast({ tone: "danger", title: "WhatsApp incompleto — informe DDD e número." });
       return;
     }
     setSalvando(true);

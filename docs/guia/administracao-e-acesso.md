@@ -58,11 +58,21 @@
     produz e o que a escola tem quando a mãe manda o número pelo WhatsApp.
 - **`Grupo`** (por tenant) agrega **`Contato`s** (N:N via `grupo_contatos`). `EnviarBroadcastParaGrupo` resolve os membros do grupo em destinatários
   e delega a `EnviarBroadcast` (template aprovado + cota + rate limit).
+  - **O grupo é editável e excluível** (`AtualizarGrupo`, `RemoverGrupo`,
+    `RemoverContatoDoGrupo`). Até out/2026 o painel só criava: nome errado ficava errado,
+    e contato adicionado por engano recebia o próximo aviso sem que houvesse como tirá-lo.
+  - **Excluir o grupo nunca apaga o contato.** O contato do grupo **é** o responsável da
+    escola (mesma linha de `contatos`); o grupo é só uma lista por cima. Some o vínculo em
+    `grupo_contatos`, e o histórico de disparos fica — o disparo guarda os destinatários,
+    não o grupo.
+  - **Nome único por escola, sem diferenciar maiúsculas**, conferido no caso de uso antes
+    da restrição `uq_grupo_tenant_nome`: a mensagem diz qual grupo já tem o nome, em vez
+    do 409 genérico.
 - **Seed** (`app/seed.py`) cria: super admin, admin do tenant demo, e grupos ("Turma 5º A",
   "Pais do Fundamental I") com contatos. Credenciais default em `.env.example`
   (`SUPER_ADMIN_*`, `DEMO_ADMIN_*`) — **trocar em produção**.
 - **Rotas** em `app/interfaces/api/admin.py`: `/api/admin/login`, `/usuarios`, `/grupos`,
-  `/grupos/{id}/contatos`, `/grupos/{id}/enviar`. **Autenticação por JWT (HS256):** o
+  `/grupos/{id}` (`PUT`/`DELETE`), `/grupos/{id}/contatos[/{contato_id}]`, `/grupos/{id}/enviar`. **Autenticação por JWT (HS256):** o
   `POST /api/admin/login` devolve `{ access_token, expira_em, usuario }`; as demais rotas
   exigem `Authorization: Bearer <token>`. O token é assinado com `JWT_SECRET` e expira
   conforme `JWT_EXPIRA_MINUTOS` (default 480 min). A dependência `usuario_autenticado`

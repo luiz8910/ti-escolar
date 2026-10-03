@@ -786,7 +786,30 @@ class EnviarBroadcast:
             )
 
         enviados = falhas = bloqueados = reenfileirados = 0
+
+        # O que está gravado manda sobre a cópia em memória. A retomada lista os pendentes
+        # e só depois os percorre: um disparo cancelado nesse intervalo chega aqui ainda
+        # como `PARCIAL_LIMITE`, e sem esta leitura sairia do mesmo jeito.
+        gravado = await self._broadcasts.status_atual(broadcast.id)
+        if gravado is StatusBroadcast.CANCELADO:
+            return ResultadoBroadcast(
+                broadcast_id=broadcast.id,
+                enviados=0,
+                falhas=0,
+                bloqueados_por_limite=0,
+                restante_cota=(await self._quota.cota(broadcast.tenant_id)).restante,
+                status=StatusBroadcast.CANCELADO,
+            )
+
         broadcast.status = StatusBroadcast.EM_ENVIO
+        if gravado is None:
+            # Disparo novo: grava **antes** de enviar, e confirma. Até aqui ele só existia
+            # ao fim do lote — durante o minuto ou dois em que 250 mensagens saem, não
+            # aparecia no histórico e não havia o que cancelar. O que já está no banco
+            # (retomada) fica como está: se o processo cair no meio, continua retomável.
+            await self._broadcasts.salvar(broadcast)
+            await self._broadcasts.confirmar()
+        cancelado = False
 
         # A cota é lida **uma vez** e descontada em memória durante o lote. Reler a cada
         # destinatário custaria um agregado por envio (250 deles num disparo grande) para
@@ -797,8 +820,20 @@ class EnviarBroadcast:
         ja_contados: set[str] = set()
 
         for dest in broadcast.destinatarios:
-            if dest.status in (StatusEntrega.ENVIADO, StatusEntrega.ENTREGUE, StatusEntrega.LIDO):
+            if dest.status in (
+                StatusEntrega.ENVIADO,
+                StatusEntrega.ENTREGUE,
+                StatusEntrega.LIDO,
+                StatusEntrega.CANCELADO,
+            ):
                 continue
+
+            # Conferido a cada destinatário, e não a cada N: quem cancela quer que a
+            # próxima mensagem não saia. É a leitura de uma coluna pela chave primária,
+            # desprezível perto da chamada à Graph API que vem logo depois.
+            if await self._broadcasts.status_atual(broadcast.id) is StatusBroadcast.CANCELADO:
+                cancelado = True
+                break
 
             # Contato já alcançado neste lote não consome vaga nova. Quem já foi alcançado
             # numa janela *anterior* a este lote consome — errando para o lado seguro, que
@@ -859,12 +894,33 @@ class EnviarBroadcast:
         # destinatário pendente esperando outra passada, e é esse status que a retomada
         # procura. Chamá-lo de CONCLUIDO porque a cota não estourou perderia os
         # reenfileirados de vista.
-        broadcast.status = (
-            StatusBroadcast.PARCIAL_LIMITE
-            if (bloqueados or reenfileirados)
-            else StatusBroadcast.CONCLUIDO
-        )
+        # Última conferência, **travando a linha**: `salvar` regrava status e
+        # destinatários, e um cancelamento que entrasse entre a leitura e a escrita seria
+        # apagado por ela — o disparo voltaria a `PARCIAL_LIMITE` e a retomada mandaria o
+        # resto no dia seguinte. Com a trava, ou o cancelamento já está gravado e é visto
+        # aqui, ou ele espera este envio confirmar e cancela o que sobrou.
+        if not cancelado:
+            cancelado = (
+                await self._broadcasts.status_atual(broadcast.id, travar=True)
+                is StatusBroadcast.CANCELADO
+            )
+        if cancelado:
+            agora = datetime.now(timezone.utc)
+            for dest in broadcast.destinatarios:
+                if dest.status in (StatusEntrega.PENDENTE, StatusEntrega.ENFILEIRADO):
+                    dest.status = StatusEntrega.CANCELADO
+                    dest.atualizado_em = agora
+            broadcast.status = StatusBroadcast.CANCELADO
+        else:
+            broadcast.status = (
+                StatusBroadcast.PARCIAL_LIMITE
+                if (bloqueados or reenfileirados)
+                else StatusBroadcast.CONCLUIDO
+            )
         await self._broadcasts.salvar(broadcast)
+        # Confirma já: a trava acima não pode durar até o fim da requisição — nem da
+        # passada inteira da retomada, que percorre vários disparos na mesma sessão.
+        await self._broadcasts.confirmar()
 
         cota_final = await self._quota.cota(broadcast.tenant_id)
         return ResultadoBroadcast(

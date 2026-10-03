@@ -96,9 +96,17 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
   const [abrirDados, setAbrirDados] = useState(false);
   const [dados, setDados] = useState<DadosProfessor>(DADOS_PROFESSOR_VAZIO);
 
+  const [enviando, setEnviando] = useState(false);
+
   async function cadastrar(e: React.FormEvent) {
     e.preventDefault();
-    if (!nome.trim() || !telefone.trim()) return;
+    // Trava de envio: um duplo clique mandava dois POSTs antes de o formulário limpar.
+    if (enviando) return;
+    if (!nome.trim() || !telefone.trim()) {
+      toast({ tone: "danger", title: "Nome e WhatsApp são obrigatórios." });
+      return;
+    }
+    setEnviando(true);
     try {
       await cadastrarProfessor(nome.trim(), telefone.trim(), senha, dados);
       setNome("");
@@ -113,6 +121,8 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
         tone: "danger",
         title: err instanceof Error ? err.message : "Falha ao cadastrar professor.",
       });
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -134,7 +144,7 @@ function ProfessorForm({ onMudou }: { onMudou: () => Promise<void> }) {
           onChange={(e) => setSenha(e.target.value)}
           placeholder="Senha do mural (opcional)"
         />
-        <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+        <Button size="sm" type="submit" loading={enviando} leftIcon={<PlusIcon size={15} />}>
           Cadastrar
         </Button>
 

@@ -76,9 +76,17 @@ function NovaResposta({ onMudou }: { onMudou: () => Promise<void> }) {
   const [chave, setChave] = useState("");
   const [conteudo, setConteudo] = useState("");
 
+  const [enviando, setEnviando] = useState(false);
+
   async function criar(e: React.FormEvent) {
     e.preventDefault();
-    if (!chave.trim() || !conteudo.trim()) return;
+    // Trava de envio: um duplo clique mandava dois POSTs antes de o formulário limpar.
+    if (enviando) return;
+    if (!chave.trim() || !conteudo.trim()) {
+      toast({ tone: "danger", title: "Preencha a chave e o conteúdo." });
+      return;
+    }
+    setEnviando(true);
     try {
       await criarRespostaRapida(chave.trim(), conteudo.trim());
       setChave("");
@@ -87,6 +95,8 @@ function NovaResposta({ onMudou }: { onMudou: () => Promise<void> }) {
       toast({ tone: "success", title: "Resposta rápida criada e indexada no RAG." });
     } catch (err) {
       toast({ tone: "danger", title: err instanceof Error ? err.message : "Falha ao criar." });
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -109,7 +119,7 @@ function NovaResposta({ onMudou }: { onMudou: () => Promise<void> }) {
           rows={3}
         />
         <div>
-          <Button size="sm" type="submit" leftIcon={<PlusIcon size={15} />}>
+          <Button size="sm" type="submit" loading={enviando} leftIcon={<PlusIcon size={15} />}>
             Criar
           </Button>
         </div>

@@ -55,6 +55,7 @@ from app.domain.entities import (
     SolicitacaoMatricula,
     StatusAtendimentoHumano,
     StatusDocumento,
+    StatusBroadcast,
     StatusEntrega,
     StatusFalta,
     StatusImpressao,
@@ -566,6 +567,40 @@ class BroadcastRepository(Protocol):
         """
         ...
 
+    async def renomear(self, *, tenant_id: UUID, broadcast_id: UUID, titulo: str) -> bool:
+        """Troca só o título. Não passa por ``salvar``, que regrava os destinatários e
+        atropelaria um status de entrega chegando do webhook no mesmo instante."""
+        ...
+
+    async def status_atual(
+        self, broadcast_id: UUID, *, travar: bool = False
+    ) -> StatusBroadcast | None:
+        """O status **como está gravado agora**, lido de novo a cada chamada.
+
+        É por aqui que o envio em curso descobre que foi cancelado por outra requisição:
+        ele trabalha sobre uma cópia em memória e não veria a mudança de outro jeito.
+        ``None`` = o disparo ainda não foi gravado. ``travar`` segura a linha até o fim da
+        transação — usado na última conferência antes de gravar, para o cancelamento não
+        entrar entre a leitura e a escrita.
+        """
+        ...
+
+    async def cancelar(self, *, tenant_id: UUID, broadcast_id: UUID) -> int | None:
+        """Marca o disparo como cancelado e os destinatários ainda por enviar também.
+
+        Devolve quantos destinatários deixaram de receber, ou ``None`` se não havia o que
+        cancelar (não existe nesta escola, ou já terminou).
+        """
+        ...
+
+    async def confirmar(self) -> None:
+        """Torna o que foi gravado visível às outras sessões (commit).
+
+        Sem isto o disparo em curso só existiria para a própria requisição que o envia, e
+        não haveria como cancelá-lo de outra tela enquanto ele sai.
+        """
+        ...
+
     async def listar_retomaveis(self, *, desde: datetime) -> list[Broadcast]:
         """Disparos interrompidos pela cota diária, ainda dentro do prazo de retomada.
 
@@ -622,6 +657,21 @@ class GrupoRepository(Protocol):
     ) -> Contato: ...
 
     async def membros(self, *, tenant_id: UUID, grupo_id: UUID) -> list[Contato]: ...
+
+    async def atualizar(self, grupo: Grupo) -> Grupo | None:
+        """Grava nome e descrição. ``None`` se o grupo não é desta escola."""
+        ...
+
+    async def remover(self, *, tenant_id: UUID, grupo_id: UUID) -> bool:
+        """Apaga o grupo e os vínculos com os contatos — **nunca** os contatos, que são
+        os responsáveis da escola e existem fora do grupo."""
+        ...
+
+    async def remover_contato(
+        self, *, tenant_id: UUID, grupo_id: UUID, contato_id: UUID
+    ) -> bool:
+        """Tira o contato do grupo. O responsável continua cadastrado."""
+        ...
 
 
 @runtime_checkable

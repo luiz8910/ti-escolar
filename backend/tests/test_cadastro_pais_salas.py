@@ -498,6 +498,14 @@ async def test_atualizar_nao_acusa_a_propria_turma_como_duplicada():
     assert atualizada.descricao == "turma da manhã"
 
 
+async def test_turma_em_branco_acusa_a_identificacao_antes_da_grade():
+    """Com o formulário vazio, o primeiro erro é o da série — o campo principal."""
+    _, salas = _repos()
+
+    with pytest.raises(ValueError, match="precisa de um nome"):
+        await _criar_turma(salas, grade_horario={"formato": "turno", "entrada": ""})
+
+
 async def test_grade_invalida_impede_salvar_a_turma():
     """A validação da grade acontece no cadastro, não só na tela."""
     _, salas = _repos()

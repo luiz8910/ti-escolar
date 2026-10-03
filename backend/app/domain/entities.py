@@ -1654,6 +1654,9 @@ class StatusEntrega(str, enum.Enum):
     ENTREGUE = "delivered"
     LIDO = "read"
     FALHOU = "failed"
+    # A escola cancelou o disparo antes de chegar a vez deste destinatário. Não é falha:
+    # nada foi tentado, e a retomada não volta a ele.
+    CANCELADO = "cancelado"
 
 
 class OrigemParametro(str, enum.Enum):
@@ -1723,6 +1726,17 @@ class StatusBroadcast(str, enum.Enum):
     EM_ENVIO = "em_envio"
     CONCLUIDO = "concluido"
     PARCIAL_LIMITE = "parcial_limite"  # interrompido por limite diário
+    # Interrompido pela escola. Quem já recebeu continua no histórico; o resto não sai.
+    CANCELADO = "cancelado"
+
+
+# Só estes têm envio por fazer — e, portanto, algo para cancelar. `CONCLUIDO` já saiu
+# inteiro: a mensagem está no WhatsApp de quem recebeu e não há o que interromper.
+STATUS_BROADCAST_CANCELAVEIS = (
+    StatusBroadcast.EM_ENVIO,
+    StatusBroadcast.PARCIAL_LIMITE,
+    StatusBroadcast.AGENDADO,
+)
 
 
 @dataclass

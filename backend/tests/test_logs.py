@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.application.logs_use_cases import (
     POR_PAGINA_MAXIMO,
@@ -21,7 +24,10 @@ from app.application.logs_use_cases import (
     normalizar_paginacao,
 )
 from app.domain.entities import ContagemRotulada, NivelLog, ResumoLogs
+from app.infrastructure.db.models import LogAplicacaoORM
+from app.infrastructure.db.repositories_logs import _para_registro
 from app.infrastructure.logs import ColetorDeLogs, correlacao_atual, novo_id_correlacao
+from app.interfaces.api.logs import _log_saida
 from app.interfaces.middleware import (
     CABECALHO_CORRELACAO,
     ContextoRequisicaoMiddleware,
@@ -214,6 +220,28 @@ def test_taxa_de_erro_nao_divide_por_zero():
     assert _resumo(requisicoes=200, erros=3).taxa_erro_percentual == 1.5
 
 
+def test_horario_do_log_sai_da_api_com_o_fuso():
+    # A coluna guarda UTC sem fuso. Se a API devolver o instante sem o offset, o
+    # navegador o lê como hora local e o painel mostra o log três horas no futuro.
+    linha = LogAplicacaoORM(
+        id=uuid.uuid4(),
+        criado_em=datetime(2026, 10, 2, 0, 46, 0),
+        nivel="INFO",
+        logger="app",
+        mensagem="ok",
+        correlacao_id="",
+        rota="",
+        metodo="",
+        excecao="",
+        metadados={},
+    )
+
+    saida = _log_saida(_para_registro(linha))
+
+    assert saida.criado_em == datetime(2026, 10, 2, 0, 46, 0, tzinfo=timezone.utc)
+    assert saida.model_dump(mode="json")["criado_em"] == "2026-10-02T00:46:00Z"
+
+
 # --------------------------------------------------------------------------- #
 # Middleware / handlers de erro
 # --------------------------------------------------------------------------- #
@@ -231,6 +259,10 @@ def _app_de_teste() -> FastAPI:
     @router.get("/explode")
     async def explode():
         raise RuntimeError("coluna inexistente")
+
+    @router.post("/duplicado")
+    async def duplicado():
+        raise IntegrityError("INSERT", {}, Exception("uq_professor_tenant_telefone"))
 
     app.include_router(router)
     return app
@@ -262,6 +294,18 @@ def test_erro_nao_tratado_vira_500_com_id_e_sem_stack_trace():
     assert corpo["id_correlacao"] == resp.headers[CABECALHO_CORRELACAO]
     assert "RuntimeError" not in resp.text
     assert "coluna inexistente" not in resp.text
+
+
+def test_gravacao_repetida_vira_409_em_portugues_e_nao_500():
+    """Duplo clique: a segunda gravação esbarra na restrição do banco. É conflito."""
+    with TestClient(_app_de_teste(), raise_server_exceptions=False) as client:
+        resp = client.post("/duplicado")
+
+    assert resp.status_code == 409
+    assert "já existe" in resp.json()["detail"]
+    assert resp.json()["id_correlacao"] == resp.headers[CABECALHO_CORRELACAO]
+    # O nome da restrição é detalhe do banco — fica no log, não na resposta.
+    assert "uq_professor" not in resp.text
 
 
 def test_404_tambem_traz_o_id():

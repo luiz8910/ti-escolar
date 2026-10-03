@@ -275,6 +275,9 @@ function ExcluirSalaModal({
   }, [sala.id, toast]);
 
   const total = totalAlunos;
+  // Ex-aluno também ocupa a série: sem dizer isso, "tem 2 alunos" numa turma que a tela
+  // de Alunos mostra vazia parece erro de contagem.
+  const exAlunos = (alunos ?? []).filter((a) => !a.ativo).length;
   const outras = salas.filter((s) => s.id !== sala.id);
   const criandoSerie = destinoId === "__nova__";
 
@@ -342,7 +345,9 @@ function ExcluirSalaModal({
       ) : (
         <div className="flex flex-col gap-3 text-[13px]">
           <p className="text-n-600">
-            A série “{sala.nome}” tem <strong>{total} aluno(s)</strong>. Eles precisam ir
+            A série “{sala.nome}” tem <strong>{total} aluno(s)</strong>
+            {exAlunos > 0 && <> ({exAlunos === total ? "todos" : exAlunos} já desativados)</>}.
+            Eles precisam ir
             para outra série — <b>alunos nunca são apagados</b>, porque o registro de que
             estudaram aqui sustenta histórico escolar e declarações. Para tirar um aluno da
             escola, use <b>Desativar</b> na tela de Alunos.

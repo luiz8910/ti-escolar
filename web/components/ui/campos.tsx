@@ -19,6 +19,7 @@ import {
   mascaraRA,
   mascaraTelefone,
   somenteDigitos,
+  telefoneCompleto,
 } from "@/lib/mascaras";
 
 type BaseProps = Omit<ComponentProps<typeof Input>, "value" | "onChange">;
@@ -56,14 +57,31 @@ export function CampoTelefone({
   onChange,
   ...rest
 }: BaseProps & { value: string; onChange: (valor: string) => void }) {
+  // Só acusa depois que o campo perde o foco: telefone pela metade é o estado normal de
+  // quem ainda está digitando. Vazio não é erro aqui — quem decide se o número é
+  // obrigatório é o formulário.
+  const [tocado, setTocado] = useState(false);
+  const invalido = tocado && somenteDigitos(value).length > 0 && !telefoneCompleto(value);
   return (
-    <Input
-      {...rest}
-      inputMode="tel"
-      placeholder={rest.placeholder ?? "(15) 99999-0000"}
-      value={mascaraTelefone(value)}
-      onChange={(e) => onChange(mascaraTelefone(e.target.value))}
-    />
+    <>
+      <Input
+        {...rest}
+        inputMode="tel"
+        placeholder={rest.placeholder ?? "(15) 99999-0000"}
+        value={mascaraTelefone(value)}
+        invalid={invalido}
+        onChange={(e) => onChange(mascaraTelefone(e.target.value))}
+        onBlur={(e) => {
+          setTocado(true);
+          rest.onBlur?.(e);
+        }}
+      />
+      {invalido && (
+        <span className="text-[11.5px] font-semibold text-danger">
+          Telefone incompleto — informe DDD e número.
+        </span>
+      )}
+    </>
   );
 }
 
