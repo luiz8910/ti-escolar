@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tiescolar}
       POSTGRES_DB: ${POSTGRES_DB:-tiescolar}
     ports:
-      # Porta do host configurável (DB_PORT) para rodar worktrees em paralelo;
+      # Porta do host configurável (DB_PORT);
       # 5433 (default) evita conflito com um Postgres local já em execução.
       - "${DB_PORT:-5433}:5432"
     volumes:
@@ -32,7 +32,7 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
     ports:
-      # Porta do host configurável (BACKEND_PORT) para rodar worktrees em paralelo.
+      # Porta do host configurável (BACKEND_PORT).
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       db:
@@ -89,7 +89,7 @@ services:
       # No browser usamos localhost; o backend é exposto na porta BACKEND_PORT do host.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
-      # Porta do host configurável (WEB_PORT) para rodar worktrees em paralelo.
+      # Porta do host configurável (WEB_PORT).
       - "${WEB_PORT:-3000}:3000"
     depends_on:
       - backend
